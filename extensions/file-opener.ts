@@ -9,7 +9,6 @@ import * as path from "node:path";
 import { execSync } from "node:child_process";
 import { diffLines, Change } from "diff";
 
-// ── Git helpers (for diff mode) ────────────────────────────────────────────
 
 function getGitOriginalContent(filePath: string): string | undefined {
   try {
@@ -176,31 +175,123 @@ class FileViewerComponent {
   }
 
   private buildDiffLines(original: string, current: string): void {
+    const CONTEXT = 3;
     const changes = diffLines(original, current);
-    const lines: string[] = [];
-    let lineNum = 0;
+    const th = this.theme;
+
+    // Build flat list of all lines with type and dual line numbers
+    type DiffLine = { type: "ctx" | "add" | "del"; text: string; oldNum?: number; newNum?: number };
+    const all: DiffLine[] = [];
+    let oldN = 0;
+    let newN = 0;
 
     for (const change of changes) {
-      const changeLines = change.value.split("\n");
-      // Remove last empty line from split
-      if (changeLines[changeLines.length - 1] === "") {
-        changeLines.pop();
-      }
-
-      for (const line of changeLines) {
+      const cls = change.value.split("\n");
+      if (cls.length > 0 && cls[cls.length - 1] === "") cls.pop();
+      for (const line of cls) {
         if (change.added) {
-          lines.push(this.theme.fg("success", "+ " + line));
+          newN++;
+          all.push({ type: "add", text: line, newNum: newN });
         } else if (change.removed) {
-          lines.push(this.theme.fg("error", "- " + line));
+          oldN++;
+          all.push({ type: "del", text: line, oldNum: oldN });
         } else {
-          lineNum++;
-          const numStr = this.theme.fg("dim", String(lineNum).padStart(4, " "));
-          lines.push(numStr + "  " + line);
+          oldN++;
+          newN++;
+          all.push({ type: "ctx", text: line, oldNum: oldN, newNum: newN });
         }
       }
     }
 
-    this.diffLines = lines;
+    // Find changed indices and group into hunks with context
+    const changed: number[] = [];
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].type !== "ctx") changed.push(i);
+    }
+    if (changed.length === 0) return;
+
+    type Hunk = { start: number; end: number };
+    const hunks: Hunk[] = [];
+    let cur: Hunk | null = null;
+    for (const idx of changed) {
+      const s = Math.max(0, idx - CONTEXT);
+      const e = Math.min(all.length - 1, idx + CONTEXT);
+      if (cur && s <= cur.end + 1) {
+        cur.end = e;
+      } else {
+        if (cur) hunks.push(cur);
+        cur = { start: s, end: e };
+      }
+    }
+    if (cur) hunks.push(cur);
+
+    // Stats
+    let adds = 0;
+    let dels = 0;
+    for (const dl of all) {
+      if (dl.type === "add") adds++;
+      if (dl.type === "del") dels++;
+    }
+
+    const numW = String(Math.max(oldN, newN)).length;
+    const out: string[] = [];
+
+    // Summary header
+    out.push(
+      th.fg("success", `+${adds}`) + th.fg("dim", " / ") + th.fg("error", `-${dels}`) + th.fg("dim", ` (${adds + dels} lines changed)`),
+    );
+    out.push("");
+
+    for (let h = 0; h < hunks.length; h++) {
+      const hunk = hunks[h];
+
+      // Collapsed indicator
+      if (h === 0 && hunk.start > 0) {
+        out.push(th.fg("dim", `  ⋯ ${hunk.start} unchanged lines ⋯`));
+        out.push("");
+      } else if (h > 0) {
+        const gap = hunk.start - hunks[h - 1].end - 1;
+        if (gap > 0) {
+          out.push("");
+          out.push(th.fg("dim", `  ⋯ ${gap} unchanged lines ⋯`));
+          out.push("");
+        }
+      }
+
+      // Hunk header
+      const hunkSlice = all.slice(hunk.start, hunk.end + 1);
+      const firstOld = hunkSlice.find((l) => l.oldNum)?.oldNum ?? 1;
+      const firstNew = hunkSlice.find((l) => l.newNum)?.newNum ?? 1;
+      const oldCount = hunkSlice.filter((l) => l.type !== "add").length;
+      const newCount = hunkSlice.filter((l) => l.type !== "del").length;
+      out.push(th.fg("info", `@@ -${firstOld},${oldCount} +${firstNew},${newCount} @@`));
+
+      // Hunk lines with dual line numbers
+      for (let i = hunk.start; i <= hunk.end; i++) {
+        const dl = all[i];
+        const oStr = dl.oldNum != null ? String(dl.oldNum).padStart(numW) : " ".repeat(numW);
+        const nStr = dl.newNum != null ? String(dl.newNum).padStart(numW) : " ".repeat(numW);
+        const nums = th.fg("dim", oStr + "  " + nStr);
+        const sep = th.fg("dim", " │ ");
+
+        if (dl.type === "add") {
+          out.push(nums + sep + th.fg("success", "+ " + dl.text));
+        } else if (dl.type === "del") {
+          out.push(nums + sep + th.fg("error", "- " + dl.text));
+        } else {
+          out.push(nums + sep + "  " + dl.text);
+        }
+      }
+    }
+
+    // Trailing hidden lines
+    const lastEnd = hunks[hunks.length - 1].end;
+    if (lastEnd < all.length - 1) {
+      out.push("");
+      out.push(th.fg("dim", `  ⋯ ${all.length - 1 - lastEnd} unchanged lines ⋯`));
+    }
+
+    this.diffLines = out;
   }
 
   toggleDiffMode(): void {
