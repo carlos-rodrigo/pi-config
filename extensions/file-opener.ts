@@ -157,7 +157,6 @@ class FileViewerComponent {
 		this.onEdit = onEdit;
 		this.isMarkdown = /\.md$/i.test(filePath);
 		this.rawContent = content;
-		this.diffMode = startInDiffMode;
 
 		// Store original content if not already stored
 		storeOriginalContent(filePath, content);
@@ -168,6 +167,9 @@ class FileViewerComponent {
 			this.hasDiff = true;
 			this.buildDiffLines(original, content);
 		}
+
+		// Only enable diff mode if there are actual diffs to show
+		this.diffMode = startInDiffMode && this.hasDiff;
 
 		if (this.isMarkdown) {
 			// Pre-render markdown — we'll use it once we know width
