@@ -25,6 +25,21 @@ import { Markdown, Text, matchesKey, Key, truncateToWidth, visibleWidth } from "
 import { Type } from "@sinclair/typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { diffLines, Change } from "diff";
+
+// ── Original content storage (for diff mode) ───────────────────────────────
+// Stores the original content of files when first opened in a session
+const originalContent = new Map<string, string>();
+
+function getOriginalContent(filePath: string): string | undefined {
+	return originalContent.get(filePath);
+}
+
+function storeOriginalContent(filePath: string, content: string): void {
+	if (!originalContent.has(filePath)) {
+		originalContent.set(filePath, content);
+	}
+}
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -113,6 +128,7 @@ function emptyLine(innerWidth: number, theme: Theme): string {
 
 class FileViewerComponent {
 	private contentLines: string[] = [];
+	private diffLines: string[] = [];
 	private scrollOffset = 0;
 	private filePath: string;
 	private theme: Theme;
@@ -123,6 +139,9 @@ class FileViewerComponent {
 	private cachedRender?: string[];
 	private isMarkdown: boolean;
 	private currentViewHeight = FALLBACK_MODAL_HEIGHT - MODAL_FRAME_LINES;
+	private diffMode: boolean = false;
+	private hasDiff: boolean = false;
+	private rawContent: string;
 
 	constructor(
 		filePath: string,
@@ -130,12 +149,25 @@ class FileViewerComponent {
 		theme: Theme,
 		onClose: () => void,
 		onEdit?: () => void,
+		startInDiffMode: boolean = false,
 	) {
 		this.filePath = filePath;
 		this.theme = theme;
 		this.onClose = onClose;
 		this.onEdit = onEdit;
 		this.isMarkdown = /\.md$/i.test(filePath);
+		this.rawContent = content;
+		this.diffMode = startInDiffMode;
+
+		// Store original content if not already stored
+		storeOriginalContent(filePath, content);
+
+		// Check if there are differences
+		const original = getOriginalContent(filePath);
+		if (original && original !== content) {
+			this.hasDiff = true;
+			this.buildDiffLines(original, content);
+		}
 
 		if (this.isMarkdown) {
 			// Pre-render markdown — we'll use it once we know width
@@ -155,6 +187,42 @@ class FileViewerComponent {
 		}
 	}
 
+	private buildDiffLines(original: string, current: string): void {
+		const changes = diffLines(original, current);
+		const lines: string[] = [];
+		let lineNum = 0;
+
+		for (const change of changes) {
+			const changeLines = change.value.split("\n");
+			// Remove last empty line from split
+			if (changeLines[changeLines.length - 1] === "") {
+				changeLines.pop();
+			}
+
+			for (const line of changeLines) {
+				if (change.added) {
+					lines.push(this.theme.fg("success", "+ " + line));
+				} else if (change.removed) {
+					lines.push(this.theme.fg("error", "- " + line));
+				} else {
+					lineNum++;
+					const numStr = this.theme.fg("dim", String(lineNum).padStart(4, " "));
+					lines.push(numStr + "  " + line);
+				}
+			}
+		}
+
+		this.diffLines = lines;
+	}
+
+	toggleDiffMode(): void {
+		if (this.hasDiff) {
+			this.diffMode = !this.diffMode;
+			this.scrollOffset = 0;
+			this.invalidate();
+		}
+	}
+
 	handleInput(data: string): void {
 		if (matchesKey(data, Key.escape) || matchesKey(data, "q")) {
 			this.onClose();
@@ -164,8 +232,13 @@ class FileViewerComponent {
 			this.onEdit();
 			return;
 		}
+		if (matchesKey(data, "d") && this.hasDiff) {
+			this.toggleDiffMode();
+			return;
+		}
 
-		const maxScroll = Math.max(0, this.contentLines.length - this.viewHeight());
+		const lines = this.diffMode ? this.diffLines : this.contentLines;
+		const maxScroll = Math.max(0, lines.length - this.viewHeight());
 
 		if (matchesKey(data, Key.down) || matchesKey(data, "j")) {
 			this.scrollOffset = Math.min(this.scrollOffset + 1, maxScroll);
@@ -218,7 +291,8 @@ class FileViewerComponent {
 			this.contentLines = md.render(contentWidth);
 		}
 
-		const totalLines = this.contentLines.length;
+		const displayLines = this.diffMode ? this.diffLines : this.contentLines;
+		const totalLines = displayLines.length;
 		const vh = Math.max(1, modalHeight - MODAL_FRAME_LINES);
 		this.currentViewHeight = vh;
 
@@ -237,10 +311,11 @@ class FileViewerComponent {
 		// File info
 		const fileName = path.basename(this.filePath);
 		const dirName = path.dirname(this.filePath);
+		const modeIndicator = this.diffMode ? " [DIFF]" : "";
 		const rightInfo = `${lineRange}  ${posText}`;
 
 		// Top border with title
-		output.push(drawTopBorder(modalWidth, fileName, rightInfo, th));
+		output.push(drawTopBorder(modalWidth, fileName + modeIndicator, rightInfo, th));
 
 		// Subtitle line (directory path)
 		const dirLine = th.fg("muted", dirName);
@@ -250,7 +325,7 @@ class FileViewerComponent {
 		output.push(drawSeparator(modalWidth, th));
 
 		// Content area
-		const visibleLines = this.contentLines.slice(this.scrollOffset, this.scrollOffset + vh);
+		const visibleLines = displayLines.slice(this.scrollOffset, this.scrollOffset + vh);
 		for (let i = 0; i < vh; i++) {
 			if (i < visibleLines.length) {
 				output.push(wrapContentLine(visibleLines[i]!, innerWidth, th));
@@ -262,7 +337,8 @@ class FileViewerComponent {
 
 		// Bottom border with help text
 		const editHint = this.onEdit ? " e:nvim" : "";
-		const helpText = `↑↓/jk:scroll  g/G:top/bottom  PgUp/PgDn${editHint}  q:close`;
+		const diffHint = this.hasDiff ? ` d:${this.diffMode ? "view" : "diff"}` : "";
+		const helpText = `↑↓/jk:scroll  g/G:top/bottom${diffHint}${editHint}  q:close`;
 		output.push(drawBottomBorder(modalWidth, helpText, th));
 
 		this.cachedWidth = modalWidth;
@@ -295,16 +371,18 @@ export default function (pi: ExtensionAPI) {
 	// ── /open command ────────────────────────────────────────────────────────
 
 	pi.registerCommand("open", {
-		description: "Open a file in an overlay viewer (usage: /open <file>)",
+		description: "Open a file in an overlay viewer (usage: /open <file> [--diff])",
 		handler: async (args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("/open requires interactive mode", "error");
 				return;
 			}
 
-			const filePath = args.trim();
+			// Parse --diff flag
+			const diffMode = args.includes("--diff");
+			const filePath = args.replace("--diff", "").trim();
 			if (!filePath) {
-				ctx.ui.notify("Usage: /open <file>", "warning");
+				ctx.ui.notify("Usage: /open <file> [--diff]", "warning");
 				return;
 			}
 
@@ -328,7 +406,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const content = fs.readFileSync(resolved, "utf-8");
-			await showFileOverlay(resolved, content, ctx);
+			await showFileOverlay(resolved, content, ctx, diffMode);
 		},
 	});
 
@@ -341,8 +419,8 @@ export default function (pi: ExtensionAPI) {
 			"Open a file for the user. Use mode 'view' to show it in an overlay modal with syntax highlighting, or 'edit' to open it in nvim via tmux.",
 		parameters: Type.Object({
 			path: Type.String({ description: "File path to open" }),
-			mode: StringEnum(["view", "edit"] as const, {
-				description: "How to open: 'view' shows in modal, 'edit' opens in nvim",
+			mode: StringEnum(["view", "edit", "diff"] as const, {
+				description: "How to open: 'view' shows in modal, 'edit' opens in nvim, 'diff' shows changes since first open",
 			}),
 			line: Type.Optional(Type.Number({ description: "Line number to jump to (for edit mode)" })),
 		}),
@@ -387,7 +465,7 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			// View mode
+			// View or diff mode
 			if (stat.size > 1_000_000) {
 				return {
 					content: [{ type: "text", text: `File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB) for modal view.` }],
@@ -397,19 +475,28 @@ export default function (pi: ExtensionAPI) {
 
 			const content = fs.readFileSync(resolved, "utf-8");
 			const lineCount = content.split("\n").length;
+			const startInDiff = params.mode === "diff";
 
 			if (ctx.hasUI) {
-				await showFileOverlay(resolved, content, ctx);
+				await showFileOverlay(resolved, content, ctx, startInDiff);
 			}
 
+			const modeText = startInDiff ? "diff" : "view";
 			return {
-				content: [{ type: "text", text: `Showed ${path.basename(resolved)} (${lineCount} lines) in viewer overlay.` }],
-				details: { path: resolved, mode: "view", lines: lineCount },
+				content: [{ type: "text", text: `Showed ${path.basename(resolved)} (${lineCount} lines) in ${modeText} mode.` }],
+				details: { path: resolved, mode: params.mode, lines: lineCount },
 			};
 		},
 
 		renderCall(args, theme) {
-			const mode = args.mode === "edit" ? theme.fg("warning", "nvim") : theme.fg("accent", "view");
+			let mode: string;
+			if (args.mode === "edit") {
+				mode = theme.fg("warning", "nvim");
+			} else if (args.mode === "diff") {
+				mode = theme.fg("info", "diff");
+			} else {
+				mode = theme.fg("accent", "view");
+			}
 			let text = theme.fg("toolTitle", theme.bold("open_file "));
 			text += mode + " ";
 			text += theme.fg("muted", args.path);
@@ -450,7 +537,7 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Shared overlay display ───────────────────────────────────────────────
 
-	async function showFileOverlay(resolved: string, content: string, ctx: { hasUI: boolean; cwd: string; ui: any }) {
+	async function showFileOverlay(resolved: string, content: string, ctx: { hasUI: boolean; cwd: string; ui: any }, startInDiffMode: boolean = false) {
 		await ctx.ui.custom<void>(
 			(tui: any, theme: Theme, _kb: any, done: (v: void) => void) => {
 				const viewer = new FileViewerComponent(
@@ -464,6 +551,7 @@ export default function (pi: ExtensionAPI) {
 							done();
 						}
 					},
+					startInDiffMode,
 				);
 				return {
 					render: (w: number) => viewer.render(w),

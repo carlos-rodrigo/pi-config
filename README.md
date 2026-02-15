@@ -27,7 +27,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 ### [Extensions](extensions/)
 
 - **[bordered-editor](extensions/README.md#bordered-editor)** — Custom input box with rounded borders and embedded status info (model, context usage, cost, git branch).
-- **[file-opener](extensions/README.md#file-opener)** — Open files in a syntax-highlighted overlay modal or in nvim via tmux. Adds `/open` command and `open_file` tool.
+- **[file-opener](extensions/README.md#file-opener)** — Open files in a syntax-highlighted overlay modal or in nvim via tmux, with built-in diff support. Adds `/open` command and `open_file` tool.
 
 ### [Themes](themes/)
 

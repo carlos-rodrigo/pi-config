@@ -8,6 +8,9 @@
   "pi": {
     "extensions": ["./extensions"]
   },
+  "dependencies": {
+    "diff": "^7.0.0"
+  },
   "peerDependencies": {
     "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-coding-agent": "*",
