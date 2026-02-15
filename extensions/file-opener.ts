@@ -28,9 +28,6 @@ function getGitOriginalContent(filePath: string): string | undefined {
   }
 }
 
-// ── Constants ──────────────────────────────────────────────────────────────
-
-// Modal target size: 80% of terminal (roughly 10% margin on each side).
 const MODAL_SIZE_RATIO = 0.8;
 const MODAL_WIDTH_PERCENT = "80%";
 const MODAL_HEIGHT_PERCENT = "80%";
