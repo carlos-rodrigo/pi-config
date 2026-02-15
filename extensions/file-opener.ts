@@ -1,22 +1,3 @@
-/**
- * File Opener Extension
- *
- * Two capabilities:
- *   1. `/open <file>` command — opens file in an overlay modal with syntax highlighting
- *   2. `open_file` tool — LLM can call it to either:
- *      - "view" → show file in overlay modal (markdown rendered, code highlighted)
- *      - "edit" → open file in nvim via tmux split
- *
- * Features:
- *   - Markdown files rendered with formatted headings, bold, code blocks, etc.
- *   - Code files shown with syntax highlighting and line numbers
- *   - Bordered modal with responsive dimensions and inner padding
- *   - Vim-style scrolling (j/k, g/G, Ctrl+D/U)
- *   - Press "e" to jump to nvim from the viewer
- *
- * Requirements:
- *   - tmux (for opening nvim in a split pane)
- */
 
 import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
 import { highlightCode, getLanguageFromPath, getMarkdownTheme } from "@mariozechner/pi-coding-agent";
@@ -25,20 +6,28 @@ import { Markdown, Text, matchesKey, Key, truncateToWidth, visibleWidth } from "
 import { Type } from "@sinclair/typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execSync } from "node:child_process";
 import { diffLines, Change } from "diff";
 
-// ── Original content storage (for diff mode) ───────────────────────────────
-// Stores the original content of files when first opened in a session
-const originalContent = new Map<string, string>();
+// ── Git helpers (for diff mode) ────────────────────────────────────────────
 
-function getOriginalContent(filePath: string): string | undefined {
-	return originalContent.get(filePath);
-}
-
-function storeOriginalContent(filePath: string, content: string): void {
-	if (!originalContent.has(filePath)) {
-		originalContent.set(filePath, content);
-	}
+function getGitOriginalContent(filePath: string): string | undefined {
+  try {
+    const dir = path.dirname(filePath);
+    const gitRoot = execSync("git rev-parse --show-toplevel", {
+      cwd: dir,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    const relativePath = path.relative(gitRoot, filePath);
+    return execSync(`git show HEAD:${relativePath}`, {
+      cwd: gitRoot,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch {
+    return undefined;
+  }
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -57,532 +46,529 @@ const TAB_REPLACEMENT = "   ";
 
 // Box-drawing characters
 const BOX = {
-	tl: "╭",
-	tr: "╮",
-	bl: "╰",
-	br: "╯",
-	h: "─",
-	v: "│",
+  tl: "╭",
+  tr: "╮",
+  bl: "╰",
+  br: "╯",
+  h: "─",
+  v: "│",
 };
 
 // ── Border helpers ─────────────────────────────────────────────────────────
 
 function drawTopBorder(width: number, title: string, rightText: string, theme: Theme): string {
-	const borderColor = (s: string) => theme.fg("borderAccent", s);
-	const titleStyled = " " + theme.fg("accent", theme.bold(title)) + " ";
-	const rightStyled = rightText ? " " + theme.fg("dim", rightText) + " " : "";
+  const borderColor = (s: string) => theme.fg("borderAccent", s);
+  const titleStyled = " " + theme.fg("accent", theme.bold(title)) + " ";
+  const rightStyled = rightText ? " " + theme.fg("dim", rightText) + " " : "";
 
-	const titleWidth = visibleWidth(titleStyled);
-	const rightWidth = visibleWidth(rightStyled);
-	const fillLeft = 2;
-	const fillRight = Math.max(1, width - fillLeft - titleWidth - rightWidth - 2); // -2 for corners
+  const titleWidth = visibleWidth(titleStyled);
+  const rightWidth = visibleWidth(rightStyled);
+  const fillLeft = 2;
+  const fillRight = Math.max(1, width - fillLeft - titleWidth - rightWidth - 2); // -2 for corners
 
-	return (
-		borderColor(BOX.tl) +
-		borderColor(BOX.h.repeat(fillLeft)) +
-		titleStyled +
-		borderColor(BOX.h.repeat(fillRight)) +
-		rightStyled +
-		borderColor(BOX.tr)
-	);
+  return (
+    borderColor(BOX.tl) +
+    borderColor(BOX.h.repeat(fillLeft)) +
+    titleStyled +
+    borderColor(BOX.h.repeat(fillRight)) +
+    rightStyled +
+    borderColor(BOX.tr)
+  );
 }
 
 function drawBottomBorder(width: number, helpText: string, theme: Theme): string {
-	const borderColor = (s: string) => theme.fg("borderAccent", s);
-	const helpStyled = " " + theme.fg("dim", helpText) + " ";
-	const helpWidth = visibleWidth(helpStyled);
-	const fillLeft = 2;
-	const fillRight = Math.max(1, width - fillLeft - helpWidth - 2);
+  const borderColor = (s: string) => theme.fg("borderAccent", s);
+  const helpStyled = " " + theme.fg("dim", helpText) + " ";
+  const helpWidth = visibleWidth(helpStyled);
+  const fillLeft = 2;
+  const fillRight = Math.max(1, width - fillLeft - helpWidth - 2);
 
-	return (
-		borderColor(BOX.bl) +
-		borderColor(BOX.h.repeat(fillLeft)) +
-		helpStyled +
-		borderColor(BOX.h.repeat(fillRight)) +
-		borderColor(BOX.br)
-	);
+  return (
+    borderColor(BOX.bl) +
+    borderColor(BOX.h.repeat(fillLeft)) +
+    helpStyled +
+    borderColor(BOX.h.repeat(fillRight)) +
+    borderColor(BOX.br)
+  );
 }
 
 function drawSeparator(width: number, theme: Theme): string {
-	const borderColor = (s: string) => theme.fg("borderMuted", s);
-	return borderColor("├") + borderColor(BOX.h.repeat(width - 2)) + borderColor("┤");
+  const borderColor = (s: string) => theme.fg("borderMuted", s);
+  return borderColor("├") + borderColor(BOX.h.repeat(width - 2)) + borderColor("┤");
 }
 
 function wrapContentLine(line: string, innerWidth: number, theme: Theme): string {
-	const borderColor = (s: string) => theme.fg("borderAccent", s);
-	const pad = " ".repeat(INNER_PADDING_X);
-	const contentWidth = innerWidth - INNER_PADDING_X * 2;
-	const normalized = line.includes("\t") ? line.replace(/\t/g, TAB_REPLACEMENT) : line;
-	const truncated = truncateToWidth(normalized, contentWidth, "");
-	const visible = visibleWidth(truncated);
-	const rightPad = " ".repeat(Math.max(0, contentWidth - visible));
-	return borderColor(BOX.v) + pad + truncated + rightPad + pad + borderColor(BOX.v);
+  const borderColor = (s: string) => theme.fg("borderAccent", s);
+  const pad = " ".repeat(INNER_PADDING_X);
+  const contentWidth = innerWidth - INNER_PADDING_X * 2;
+  const normalized = line.includes("\t") ? line.replace(/\t/g, TAB_REPLACEMENT) : line;
+  const truncated = truncateToWidth(normalized, contentWidth, "");
+  const visible = visibleWidth(truncated);
+  const rightPad = " ".repeat(Math.max(0, contentWidth - visible));
+  return borderColor(BOX.v) + pad + truncated + rightPad + pad + borderColor(BOX.v);
 }
 
 function emptyLine(innerWidth: number, theme: Theme): string {
-	const borderColor = (s: string) => theme.fg("borderAccent", s);
-	return borderColor(BOX.v) + " ".repeat(innerWidth) + borderColor(BOX.v);
+  const borderColor = (s: string) => theme.fg("borderAccent", s);
+  return borderColor(BOX.v) + " ".repeat(innerWidth) + borderColor(BOX.v);
 }
 
 // ── File viewer component ──────────────────────────────────────────────────
 
 class FileViewerComponent {
-	private contentLines: string[] = [];
-	private diffLines: string[] = [];
-	private scrollOffset = 0;
-	private filePath: string;
-	private theme: Theme;
-	private onClose: () => void;
-	private onEdit: (() => void) | undefined;
-	private cachedWidth?: number;
-	private cachedHeight?: number;
-	private cachedRender?: string[];
-	private isMarkdown: boolean;
-	private currentViewHeight = FALLBACK_MODAL_HEIGHT - MODAL_FRAME_LINES;
-	private diffMode: boolean = false;
-	private hasDiff: boolean = false;
-	private rawContent: string;
+  private contentLines: string[] = [];
+  private diffLines: string[] = [];
+  private scrollOffset = 0;
+  private filePath: string;
+  private theme: Theme;
+  private onClose: () => void;
+  private onEdit: (() => void) | undefined;
+  private cachedWidth?: number;
+  private cachedHeight?: number;
+  private cachedRender?: string[];
+  private isMarkdown: boolean;
+  private currentViewHeight = FALLBACK_MODAL_HEIGHT - MODAL_FRAME_LINES;
+  private diffMode: boolean = false;
+  private hasDiff: boolean = false;
+  private rawContent: string;
 
-	constructor(
-		filePath: string,
-		content: string,
-		theme: Theme,
-		onClose: () => void,
-		onEdit?: () => void,
-		startInDiffMode: boolean = false,
-	) {
-		this.filePath = filePath;
-		this.theme = theme;
-		this.onClose = onClose;
-		this.onEdit = onEdit;
-		this.isMarkdown = /\.md$/i.test(filePath);
-		this.rawContent = content;
+  constructor(
+    filePath: string,
+    content: string,
+    theme: Theme,
+    onClose: () => void,
+    onEdit?: () => void,
+    startInDiffMode: boolean = false,
+  ) {
+    this.filePath = filePath;
+    this.theme = theme;
+    this.onClose = onClose;
+    this.onEdit = onEdit;
+    this.isMarkdown = /\.md$/i.test(filePath);
+    this.rawContent = content;
 
-		// Store original content if not already stored
-		storeOriginalContent(filePath, content);
+    // Check for differences against git HEAD
+    const original = getGitOriginalContent(filePath);
+    if (original !== undefined && original !== content) {
+      this.hasDiff = true;
+      this.buildDiffLines(original, content);
+    }
 
-		// Check if there are differences
-		const original = getOriginalContent(filePath);
-		if (original && original !== content) {
-			this.hasDiff = true;
-			this.buildDiffLines(original, content);
-		}
+    // Only enable diff mode if there are actual diffs to show
+    this.diffMode = startInDiffMode && this.hasDiff;
 
-		// Only enable diff mode if there are actual diffs to show
-		this.diffMode = startInDiffMode && this.hasDiff;
+    if (this.isMarkdown) {
+      // Pre-render markdown — we'll use it once we know width
+      // Store raw content, render on first render() call
+      this.contentLines = [content];
+    } else {
+      const lang = getLanguageFromPath(filePath);
+      const highlighted = highlightCode(content, lang);
 
-		if (this.isMarkdown) {
-			// Pre-render markdown — we'll use it once we know width
-			// Store raw content, render on first render() call
-			this.contentLines = [content];
-		} else {
-			const lang = getLanguageFromPath(filePath);
-			const highlighted = highlightCode(content, lang);
+      // Add line numbers
+      const maxNum = String(highlighted.length).length;
+      this.contentLines = highlighted.map((line, i) => {
+        const num = theme.fg("dim", String(i + 1).padStart(maxNum, " "));
+        const sep = theme.fg("dim", " │ ");
+        return num + sep + line;
+      });
+    }
+  }
 
-			// Add line numbers
-			const maxNum = String(highlighted.length).length;
-			this.contentLines = highlighted.map((line, i) => {
-				const num = theme.fg("dim", String(i + 1).padStart(maxNum, " "));
-				const sep = theme.fg("dim", " │ ");
-				return num + sep + line;
-			});
-		}
-	}
+  private buildDiffLines(original: string, current: string): void {
+    const changes = diffLines(original, current);
+    const lines: string[] = [];
+    let lineNum = 0;
 
-	private buildDiffLines(original: string, current: string): void {
-		const changes = diffLines(original, current);
-		const lines: string[] = [];
-		let lineNum = 0;
+    for (const change of changes) {
+      const changeLines = change.value.split("\n");
+      // Remove last empty line from split
+      if (changeLines[changeLines.length - 1] === "") {
+        changeLines.pop();
+      }
 
-		for (const change of changes) {
-			const changeLines = change.value.split("\n");
-			// Remove last empty line from split
-			if (changeLines[changeLines.length - 1] === "") {
-				changeLines.pop();
-			}
+      for (const line of changeLines) {
+        if (change.added) {
+          lines.push(this.theme.fg("success", "+ " + line));
+        } else if (change.removed) {
+          lines.push(this.theme.fg("error", "- " + line));
+        } else {
+          lineNum++;
+          const numStr = this.theme.fg("dim", String(lineNum).padStart(4, " "));
+          lines.push(numStr + "  " + line);
+        }
+      }
+    }
 
-			for (const line of changeLines) {
-				if (change.added) {
-					lines.push(this.theme.fg("success", "+ " + line));
-				} else if (change.removed) {
-					lines.push(this.theme.fg("error", "- " + line));
-				} else {
-					lineNum++;
-					const numStr = this.theme.fg("dim", String(lineNum).padStart(4, " "));
-					lines.push(numStr + "  " + line);
-				}
-			}
-		}
+    this.diffLines = lines;
+  }
 
-		this.diffLines = lines;
-	}
+  toggleDiffMode(): void {
+    if (this.hasDiff) {
+      this.diffMode = !this.diffMode;
+      this.scrollOffset = 0;
+      this.invalidate();
+    }
+  }
 
-	toggleDiffMode(): void {
-		if (this.hasDiff) {
-			this.diffMode = !this.diffMode;
-			this.scrollOffset = 0;
-			this.invalidate();
-		}
-	}
+  handleInput(data: string): void {
+    if (matchesKey(data, Key.escape) || matchesKey(data, "q")) {
+      this.onClose();
+      return;
+    }
+    if (matchesKey(data, "e") && this.onEdit) {
+      this.onEdit();
+      return;
+    }
+    if (matchesKey(data, "d") && this.hasDiff) {
+      this.toggleDiffMode();
+      return;
+    }
 
-	handleInput(data: string): void {
-		if (matchesKey(data, Key.escape) || matchesKey(data, "q")) {
-			this.onClose();
-			return;
-		}
-		if (matchesKey(data, "e") && this.onEdit) {
-			this.onEdit();
-			return;
-		}
-		if (matchesKey(data, "d") && this.hasDiff) {
-			this.toggleDiffMode();
-			return;
-		}
+    const lines = this.diffMode ? this.diffLines : this.contentLines;
+    const maxScroll = Math.max(0, lines.length - this.viewHeight());
 
-		const lines = this.diffMode ? this.diffLines : this.contentLines;
-		const maxScroll = Math.max(0, lines.length - this.viewHeight());
+    if (matchesKey(data, Key.down) || matchesKey(data, "j")) {
+      this.scrollOffset = Math.min(this.scrollOffset + 1, maxScroll);
+      this.invalidate();
+    } else if (matchesKey(data, Key.up) || matchesKey(data, "k")) {
+      this.scrollOffset = Math.max(this.scrollOffset - 1, 0);
+      this.invalidate();
+    } else if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.ctrl("d"))) {
+      this.scrollOffset = Math.min(this.scrollOffset + this.viewHeight(), maxScroll);
+      this.invalidate();
+    } else if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.ctrl("u"))) {
+      this.scrollOffset = Math.max(this.scrollOffset - this.viewHeight(), 0);
+      this.invalidate();
+    } else if (matchesKey(data, "g")) {
+      this.scrollOffset = 0;
+      this.invalidate();
+    } else if (data === "G") {
+      this.scrollOffset = maxScroll;
+      this.invalidate();
+    }
+  }
 
-		if (matchesKey(data, Key.down) || matchesKey(data, "j")) {
-			this.scrollOffset = Math.min(this.scrollOffset + 1, maxScroll);
-			this.invalidate();
-		} else if (matchesKey(data, Key.up) || matchesKey(data, "k")) {
-			this.scrollOffset = Math.max(this.scrollOffset - 1, 0);
-			this.invalidate();
-		} else if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.ctrl("d"))) {
-			this.scrollOffset = Math.min(this.scrollOffset + this.viewHeight(), maxScroll);
-			this.invalidate();
-		} else if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.ctrl("u"))) {
-			this.scrollOffset = Math.max(this.scrollOffset - this.viewHeight(), 0);
-			this.invalidate();
-		} else if (matchesKey(data, "g")) {
-			this.scrollOffset = 0;
-			this.invalidate();
-		} else if (data === "G") {
-			this.scrollOffset = maxScroll;
-			this.invalidate();
-		}
-	}
+  /** Visible content lines (modal height minus borders/header/footer rows). */
+  private viewHeight(): number {
+    return this.currentViewHeight;
+  }
 
-	/** Visible content lines (modal height minus borders/header/footer rows). */
-	private viewHeight(): number {
-		return this.currentViewHeight;
-	}
+  private computeModalHeight(): number {
+    const rows = process.stdout.rows;
+    if (!rows || rows <= 0) return FALLBACK_MODAL_HEIGHT;
+    return Math.max(1, Math.floor(rows * MODAL_SIZE_RATIO));
+  }
 
-	private computeModalHeight(): number {
-		const rows = process.stdout.rows;
-		if (!rows || rows <= 0) return FALLBACK_MODAL_HEIGHT;
-		return Math.max(1, Math.floor(rows * MODAL_SIZE_RATIO));
-	}
+  render(width: number): string[] {
+    const modalWidth = Math.max(1, width || FALLBACK_MODAL_WIDTH);
+    const modalHeight = this.computeModalHeight();
 
-	render(width: number): string[] {
-		const modalWidth = Math.max(1, width || FALLBACK_MODAL_WIDTH);
-		const modalHeight = this.computeModalHeight();
+    if (this.cachedRender && this.cachedWidth === modalWidth && this.cachedHeight === modalHeight) {
+      return this.cachedRender;
+    }
 
-		if (this.cachedRender && this.cachedWidth === modalWidth && this.cachedHeight === modalHeight) {
-			return this.cachedRender;
-		}
+    const innerWidth = Math.max(1, modalWidth - 2); // subtract left/right border chars
+    const th = this.theme;
 
-		const innerWidth = Math.max(1, modalWidth - 2); // subtract left/right border chars
-		const th = this.theme;
+    // For markdown, render on first call (needs width)
+    if (this.isMarkdown && this.contentLines.length === 1 && this.contentLines[0]!.includes("\n")) {
+      const mdTheme = getMarkdownTheme();
+      const md = new Markdown(this.contentLines[0]!, 0, 0, mdTheme);
+      const contentWidth = innerWidth - INNER_PADDING_X * 2;
+      this.contentLines = md.render(contentWidth);
+    }
 
-		// For markdown, render on first call (needs width)
-		if (this.isMarkdown && this.contentLines.length === 1 && this.contentLines[0]!.includes("\n")) {
-			const mdTheme = getMarkdownTheme();
-			const md = new Markdown(this.contentLines[0]!, 0, 0, mdTheme);
-			const contentWidth = innerWidth - INNER_PADDING_X * 2;
-			this.contentLines = md.render(contentWidth);
-		}
+    const displayLines = this.diffMode ? this.diffLines : this.contentLines;
+    const totalLines = displayLines.length;
+    const vh = Math.max(1, modalHeight - MODAL_FRAME_LINES);
+    this.currentViewHeight = vh;
 
-		const displayLines = this.diffMode ? this.diffLines : this.contentLines;
-		const totalLines = displayLines.length;
-		const vh = Math.max(1, modalHeight - MODAL_FRAME_LINES);
-		this.currentViewHeight = vh;
+    // Clamp scroll
+    const maxScroll = Math.max(0, totalLines - vh);
+    if (this.scrollOffset > maxScroll) this.scrollOffset = maxScroll;
 
-		// Clamp scroll
-		const maxScroll = Math.max(0, totalLines - vh);
-		if (this.scrollOffset > maxScroll) this.scrollOffset = maxScroll;
+    // Scroll position indicator
+    const scrollPct = totalLines <= vh ? 100 : Math.round((this.scrollOffset / maxScroll) * 100);
+    const posText = totalLines <= vh ? "All" : `${scrollPct}%`;
+    const lineRange = `${this.scrollOffset + 1}–${Math.min(this.scrollOffset + vh, totalLines)}/${totalLines}`;
 
-		// Scroll position indicator
-		const scrollPct = totalLines <= vh ? 100 : Math.round((this.scrollOffset / maxScroll) * 100);
-		const posText = totalLines <= vh ? "All" : `${scrollPct}%`;
-		const lineRange = `${this.scrollOffset + 1}–${Math.min(this.scrollOffset + vh, totalLines)}/${totalLines}`;
+    // ── Build output ──
+    const output: string[] = [];
 
-		// ── Build output ──
-		const output: string[] = [];
+    // File info
+    const fileName = path.basename(this.filePath);
+    const dirName = path.dirname(this.filePath);
+    const modeIndicator = this.diffMode ? " [DIFF]" : "";
+    const rightInfo = `${lineRange}  ${posText}`;
 
-		// File info
-		const fileName = path.basename(this.filePath);
-		const dirName = path.dirname(this.filePath);
-		const modeIndicator = this.diffMode ? " [DIFF]" : "";
-		const rightInfo = `${lineRange}  ${posText}`;
+    // Top border with title
+    output.push(drawTopBorder(modalWidth, fileName + modeIndicator, rightInfo, th));
 
-		// Top border with title
-		output.push(drawTopBorder(modalWidth, fileName + modeIndicator, rightInfo, th));
+    // Subtitle line (directory path)
+    const dirLine = th.fg("muted", dirName);
+    output.push(wrapContentLine(dirLine, innerWidth, th));
 
-		// Subtitle line (directory path)
-		const dirLine = th.fg("muted", dirName);
-		output.push(wrapContentLine(dirLine, innerWidth, th));
+    // Separator
+    output.push(drawSeparator(modalWidth, th));
 
-		// Separator
-		output.push(drawSeparator(modalWidth, th));
+    // Content area
+    const visibleLines = displayLines.slice(this.scrollOffset, this.scrollOffset + vh);
+    for (let i = 0; i < vh; i++) {
+      if (i < visibleLines.length) {
+        output.push(wrapContentLine(visibleLines[i]!, innerWidth, th));
+      } else {
+        // Fill remaining space with empty lines to keep fixed height
+        output.push(emptyLine(innerWidth, th));
+      }
+    }
 
-		// Content area
-		const visibleLines = displayLines.slice(this.scrollOffset, this.scrollOffset + vh);
-		for (let i = 0; i < vh; i++) {
-			if (i < visibleLines.length) {
-				output.push(wrapContentLine(visibleLines[i]!, innerWidth, th));
-			} else {
-				// Fill remaining space with empty lines to keep fixed height
-				output.push(emptyLine(innerWidth, th));
-			}
-		}
+    // Bottom border with help text
+    const editHint = this.onEdit ? " e:nvim" : "";
+    const diffHint = this.hasDiff ? ` d:${this.diffMode ? "view" : "diff"}` : "";
+    const helpText = `↑↓/jk:scroll  g/G:top/bottom${diffHint}${editHint}  q:close`;
+    output.push(drawBottomBorder(modalWidth, helpText, th));
 
-		// Bottom border with help text
-		const editHint = this.onEdit ? " e:nvim" : "";
-		const diffHint = this.hasDiff ? ` d:${this.diffMode ? "view" : "diff"}` : "";
-		const helpText = `↑↓/jk:scroll  g/G:top/bottom${diffHint}${editHint}  q:close`;
-		output.push(drawBottomBorder(modalWidth, helpText, th));
+    this.cachedWidth = modalWidth;
+    this.cachedHeight = modalHeight;
+    this.cachedRender = output;
+    return output;
+  }
 
-		this.cachedWidth = modalWidth;
-		this.cachedHeight = modalHeight;
-		this.cachedRender = output;
-		return output;
-	}
-
-	invalidate(): void {
-		this.cachedWidth = undefined;
-		this.cachedHeight = undefined;
-		this.cachedRender = undefined;
-	}
+  invalidate(): void {
+    this.cachedWidth = undefined;
+    this.cachedHeight = undefined;
+    this.cachedRender = undefined;
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function resolveFilePath(filePath: string, cwd: string): string {
-	const cleaned = filePath.startsWith("@") ? filePath.slice(1) : filePath;
-	return path.isAbsolute(cleaned) ? cleaned : path.resolve(cwd, cleaned);
+  const cleaned = filePath.startsWith("@") ? filePath.slice(1) : filePath;
+  return path.isAbsolute(cleaned) ? cleaned : path.resolve(cwd, cleaned);
 }
 
 async function isInsideTmux(): Promise<boolean> {
-	return !!process.env.TMUX;
+  return !!process.env.TMUX;
 }
 
 // ── Extension entry point ──────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
-	// ── /open command ────────────────────────────────────────────────────────
+  // ── /open command ────────────────────────────────────────────────────────
 
-	pi.registerCommand("open", {
-		description: "Open a file in an overlay viewer (usage: /open <file> [--diff])",
-		handler: async (args, ctx) => {
-			if (!ctx.hasUI) {
-				ctx.ui.notify("/open requires interactive mode", "error");
-				return;
-			}
+  pi.registerCommand("open", {
+    description: "Open a file in an overlay viewer (usage: /open <file> [--diff])",
+    handler: async (args, ctx) => {
+      if (!ctx.hasUI) {
+        ctx.ui.notify("/open requires interactive mode", "error");
+        return;
+      }
 
-			// Parse --diff flag
-			const diffMode = args.includes("--diff");
-			const filePath = args.replace("--diff", "").trim();
-			if (!filePath) {
-				ctx.ui.notify("Usage: /open <file> [--diff]", "warning");
-				return;
-			}
+      // Parse --diff flag
+      const diffMode = args.includes("--diff");
+      const filePath = args.replace("--diff", "").trim();
+      if (!filePath) {
+        ctx.ui.notify("Usage: /open <file> [--diff]", "warning");
+        return;
+      }
 
-			const resolved = resolveFilePath(filePath, ctx.cwd);
+      const resolved = resolveFilePath(filePath, ctx.cwd);
 
-			if (!fs.existsSync(resolved)) {
-				ctx.ui.notify(`File not found: ${resolved}`, "error");
-				return;
-			}
+      if (!fs.existsSync(resolved)) {
+        ctx.ui.notify(`File not found: ${resolved}`, "error");
+        return;
+      }
 
-			const stat = fs.statSync(resolved);
-			if (stat.isDirectory()) {
-				ctx.ui.notify(`Cannot open directory: ${resolved}`, "error");
-				return;
-			}
+      const stat = fs.statSync(resolved);
+      if (stat.isDirectory()) {
+        ctx.ui.notify(`Cannot open directory: ${resolved}`, "error");
+        return;
+      }
 
-			if (stat.size > 1_000_000) {
-				ctx.ui.notify(`File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB). Opening in nvim instead.`, "warning");
-				await openInNvim(resolved, ctx);
-				return;
-			}
+      if (stat.size > 1_000_000) {
+        ctx.ui.notify(`File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB). Opening in nvim instead.`, "warning");
+        await openInNvim(resolved, ctx);
+        return;
+      }
 
-			const content = fs.readFileSync(resolved, "utf-8");
-			await showFileOverlay(resolved, content, ctx, diffMode);
-		},
-	});
+      const content = fs.readFileSync(resolved, "utf-8");
+      await showFileOverlay(resolved, content, ctx, diffMode);
+    },
+  });
 
-	// ── open_file tool (LLM-callable) ────────────────────────────────────────
+  // ── open_file tool (LLM-callable) ────────────────────────────────────────
 
-	pi.registerTool({
-		name: "open_file",
-		label: "Open File",
-		description:
-			"Open a file for the user. Use mode 'view' to show it in an overlay modal with syntax highlighting, or 'edit' to open it in nvim via tmux.",
-		parameters: Type.Object({
-			path: Type.String({ description: "File path to open" }),
-			mode: StringEnum(["view", "edit", "diff"] as const, {
-				description: "How to open: 'view' shows in modal, 'edit' opens in nvim, 'diff' shows changes since first open",
-			}),
-			line: Type.Optional(Type.Number({ description: "Line number to jump to (for edit mode)" })),
-		}),
+  pi.registerTool({
+    name: "open_file",
+    label: "Open File",
+    description:
+      "Open a file for the user. Use mode 'view' to show it in an overlay modal with syntax highlighting, or 'edit' to open it in nvim via tmux.",
+    parameters: Type.Object({
+      path: Type.String({ description: "File path to open" }),
+      mode: StringEnum(["view", "edit", "diff"] as const, {
+        description: "How to open: 'view' shows in modal, 'edit' opens in nvim, 'diff' shows changes since last commit",
+      }),
+      line: Type.Optional(Type.Number({ description: "Line number to jump to (for edit mode)" })),
+    }),
 
-		async execute(toolCallId, params, signal, onUpdate, ctx) {
-			const resolved = resolveFilePath(params.path, ctx.cwd);
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      const resolved = resolveFilePath(params.path, ctx.cwd);
 
-			if (!fs.existsSync(resolved)) {
-				return {
-					content: [{ type: "text", text: `File not found: ${resolved}` }],
-					isError: true,
-				};
-			}
+      if (!fs.existsSync(resolved)) {
+        return {
+          content: [{ type: "text", text: `File not found: ${resolved}` }],
+          isError: true,
+        };
+      }
 
-			const stat = fs.statSync(resolved);
-			if (stat.isDirectory()) {
-				return {
-					content: [{ type: "text", text: `Cannot open directory: ${resolved}` }],
-					isError: true,
-				};
-			}
+      const stat = fs.statSync(resolved);
+      if (stat.isDirectory()) {
+        return {
+          content: [{ type: "text", text: `Cannot open directory: ${resolved}` }],
+          isError: true,
+        };
+      }
 
-			if (params.mode === "edit") {
-				const inTmux = await isInsideTmux();
-				if (!inTmux) {
-					return {
-						content: [{ type: "text", text: "Cannot open nvim: not inside a tmux session. Use mode 'view' instead." }],
-						isError: true,
-					};
-				}
+      if (params.mode === "edit") {
+        const inTmux = await isInsideTmux();
+        if (!inTmux) {
+          return {
+            content: [{ type: "text", text: "Cannot open nvim: not inside a tmux session. Use mode 'view' instead." }],
+            isError: true,
+          };
+        }
 
-				const nvimArgs = params.line ? `+${params.line}` : "";
-				const cmd = nvimArgs
-					? `tmux split-window -h "nvim ${nvimArgs} '${resolved}'"`
-					: `tmux split-window -h "nvim '${resolved}'"`;
+        const nvimArgs = params.line ? `+${params.line}` : "";
+        const cmd = nvimArgs
+          ? `tmux split-window -h "nvim ${nvimArgs} '${resolved}'"`
+          : `tmux split-window -h "nvim '${resolved}'"`;
 
-				await pi.exec("bash", ["-c", cmd]);
+        await pi.exec("bash", ["-c", cmd]);
 
-				return {
-					content: [{ type: "text", text: `Opened ${path.basename(resolved)} in nvim (tmux split)` }],
-					details: { path: resolved, mode: "edit", line: params.line },
-				};
-			}
+        return {
+          content: [{ type: "text", text: `Opened ${path.basename(resolved)} in nvim (tmux split)` }],
+          details: { path: resolved, mode: "edit", line: params.line },
+        };
+      }
 
-			// View or diff mode
-			if (stat.size > 1_000_000) {
-				return {
-					content: [{ type: "text", text: `File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB) for modal view.` }],
-					isError: true,
-				};
-			}
+      // View or diff mode
+      if (stat.size > 1_000_000) {
+        return {
+          content: [{ type: "text", text: `File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB) for modal view.` }],
+          isError: true,
+        };
+      }
 
-			const content = fs.readFileSync(resolved, "utf-8");
-			const lineCount = content.split("\n").length;
-			const startInDiff = params.mode === "diff";
+      const content = fs.readFileSync(resolved, "utf-8");
+      const lineCount = content.split("\n").length;
+      const startInDiff = params.mode === "diff";
 
-			if (ctx.hasUI) {
-				await showFileOverlay(resolved, content, ctx, startInDiff);
-			}
+      if (ctx.hasUI) {
+        await showFileOverlay(resolved, content, ctx, startInDiff);
+      }
 
-			const modeText = startInDiff ? "diff" : "view";
-			return {
-				content: [{ type: "text", text: `Showed ${path.basename(resolved)} (${lineCount} lines) in ${modeText} mode.` }],
-				details: { path: resolved, mode: params.mode, lines: lineCount },
-			};
-		},
+      const modeText = startInDiff ? "diff" : "view";
+      return {
+        content: [{ type: "text", text: `Showed ${path.basename(resolved)} (${lineCount} lines) in ${modeText} mode.` }],
+        details: { path: resolved, mode: params.mode, lines: lineCount },
+      };
+    },
 
-		renderCall(args, theme) {
-			let mode: string;
-			if (args.mode === "edit") {
-				mode = theme.fg("warning", "nvim");
-			} else if (args.mode === "diff") {
-				mode = theme.fg("info", "diff");
-			} else {
-				mode = theme.fg("accent", "view");
-			}
-			let text = theme.fg("toolTitle", theme.bold("open_file "));
-			text += mode + " ";
-			text += theme.fg("muted", args.path);
-			if (args.line) text += theme.fg("dim", `:${args.line}`);
-			return new Text(text, 0, 0);
-		},
+    renderCall(args, theme) {
+      let mode: string;
+      if (args.mode === "edit") {
+        mode = theme.fg("warning", "nvim");
+      } else if (args.mode === "diff") {
+        mode = theme.fg("info", "diff");
+      } else {
+        mode = theme.fg("accent", "view");
+      }
+      let text = theme.fg("toolTitle", theme.bold("open_file "));
+      text += mode + " ";
+      text += theme.fg("muted", args.path);
+      if (args.line) text += theme.fg("dim", `:${args.line}`);
+      return new Text(text, 0, 0);
+    },
 
-		renderResult(result, { expanded }, theme) {
-			if (result.isError) {
-				const msg = result.content[0];
-				return new Text(theme.fg("error", msg?.type === "text" ? msg.text : "Error"), 0, 0);
-			}
+    renderResult(result, { expanded }, theme) {
+      if (result.isError) {
+        const msg = result.content[0];
+        return new Text(theme.fg("error", msg?.type === "text" ? msg.text : "Error"), 0, 0);
+      }
 
-			const details = result.details as { path: string; mode: string; line?: number; lines?: number } | undefined;
-			if (!details) {
-				const msg = result.content[0];
-				return new Text(msg?.type === "text" ? msg.text : "", 0, 0);
-			}
+      const details = result.details as { path: string; mode: string; line?: number; lines?: number } | undefined;
+      if (!details) {
+        const msg = result.content[0];
+        return new Text(msg?.type === "text" ? msg.text : "", 0, 0);
+      }
 
-			const icon = details.mode === "edit" ? "✏️" : "👁";
-			const fileName = path.basename(details.path);
-			let text = `${icon} ${theme.fg("success", fileName)}`;
+      const icon = details.mode === "edit" ? "✏️" : "👁";
+      const fileName = path.basename(details.path);
+      let text = `${icon} ${theme.fg("success", fileName)}`;
 
-			if (details.mode === "edit") {
-				text += theme.fg("dim", " opened in nvim");
-				if (details.line) text += theme.fg("dim", ` at line ${details.line}`);
-			} else {
-				text += theme.fg("dim", ` (${details.lines} lines)`);
-			}
+      if (details.mode === "edit") {
+        text += theme.fg("dim", " opened in nvim");
+        if (details.line) text += theme.fg("dim", ` at line ${details.line}`);
+      } else {
+        text += theme.fg("dim", ` (${details.lines} lines)`);
+      }
 
-			if (expanded) {
-				text += "\n" + theme.fg("muted", `  ${details.path}`);
-			}
+      if (expanded) {
+        text += "\n" + theme.fg("muted", `  ${details.path}`);
+      }
 
-			return new Text(text, 0, 0);
-		},
-	});
+      return new Text(text, 0, 0);
+    },
+  });
 
-	// ── Shared overlay display ───────────────────────────────────────────────
+  // ── Shared overlay display ───────────────────────────────────────────────
 
-	async function showFileOverlay(resolved: string, content: string, ctx: { hasUI: boolean; cwd: string; ui: any }, startInDiffMode: boolean = false) {
-		await ctx.ui.custom<void>(
-			(tui: any, theme: Theme, _kb: any, done: (v: void) => void) => {
-				const viewer = new FileViewerComponent(
-					resolved,
-					content,
-					theme,
-					() => done(),
-					async () => {
-						if (await isInsideTmux()) {
-							await pi.exec("bash", ["-c", `tmux split-window -h "nvim '${resolved}'"`]);
-							done();
-						}
-					},
-					startInDiffMode,
-				);
-				return {
-					render: (w: number) => viewer.render(w),
-					invalidate: () => viewer.invalidate(),
-					handleInput: (data: string) => {
-						viewer.handleInput(data);
-						tui.requestRender();
-					},
-				};
-			},
-			{
-				overlay: true,
-				overlayOptions: {
-					anchor: "center" as const,
-					width: MODAL_WIDTH_PERCENT,
-					minWidth: FALLBACK_MODAL_WIDTH,
-					maxHeight: MODAL_HEIGHT_PERCENT,
-				},
-			},
-		);
-	}
+  async function showFileOverlay(resolved: string, content: string, ctx: { hasUI: boolean; cwd: string; ui: any }, startInDiffMode: boolean = false) {
+    await ctx.ui.custom<void>(
+      (tui: any, theme: Theme, _kb: any, done: (v: void) => void) => {
+        const viewer = new FileViewerComponent(
+          resolved,
+          content,
+          theme,
+          () => done(),
+          async () => {
+            if (await isInsideTmux()) {
+              await pi.exec("bash", ["-c", `tmux split-window -h "nvim '${resolved}'"`]);
+              done();
+            }
+          },
+          startInDiffMode,
+        );
+        return {
+          render: (w: number) => viewer.render(w),
+          invalidate: () => viewer.invalidate(),
+          handleInput: (data: string) => {
+            viewer.handleInput(data);
+            tui.requestRender();
+          },
+        };
+      },
+      {
+        overlay: true,
+        overlayOptions: {
+          anchor: "center" as const,
+          width: MODAL_WIDTH_PERCENT,
+          minWidth: FALLBACK_MODAL_WIDTH,
+          maxHeight: MODAL_HEIGHT_PERCENT,
+        },
+      },
+    );
+  }
 
-	// ── Nvim helper ──────────────────────────────────────────────────────────
+  // ── Nvim helper ──────────────────────────────────────────────────────────
 
-	async function openInNvim(resolved: string, ctx: { ui: any }) {
-		if (await isInsideTmux()) {
-			await pi.exec("bash", ["-c", `tmux split-window -h "nvim '${resolved}'"`]);
-		} else {
-			ctx.ui.notify("Not inside tmux — cannot open nvim in a split", "error");
-		}
-	}
+  async function openInNvim(resolved: string, ctx: { ui: any }) {
+    if (await isInsideTmux()) {
+      await pi.exec("bash", ["-c", `tmux split-window -h "nvim '${resolved}'"`]);
+    } else {
+      ctx.ui.notify("Not inside tmux — cannot open nvim in a split", "error");
+    }
+  }
 }
