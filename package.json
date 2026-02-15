@@ -1,0 +1,17 @@
+{
+  "name": "@carlosrodrigo/pi-config",
+  "version": "0.1.0",
+  "description": "Personal pi extensions and themes — bordered editor, file opener, catppuccin theme",
+  "keywords": ["pi-package"],
+  "type": "module",
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  }
+}

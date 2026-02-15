@@ -6,6 +6,9 @@ PI_DIR="${HOME}/.pi/agent"
 
 echo "Installing pi-config from ${REPO_DIR}"
 echo ""
+echo "Note: For extensions only, you can also use:"
+echo "  pi install git:github.com/carlos-rodrigo/pi-config"
+echo ""
 
 # Create target directories
 mkdir -p "${PI_DIR}/extensions"
