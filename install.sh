@@ -10,9 +10,9 @@ echo "Note: For extensions only, you can also use:"
 echo "  pi install git:github.com/carlos-rodrigo/pi-config"
 echo ""
 
-# Install npm dependencies (needed by extensions loaded via symlinks)
+# Install npm dependencies into ~/.pi/agent so symlinked extensions can resolve them
 echo "Installing dependencies..."
-(cd "${REPO_DIR}" && npm install --silent)
+npm install --prefix "${PI_DIR}" --silent diff
 echo ""
 
 # Create target directories
