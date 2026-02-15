@@ -10,6 +10,11 @@ echo "Note: For extensions only, you can also use:"
 echo "  pi install git:github.com/carlos-rodrigo/pi-config"
 echo ""
 
+# Install npm dependencies (needed by extensions loaded via symlinks)
+echo "Installing dependencies..."
+(cd "${REPO_DIR}" && npm install --silent)
+echo ""
+
 # Create target directories
 mkdir -p "${PI_DIR}/extensions"
 mkdir -p "${PI_DIR}/themes"
