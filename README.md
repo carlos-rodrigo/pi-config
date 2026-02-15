@@ -2,27 +2,17 @@
 
 My personal [Pi](https://github.com/badlogic/pi-mono) extensions and themes.
 
-## Setup
-
-Add this repository as a package in your Pi settings (`~/.pi/agent/settings.json`):
-
-```json
-{
-  "packages": ["path/to/pi-config"]
-}
-```
-
-Or symlink the contents into your Pi agent directory:
+## Install
 
 ```bash
-# Extensions
-ln -s path/to/pi-config/extensions/*.ts ~/.pi/agent/extensions/
-
-# Themes
-ln -s path/to/pi-config/themes/*.json ~/.pi/agent/themes/
+git clone https://github.com/carlos-rodrigo/pi-config.git
+cd pi-config
+./install.sh
 ```
 
-Then restart Pi and select the theme via `/settings`.
+This symlinks all extensions and themes into `~/.pi/agent/`. Restart Pi and select a theme via `/settings`.
+
+To update, just `git pull` — symlinks pick up changes automatically.
 
 ## Contents
 
