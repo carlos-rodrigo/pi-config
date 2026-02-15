@@ -9,8 +9,6 @@ import * as path from "node:path";
 import { execSync } from "node:child_process";
 import { diffLines, Change } from "diff";
 
-// ── Git helpers (for diff mode) ────────────────────────────────────────────
-
 function getGitOriginalContent(filePath: string): string | undefined {
   try {
     const dir = path.dirname(filePath);
@@ -113,11 +111,41 @@ function emptyLine(innerWidth: number, theme: Theme): string {
   return borderColor(BOX.v) + " ".repeat(innerWidth) + borderColor(BOX.v);
 }
 
+// ── Diff display types ─────────────────────────────────────────────────────
+
+type DiffDisplayLine = { text: string; type: "add" | "del" | "ctx" | "sep" };
+
+const BG_ADD = "\x1b[48;2;22;45;22m";
+const BG_DEL = "\x1b[48;2;55;22;22m";
+const BG_RESET = "\x1b[49m";
+
+function wrapDiffLine(dl: DiffDisplayLine, innerWidth: number, theme: Theme): string {
+  const borderColor = (s: string) => theme.fg("borderAccent", s);
+  const pad = " ".repeat(INNER_PADDING_X);
+  const contentWidth = innerWidth - INNER_PADDING_X * 2;
+  const normalized = dl.text.includes("\t") ? dl.text.replace(/\t/g, TAB_REPLACEMENT) : dl.text;
+  const truncated = truncateToWidth(normalized, contentWidth, "");
+  const visible = visibleWidth(truncated);
+  const rightPad = " ".repeat(Math.max(0, contentWidth - visible));
+  const inner = pad + truncated + rightPad + pad;
+
+  let styledInner: string;
+  if (dl.type === "add") {
+    styledInner = BG_ADD + inner + BG_RESET;
+  } else if (dl.type === "del") {
+    styledInner = BG_DEL + inner + BG_RESET;
+  } else {
+    styledInner = inner;
+  }
+
+  return borderColor(BOX.v) + styledInner + borderColor(BOX.v);
+}
+
 // ── File viewer component ──────────────────────────────────────────────────
 
 class FileViewerComponent {
   private contentLines: string[] = [];
-  private diffLines: string[] = [];
+  private diffDisplayLines: DiffDisplayLine[] = [];
   private scrollOffset = 0;
   private filePath: string;
   private theme: Theme;
@@ -176,31 +204,100 @@ class FileViewerComponent {
   }
 
   private buildDiffLines(original: string, current: string): void {
-    const changes = diffLines(original, current);
-    const lines: string[] = [];
-    let lineNum = 0;
+    const CONTEXT = 3;
+    const th = this.theme;
+    const lang = getLanguageFromPath(this.filePath);
 
-    for (const change of changes) {
-      const changeLines = change.value.split("\n");
-      // Remove last empty line from split
-      if (changeLines[changeLines.length - 1] === "") {
-        changeLines.pop();
-      }
+    // Syntax-highlight both versions independently
+    const oldHL = highlightCode(original, lang);
+    const newHL = highlightCode(current, lang);
 
-      for (const line of changeLines) {
+    // Build flat list with type, line numbers, and highlighted text
+    type RawLine = { type: "add" | "del" | "ctx"; oldNum?: number; newNum?: number; hl: string };
+    const all: RawLine[] = [];
+    let oldN = 0;
+    let newN = 0;
+
+    for (const change of diffLines(original, current)) {
+      const cls = change.value.split("\n");
+      if (cls.length > 0 && cls[cls.length - 1] === "") cls.pop();
+      for (const raw of cls) {
         if (change.added) {
-          lines.push(this.theme.fg("success", "+ " + line));
+          newN++;
+          all.push({ type: "add", newNum: newN, hl: newHL[newN - 1] ?? raw });
         } else if (change.removed) {
-          lines.push(this.theme.fg("error", "- " + line));
+          oldN++;
+          all.push({ type: "del", oldNum: oldN, hl: oldHL[oldN - 1] ?? raw });
         } else {
-          lineNum++;
-          const numStr = this.theme.fg("dim", String(lineNum).padStart(4, " "));
-          lines.push(numStr + "  " + line);
+          oldN++;
+          newN++;
+          all.push({ type: "ctx", oldNum: oldN, newNum: newN, hl: newHL[newN - 1] ?? raw });
         }
       }
     }
 
-    this.diffLines = lines;
+    // Find changed indices → group into hunks with context
+    const changed: number[] = [];
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].type !== "ctx") changed.push(i);
+    }
+    if (changed.length === 0) return;
+
+    type Hunk = { start: number; end: number };
+    const hunks: Hunk[] = [];
+    let cur: Hunk | null = null;
+    for (const idx of changed) {
+      const s = Math.max(0, idx - CONTEXT);
+      const e = Math.min(all.length - 1, idx + CONTEXT);
+      if (cur && s <= cur.end + 1) {
+        cur.end = e;
+      } else {
+        if (cur) hunks.push(cur);
+        cur = { start: s, end: e };
+      }
+    }
+    if (cur) hunks.push(cur);
+
+    const numW = String(Math.max(oldN, newN)).length;
+    const out: DiffDisplayLine[] = [];
+
+    for (let h = 0; h < hunks.length; h++) {
+      const hunk = hunks[h];
+
+      // Collapsed indicator
+      if (h === 0 && hunk.start > 0) {
+        out.push({ text: th.fg("dim", `  ⋯ ${hunk.start} unchanged lines ⋯`), type: "sep" });
+      } else if (h > 0) {
+        const gap = hunk.start - hunks[h - 1].end - 1;
+        if (gap > 0) {
+          out.push({ text: th.fg("dim", `  ⋯ ${gap} unchanged lines ⋯`), type: "sep" });
+        }
+      }
+
+      // Hunk lines: dual line numbers + marker + syntax-highlighted code
+      for (let i = hunk.start; i <= hunk.end; i++) {
+        const dl = all[i];
+        const oStr = dl.oldNum != null ? String(dl.oldNum).padStart(numW) : " ".repeat(numW);
+        const nStr = dl.newNum != null ? String(dl.newNum).padStart(numW) : " ".repeat(numW);
+        const nums = th.fg("dim", oStr) + " " + th.fg("dim", nStr);
+
+        if (dl.type === "add") {
+          out.push({ text: nums + " " + th.fg("success", "+") + " " + dl.hl, type: "add" });
+        } else if (dl.type === "del") {
+          out.push({ text: nums + " " + th.fg("error", "-") + " " + dl.hl, type: "del" });
+        } else {
+          out.push({ text: nums + "   " + dl.hl, type: "ctx" });
+        }
+      }
+    }
+
+    // Trailing collapse
+    const lastEnd = hunks[hunks.length - 1].end;
+    if (lastEnd < all.length - 1) {
+      out.push({ text: th.fg("dim", `  ⋯ ${all.length - 1 - lastEnd} unchanged lines ⋯`), type: "sep" });
+    }
+
+    this.diffDisplayLines = out;
   }
 
   toggleDiffMode(): void {
@@ -225,8 +322,8 @@ class FileViewerComponent {
       return;
     }
 
-    const lines = this.diffMode ? this.diffLines : this.contentLines;
-    const maxScroll = Math.max(0, lines.length - this.viewHeight());
+    const lineCount = this.diffMode ? this.diffDisplayLines.length : this.contentLines.length;
+    const maxScroll = Math.max(0, lineCount - this.viewHeight());
 
     if (matchesKey(data, Key.down) || matchesKey(data, "j")) {
       this.scrollOffset = Math.min(this.scrollOffset + 1, maxScroll);
@@ -279,8 +376,7 @@ class FileViewerComponent {
       this.contentLines = md.render(contentWidth);
     }
 
-    const displayLines = this.diffMode ? this.diffLines : this.contentLines;
-    const totalLines = displayLines.length;
+    const totalLines = this.diffMode ? this.diffDisplayLines.length : this.contentLines.length;
     const vh = Math.max(1, modalHeight - MODAL_FRAME_LINES);
     this.currentViewHeight = vh;
 
@@ -313,13 +409,23 @@ class FileViewerComponent {
     output.push(drawSeparator(modalWidth, th));
 
     // Content area
-    const visibleLines = displayLines.slice(this.scrollOffset, this.scrollOffset + vh);
-    for (let i = 0; i < vh; i++) {
-      if (i < visibleLines.length) {
-        output.push(wrapContentLine(visibleLines[i]!, innerWidth, th));
-      } else {
-        // Fill remaining space with empty lines to keep fixed height
-        output.push(emptyLine(innerWidth, th));
+    if (this.diffMode) {
+      const visible = this.diffDisplayLines.slice(this.scrollOffset, this.scrollOffset + vh);
+      for (let i = 0; i < vh; i++) {
+        if (i < visible.length) {
+          output.push(wrapDiffLine(visible[i]!, innerWidth, th));
+        } else {
+          output.push(emptyLine(innerWidth, th));
+        }
+      }
+    } else {
+      const visible = this.contentLines.slice(this.scrollOffset, this.scrollOffset + vh);
+      for (let i = 0; i < vh; i++) {
+        if (i < visible.length) {
+          output.push(wrapContentLine(visible[i]!, innerWidth, th));
+        } else {
+          output.push(emptyLine(innerWidth, th));
+        }
       }
     }
 
