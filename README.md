@@ -34,7 +34,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 
 Sub-agent definitions used by the subagent extension:
 
-- **oracle** — Deep reasoning second opinion (o4-mini). For complex debugging, architecture decisions, and thorough code analysis. Read-only.
+- **oracle** — Deep reasoning second opinion (gpt-5.3-codex). For complex debugging, architecture decisions, and thorough code analysis. Read-only.
 - **librarian** — Code research across GitHub (Sonnet). Searches repos, reads library source code, traces implementations. Uses `gh` CLI.
 - **researcher** — Internet research (Sonnet). Investigates technologies, compares approaches, checks state of the art. Uses `curl`/`gh`.
 - **scout** — Fast codebase recon (Haiku). Quick investigation that returns compressed context for handoff to other agents.
