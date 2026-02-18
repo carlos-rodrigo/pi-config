@@ -1,11 +1,11 @@
 /**
  * Bordered Editor — input box with rounded borders and embedded status info.
  *
- * ╭─ claude-opus-4-6 · xhigh ─────────────────────────────╮
+ * ╭──────────────────────────── claude-opus-4-6 · xhigh ─╮
  * │   your prompt here                                      │
  * ╰─ 42% of 200k · $1.14 ──────────── ~/project (main) ─╯
  *
- * Top left:     model · thinking-level (level in green)
+ * Top right:    model · thinking-level (level in green)
  * Bottom left:  context% of Nk · $cost
  * Bottom right: cwd (git-branch) — branch in violet
  */
@@ -48,12 +48,12 @@ class BorderedEditor extends CustomEditor {
 			}
 		}
 
-		// --- Top labels: model · level ---
-		let topLeft = "";
+		// --- Top labels: model · level (top right) ---
+		let topRight = "";
 		if (this.ctx?.model && theme) {
 			const name = this.ctx.model.name || this.ctx.model.id;
 			const level = this.getThinkingLevel();
-			topLeft =
+			topRight =
 				theme.fg("muted", name) +
 				theme.fg("dim", " · ") +
 				theme.fg("success", level);
@@ -96,7 +96,7 @@ class BorderedEditor extends CustomEditor {
 
 		return lines.map((line, i) => {
 			if (i === 0)
-				return this.buildBorder(width, "╭", "╮", bc, topLeft, "");
+				return this.buildBorder(width, "╭", "╮", bc, "", topRight);
 			if (i === bottomIdx)
 				return this.buildBorder(
 					width,
