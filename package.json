@@ -2,11 +2,18 @@
   "name": "@carlosrodrigo/pi-config",
   "version": "0.1.0",
   "description": "Personal pi extensions and themes — bordered editor, file opener, catppuccin theme",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "type": "module",
   "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.product-agent-ui.json"
+  },
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": [
+      "./extensions"
+    ]
   },
   "dependencies": {
     "diff": "^7.0.0"
@@ -16,5 +23,13 @@
     "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-tui": "*",
     "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-ai": "^0.54.0",
+    "@mariozechner/pi-coding-agent": "^0.54.0",
+    "@mariozechner/pi-tui": "^0.54.0",
+    "@sinclair/typebox": "^0.34.48",
+    "@types/node": "^25.3.0",
+    "typescript": "^5.9.3"
   }
 }

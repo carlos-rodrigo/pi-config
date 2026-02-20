@@ -29,6 +29,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[bordered-editor](extensions/README.md#bordered-editor)** — Custom input box with rounded borders and embedded status info (model, context usage, cost, git branch).
 - **[file-opener](extensions/README.md#file-opener)** — Open files in a syntax-highlighted overlay modal or in nvim via tmux, with built-in diff support. Adds `/open` command and `open_file` tool.
 - **[subagent](extensions/subagent/)** — Delegate tasks to specialized sub-agents with isolated context windows. Supports single, parallel, and chain modes.
+- **product-agent-ui** — Product workflow shell for Plan → Design → Tasks → Implement → Review (currently in progress).
 
 ### [Agents](agents/)
 
@@ -52,6 +53,82 @@ Workflow prompt templates:
 ### [Themes](themes/)
 
 - **catppuccin-macchiato** — [Catppuccin Macchiato](https://github.com/catppuccin/catppuccin) color palette.
+
+## Product Agent UI Policy Configuration
+
+Product Agent UI loads policy from project-local JSON:
+
+- **Path:** `.pi/product-agent-policy.json`
+- **Load order:** project file first, then built-in strict defaults when file is missing/invalid
+- **Warning behavior:** invalid JSON/schema falls back safely to strict defaults and exposes a warning message in the Product UI header
+
+### Policy schema
+
+```json
+{
+  "version": 1,
+  "mode": "strict",
+  "gates": {
+    "planApprovalRequired": true,
+    "designApprovalRequired": true,
+    "tasksApprovalRequired": true,
+    "reviewRequired": true
+  },
+  "execution": {
+    "autoRunLoop": true,
+    "stopOnFailedChecks": true,
+    "stopOnUncertainty": true,
+    "maxConsecutiveTasks": 3
+  }
+}
+```
+
+`maxConsecutiveTasks` is optional. When present, it must be an integer `>= 1`.
+
+### Built-in strict defaults
+
+```json
+{
+  "version": 1,
+  "mode": "strict",
+  "gates": {
+    "planApprovalRequired": true,
+    "designApprovalRequired": true,
+    "tasksApprovalRequired": true,
+    "reviewRequired": true
+  },
+  "execution": {
+    "autoRunLoop": true,
+    "stopOnFailedChecks": true,
+    "stopOnUncertainty": true
+  }
+}
+```
+
+### Example custom policy
+
+```json
+{
+  "version": 1,
+  "mode": "mixed",
+  "gates": {
+    "planApprovalRequired": true,
+    "designApprovalRequired": true,
+    "tasksApprovalRequired": false,
+    "reviewRequired": true
+  },
+  "execution": {
+    "autoRunLoop": true,
+    "stopOnFailedChecks": true,
+    "stopOnUncertainty": true,
+    "maxConsecutiveTasks": 2
+  }
+}
+```
+
+### Reload behavior
+
+Policy is read each time `/product` opens. After editing `.pi/product-agent-policy.json`, close and reopen Product Agent UI to pick up changes. If extension code changes, run `/reload`.
 
 ## Usage Examples
 
