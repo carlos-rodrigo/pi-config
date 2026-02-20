@@ -5,6 +5,7 @@ import {
 	type ProductApprovals,
 	type ProductShellState,
 	type ProductStageId,
+	type ProductTaskView,
 } from "../types.js";
 
 export const PRODUCT_AGENT_STATE_ENTRY_TYPE = "product-agent-state";
@@ -15,6 +16,7 @@ export interface ProductAgentStateSnapshot {
 	featureName: string;
 	currentStage: ProductStageId;
 	approvals: ProductApprovals;
+	taskView: ProductTaskView;
 	blockedStage?: ProductStageId;
 	lastBlockedReason?: string;
 	updatedAt: string;
@@ -35,6 +37,7 @@ export function createWorkflowStateSnapshot(
 		featureName: state.featureName,
 		currentStage: state.currentStage,
 		approvals: cloneApprovals(state.approvals),
+		taskView: state.taskView,
 		updatedAt,
 	};
 
@@ -63,6 +66,7 @@ export function restoreWorkflowStateFromEntries(
 		const restored = createDefaultProductShellState(featureName);
 		restored.currentStage = snapshot.currentStage;
 		restored.approvals = cloneApprovals(snapshot.approvals);
+		restored.taskView = snapshot.taskView;
 		restored.blockedStage = snapshot.blockedStage;
 		restored.lastBlockedReason = snapshot.lastBlockedReason;
 		return restored;
@@ -85,11 +89,15 @@ function parseSnapshot(data: unknown): ProductAgentStateSnapshot | undefined {
 	const approvals = parseApprovals(data.approvals);
 	if (!approvals) return undefined;
 
+	const taskView = data.taskView === undefined ? "list" : data.taskView;
+	if (!isTaskView(taskView)) return undefined;
+
 	const snapshot: ProductAgentStateSnapshot = {
 		version: PRODUCT_AGENT_STATE_VERSION,
 		featureName: data.featureName,
 		currentStage: data.currentStage,
 		approvals,
+		taskView,
 		updatedAt: data.updatedAt,
 	};
 
@@ -163,4 +171,8 @@ function isApprovalDecision(value: unknown): value is ProductApprovalDecision {
 
 function isStageId(value: unknown): value is ProductStageId {
 	return value === "plan" || value === "design" || value === "tasks" || value === "implement" || value === "review";
+}
+
+function isTaskView(value: unknown): value is ProductTaskView {
+	return value === "list" || value === "board";
 }

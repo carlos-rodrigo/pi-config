@@ -1,6 +1,6 @@
 ---
 id: 006
-status: open
+status: done
 depends: [003]
 parent: null
 created: 2026-02-19

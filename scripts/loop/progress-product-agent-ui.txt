@@ -9,6 +9,9 @@ Feature: product-agent-ui
 - Persist workflow mutations (stage changes, approvals, block reasons) through a single snapshot writer (`createWorkflowStateSnapshot` + `pi.appendEntry`) so session recovery logic can replay one canonical custom-entry shape.
 - Task artifact loading should be path-safe (`isPathWithinRoot`) and bounded (max file count + max file size) before parsing markdown to avoid traversal and runaway I/O.
 - Any markdown/user-derived text rendered in TUI lists should be sanitized for control characters first to avoid terminal escape/control-sequence injection.
+- Task file actions should validate selected task paths against the active feature task root (including `realpath` containment) before dispatching `/open` commands.
+- Artifact loaders should resolve real paths and cap preview bytes before reading to avoid symlink escape and runaway memory usage.
+- Keyboard selection order must follow rendered task group order (`TASK_GROUP_ORDER`) so navigation and highlights stay predictable.
 
 ---
 
@@ -123,5 +126,76 @@ Task ID: 004
   - Keep task parsing fail-soft: continue rendering valid tasks while surfacing structured warnings instead of crashing the shell.
   - Normalize numeric task IDs (`004`) at parse time so list ordering and dependency references stay consistent.
   - There is still no dedicated automated test harness for this feature area; for this task we used manual runtime verification plus `npm run typecheck` and should add service-level tests in a follow-up.
+
+---
+
+## 2026-02-20 - Add task board toggle and keyboard interactions
+
+Task ID: 005
+
+- Added `extensions/product-agent-ui/components/product-shell.ts` to centralize Product shell rendering/input handling and support task-stage keyboard interactions.
+- Added `extensions/product-agent-ui/components/task-board.ts` to render the board view with exactly three status columns (`TODO`, `In Progress`, `Done`) and selected-task highlighting.
+- Updated task list rendering to highlight selected tasks and keep grouped ordering intact.
+- Extended workflow state with persisted `taskView` and in-session `selectedTaskId` selection state.
+- Updated Product shell orchestration to:
+  - toggle list/board with `v`,
+  - move task selection with `↑/↓` or `j/k`,
+  - dispatch selected task file actions with `o` (open), `d` (diff), and `e` (open viewer for edit flow),
+  - validate selected task paths against the active feature task directory before dispatch.
+- Validation run:
+  - `npm run typecheck`
+- Review run:
+  - Oracle code-quality review
+  - Oracle security review
+  - Oracle performance review
+  - Oracle testing-gap review
+- Files changed:
+  - `extensions/product-agent-ui/components/product-shell.ts`
+  - `extensions/product-agent-ui/components/task-board.ts`
+  - `extensions/product-agent-ui/components/task-list.ts`
+  - `extensions/product-agent-ui/index.ts`
+  - `extensions/product-agent-ui/services/state-service.ts`
+  - `extensions/product-agent-ui/types.ts`
+  - `.features/product-agent-ui/tasks/005-task-board-and-keyboard-actions.md`
+  - `.features/product-agent-ui/tasks/_active.md`
+  - `scripts/loop/progress-product-agent-ui.txt`
+- **Learnings for future iterations:**
+  - Keep high-frequency keyboard navigation state in-memory and avoid persisting every keypress to prevent session-entry churn.
+  - When dispatching file actions from task metadata, enforce both string sanitation and `realpath` containment checks before command construction.
+  - Sharing render helpers between list/board components is a good follow-up to reduce duplication as the UI grows.
+
+---
+
+## 2026-02-20 - Implement artifact workspace compose/refine flow
+
+Task ID: 006
+
+- Added `extensions/product-agent-ui/services/artifact-service.ts` to load stage artifacts (`prd.md`, `design.md`, `tasks/_active.md`) with feature-name validation, realpath containment checks, bounded preview reads, and parallel artifact loading.
+- Added `extensions/product-agent-ui/components/artifact-panel.ts` to render stage artifact previews, compose/refine action hints, warning banners, and open/diff/edit affordances with cached preview line computation.
+- Added `extensions/product-agent-ui/services/dispatch-service.ts` helpers for artifact compose dispatch (`/skill:prd`, `/skill:design-solution`, `/skill:simple-tasks`) and safe artifact file open/diff/edit dispatch through `/open` with follow-up delivery when streaming.
+- Updated `extensions/product-agent-ui/components/product-shell.ts` and `extensions/product-agent-ui/index.ts` to wire artifact compose/open actions per stage while keeping approvals explicit (`a`/`r`) and independent from generation (`c`).
+- Updated task selection navigation in `extensions/product-agent-ui/index.ts` to follow rendered grouped order (`TODO -> In Progress -> Done`) so keyboard movement aligns with what users see.
+- Validation run:
+  - `npm run typecheck`
+  - `node --experimental-strip-types --input-type=module` manual checks for artifact loading + dispatch path validation
+- Review run:
+  - Oracle code-quality review
+  - Oracle security review
+  - Oracle performance review
+  - Oracle testing-gap review
+- Files changed:
+  - `extensions/product-agent-ui/components/artifact-panel.ts`
+  - `extensions/product-agent-ui/components/product-shell.ts`
+  - `extensions/product-agent-ui/index.ts`
+  - `extensions/product-agent-ui/services/artifact-service.ts`
+  - `extensions/product-agent-ui/services/dispatch-service.ts`
+  - `extensions/product-agent-ui/services/state-service.ts`
+  - `.features/product-agent-ui/tasks/006-artifact-compose-and-review.md`
+  - `.features/product-agent-ui/tasks/_active.md`
+  - `scripts/loop/progress-product-agent-ui.txt`
+- **Learnings for future iterations:**
+  - Use `matchesKey(data, Key.shift("..."))` for shifted shortcuts inside custom panels; raw uppercase checks can break under Kitty keyboard protocol.
+  - Any user-facing file dispatch path should enforce both lexical checks and realpath containment (`project root -> feature root -> target file`) before command construction.
+  - For grouped task UIs, keep navigation order derived from rendered sections instead of raw task arrays to avoid selection drift.
 
 ---

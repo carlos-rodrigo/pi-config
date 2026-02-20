@@ -9,8 +9,8 @@ Feature: product-agent-ui
 - [x] 002 - Policy service with JSON config + strict defaults + README docs
 - [x] 003 - Stage gating + approvals persistence
 - [x] 004 - Task parsing + status normalization + grouped list
-- [ ] 005 - Task board toggle + keyboard interactions
-- [ ] 006 - Artifact compose/refine orchestration (PRD/Design/Tasks)
+- [x] 005 - Task board toggle + keyboard interactions
+- [x] 006 - Artifact compose/refine orchestration (PRD/Design/Tasks)
 - [ ] 007 - Run loop + run console timeline
 - [ ] 008 - Review panel (git changes + checklist + file actions)
 - [ ] 009 - State reconstruction and reconciliation hardening

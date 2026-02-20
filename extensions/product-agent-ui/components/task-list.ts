@@ -11,10 +11,11 @@ export interface TaskListRenderParams {
 	theme: Theme;
 	width: number;
 	result: ProductTaskListResult;
+	selectedTaskId?: string;
 }
 
 export function renderTaskList(params: TaskListRenderParams): string[] {
-	const { theme, width, result } = params;
+	const { theme, width, result, selectedTaskId } = params;
 	const lines: string[] = [];
 
 	lines.push(truncateToWidth(theme.fg("accent", theme.bold("Tasks · List view")), width));
@@ -31,7 +32,15 @@ export function renderTaskList(params: TaskListRenderParams): string[] {
 	lines.push("");
 
 	for (const group of TASK_GROUP_ORDER) {
-		lines.push(...renderSection({ theme, width, group, tasks: result.sections[group] }));
+		lines.push(
+			...renderSection({
+				theme,
+				width,
+				group,
+				tasks: result.sections[group],
+				selectedTaskId,
+			}),
+		);
 		lines.push("");
 	}
 
@@ -47,8 +56,9 @@ function renderSection(params: {
 	width: number;
 	group: ProductTaskGroupStatus;
 	tasks: ProductTaskItem[];
+	selectedTaskId?: string;
 }): string[] {
-	const { theme, width, group, tasks } = params;
+	const { theme, width, group, tasks, selectedTaskId } = params;
 	const lines: string[] = [];
 
 	lines.push(truncateToWidth(theme.fg("border", `${group} (${tasks.length})`), width));
@@ -64,7 +74,10 @@ function renderSection(params: {
 		const blockedMarker = task.isBlocked ? ` ${theme.fg("warning", "[blocked]")}` : "";
 		const statusText = theme.fg("dim", `(${task.rawStatus})`);
 		const label = `${theme.bold(safeId)} ${safeTitle}`;
-		lines.push(truncateToWidth(`  • ${label}${blockedMarker} ${statusText}`, width));
+		const isSelected = selectedTaskId === task.id;
+		const marker = isSelected ? theme.fg("accent", "▸") : "•";
+		const row = isSelected ? theme.fg("accent", `${label}${blockedMarker}`) : `${label}${blockedMarker}`;
+		lines.push(truncateToWidth(`  ${marker} ${row} ${statusText}`, width));
 	}
 
 	return lines;

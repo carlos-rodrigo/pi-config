@@ -23,10 +23,16 @@ export type ProductApprovals = Partial<Record<ProductApprovalTarget, ProductAppr
 
 export type ProductStageStatus = "Draft" | "Needs Approval" | "Approved" | "In Progress" | "Blocked" | "Done";
 
+export type ProductTaskView = "list" | "board";
+
+export type TaskFileActionMode = "view" | "diff" | "edit";
+
 export interface ProductShellState {
 	featureName: string;
 	currentStage: ProductStageId;
 	approvals: ProductApprovals;
+	taskView: ProductTaskView;
+	selectedTaskId?: string;
 	blockedStage?: ProductStageId;
 	lastBlockedReason?: string;
 }
@@ -40,5 +46,6 @@ export function createDefaultProductShellState(featureName = DEFAULT_FEATURE_NAM
 		featureName,
 		currentStage: DEFAULT_STAGE_ID,
 		approvals: {},
+		taskView: "list",
 	};
 }
