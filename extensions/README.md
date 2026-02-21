@@ -91,3 +91,25 @@ The viewer tracks the original content of each file when first opened in a sessi
 
 - **tmux** is required for the "edit" mode. If not in tmux, falls back gracefully with an error message.
 - **diff** npm package (used for computing line diffs).
+
+---
+
+## product-agent-ui
+
+Product workflow shell in Pi TUI:
+
+`Plan → Design → Tasks → Implement → Review`
+
+### What it adds
+
+| Feature | Description |
+|---|---|
+| `/product [feature]` | Open Product Agent shell |
+| `/product-run [feature]` | Start/continue run loop |
+| `/product-review [feature]` | Open shell directly in Review stage |
+| `Ctrl+Alt+W` | Global shortcut to open Product UI |
+
+### Docs
+
+- Full usage/configuration: [`extensions/product-agent-ui/README.md`](product-agent-ui/README.md)
+- QA notes and known limitations: [`extensions/product-agent-ui/QA.md`](product-agent-ui/QA.md)

@@ -8,7 +8,8 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.product-agent-ui.json"
+    "typecheck": "tsc --noEmit -p tsconfig.product-agent-ui.json",
+    "test:product-agent-ui": "rm -rf .tmp/product-agent-ui-test-build && tsc -p tsconfig.product-agent-ui.json --outDir .tmp/product-agent-ui-test-build && node --test .tmp/product-agent-ui-test-build/services/*.test.js"
   },
   "pi": {
     "extensions": [

@@ -11,10 +11,10 @@ Feature: product-agent-ui
 - [x] 004 - Task parsing + status normalization + grouped list
 - [x] 005 - Task board toggle + keyboard interactions
 - [x] 006 - Artifact compose/refine orchestration (PRD/Design/Tasks)
-- [ ] 007 - Run loop + run console timeline
-- [ ] 008 - Review panel (git changes + checklist + file actions)
-- [ ] 009 - State reconstruction and reconciliation hardening
-- [ ] 010 - End-to-end QA pass and docs polish
+- [x] 007 - Run loop + run console timeline
+- [x] 008 - Review panel (git changes + checklist + file actions)
+- [x] 009 - State reconstruction and reconciliation hardening
+- [x] 010 - End-to-end QA pass and docs polish
 
 ## Notes
 

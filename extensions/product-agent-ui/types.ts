@@ -27,12 +27,43 @@ export type ProductTaskView = "list" | "board";
 
 export type TaskFileActionMode = "view" | "diff" | "edit";
 
+export type ProductRunStatus = "idle" | "running" | "paused" | "blocked";
+
+export type ProductRunControlAction = "continue" | "pause" | "request_changes";
+
+export type ProductRunEventType = "task_start" | "task_done" | "task_blocked" | "checkpoint" | "info";
+
+export interface ProductRunEvent {
+	id: string;
+	at: string;
+	type: ProductRunEventType;
+	message: string;
+	taskId?: string;
+}
+
+export interface ProductRunCheckpoint {
+	id: string;
+	at: string;
+	message: string;
+	taskId?: string;
+}
+
+export interface ProductRunState {
+	status: ProductRunStatus;
+	timeline: ProductRunEvent[];
+	activeTaskId?: string;
+	blockedReason?: string;
+	pendingCheckpoint?: ProductRunCheckpoint;
+}
+
 export interface ProductShellState {
 	featureName: string;
 	currentStage: ProductStageId;
 	approvals: ProductApprovals;
 	taskView: ProductTaskView;
+	run: ProductRunState;
 	selectedTaskId?: string;
+	selectedReviewPath?: string;
 	blockedStage?: ProductStageId;
 	lastBlockedReason?: string;
 }
@@ -41,11 +72,19 @@ export const DEFAULT_STAGE_ID: ProductStageId = PRODUCT_STAGES[0].id;
 
 export const DEFAULT_FEATURE_NAME = "product-agent-ui";
 
+export function createDefaultProductRunState(): ProductRunState {
+	return {
+		status: "idle",
+		timeline: [],
+	};
+}
+
 export function createDefaultProductShellState(featureName = DEFAULT_FEATURE_NAME): ProductShellState {
 	return {
 		featureName,
 		currentStage: DEFAULT_STAGE_ID,
 		approvals: {},
 		taskView: "list",
+		run: createDefaultProductRunState(),
 	};
 }

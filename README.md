@@ -29,7 +29,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[bordered-editor](extensions/README.md#bordered-editor)** — Custom input box with rounded borders and embedded status info (model, context usage, cost, git branch).
 - **[file-opener](extensions/README.md#file-opener)** — Open files in a syntax-highlighted overlay modal or in nvim via tmux, with built-in diff support. Adds `/open` command and `open_file` tool.
 - **[subagent](extensions/subagent/)** — Delegate tasks to specialized sub-agents with isolated context windows. Supports single, parallel, and chain modes.
-- **product-agent-ui** — Product workflow shell for Plan → Design → Tasks → Implement → Review (currently in progress).
+- **[product-agent-ui](extensions/product-agent-ui/README.md)** — Product workflow shell for Plan → Design → Tasks → Implement → Review.
 
 ### [Agents](agents/)
 
@@ -129,6 +129,39 @@ Product Agent UI loads policy from project-local JSON:
 ### Reload behavior
 
 Policy is read each time `/product` opens. After editing `.pi/product-agent-policy.json`, close and reopen Product Agent UI to pick up changes. If extension code changes, run `/reload`.
+
+## Product Agent UI Workflow Usage
+
+### Commands
+
+| Command | Purpose |
+|---|---|
+| `/product [feature]` | Open the Product Agent shell for a feature (`Plan → Design → Tasks → Implement → Review`). |
+| `/product-run [feature]` | Start/continue the run loop for the target feature (queues one ready task through `implement-task`). |
+| `/product-review [feature]` | Open the Product Agent shell directly in the **Review** stage. |
+
+### Shortcuts
+
+- **Global:** `Ctrl+Alt+W` opens Product Agent UI.
+- **Stage navigation:** `←/→` or `h/l`.
+- **Approval stages (Plan/Design/Tasks):** `c` compose/refine, `a` approve, `r` reject, `o/d/e` open/diff/edit artifact.
+- **Tasks stage:** `v` list/board toggle, `↑/↓` or `j/k` move selection, `o/d/e` task file actions, `O/D/E` artifact actions.
+- **Implement stage:** `c` continue, `p` pause, `r` request changes.
+- **Review stage:** `↑/↓` or `j/k` move selection, `o/d/e` file actions.
+
+### `/open` integration behavior
+
+Product Agent UI always reuses the existing `/open` flow (no duplicate file viewer):
+
+- If Pi is idle, file actions dispatch immediately.
+- If Pi is streaming, file actions are queued as follow-up messages (`deliverAs: "followUp"`) so actions are safe and non-interruptive.
+- `edit` mode enters the `/open` viewer first; press `e` in the viewer to open nvim.
+
+### Verification notes and known limitations
+
+Manual verification log and follow-up list:
+
+- `extensions/product-agent-ui/QA.md`
 
 ## Usage Examples
 

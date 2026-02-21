@@ -1,15 +1,13 @@
 /**
- * Agent Handoff Tool - lets the LLM programmatically trigger a session handoff
+ * Agent Handoff Tool - lets the LLM generate a focused handoff prompt.
  *
- * The /handoff command (from handoff.ts) is user-typed. This extension registers
- * a tool the LLM can call directly, enabling autonomous handoff from skills like
- * the loop skill.
+ * NOTE: /agent-handoff command was removed because queued slash commands sent via
+ * pi.sendUserMessage() are treated as plain user text (not command invocations).
  *
- * Flow:
+ * Current flow:
  *   1. Agent calls the handoff tool with a goal
- *   2. Tool gathers conversation, generates a focused prompt via LLM
- *   3. Tool queues /agent-handoff command as a follow-up
- *   4. Command creates a new session and sets the editor text
+ *   2. Tool gathers conversation and generates a focused prompt via LLM
+ *   3. Tool places the prompt in the editor and instructs the user to run /new manually
  */
 
 import { complete, type Message } from "@mariozechner/pi-ai";
@@ -40,50 +38,11 @@ Files involved:
 [Clear description of what to do next based on user's goal]`;
 
 export default function (pi: ExtensionAPI) {
-	let pendingHandoffPrompt: string | null = null;
-
-	// Command that handles session creation (needs ExtensionCommandContext for newSession)
-	pi.registerCommand("agent-handoff", {
-		description: "Complete a handoff initiated by the handoff tool (internal)",
-		handler: async (_args, ctx) => {
-			const prompt = pendingHandoffPrompt;
-			pendingHandoffPrompt = null;
-
-			if (!prompt) {
-				ctx.ui.notify("No pending handoff prompt", "error");
-				return;
-			}
-
-			if (!ctx.hasUI) {
-				ctx.ui.notify("Handoff requires interactive mode", "error");
-				return;
-			}
-
-			const currentSessionFile = ctx.sessionManager.getSessionFile();
-
-			const result = await ctx.newSession({
-				parentSession: currentSessionFile,
-			});
-
-			if (result.cancelled) {
-				ctx.ui.notify("New session cancelled", "info");
-				return;
-			}
-
-			ctx.ui.setEditorText(prompt);
-			ctx.ui.notify("Handoff ready — submit to start the new session.", "info");
-		},
-	});
-
-	// Tool the LLM can call to trigger handoff
 	pi.registerTool({
 		name: "handoff",
 		label: "Handoff",
 		description:
-			"Transfer context to a new session with a fresh context window. " +
-			"Generates a focused prompt from conversation history and the given goal, " +
-			"then creates a new session with that prompt ready to submit. " +
-			"Use when you need to continue work in a clean context (e.g., after completing a task in the loop).",
+			"Generate a focused handoff prompt from conversation history for continuing work in a fresh session.",
 		parameters: Type.Object({
 			goal: Type.String({
 				description:
@@ -92,7 +51,7 @@ export default function (pi: ExtensionAPI) {
 			}),
 		}),
 
-		async execute(toolCallId, params, signal, onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			if (!ctx.hasUI) {
 				return {
 					content: [{ type: "text", text: "Error: handoff requires interactive mode." }],
@@ -115,7 +74,6 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			// Gather conversation context from current branch
 			const branch = ctx.sessionManager.getBranch();
 			const messages = branch
 				.filter((entry): entry is SessionEntry & { type: "message" } => entry.type === "message")
@@ -128,12 +86,10 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			// Stream progress to the agent
 			onUpdate?.({
 				content: [{ type: "text", text: "Generating handoff prompt from conversation history..." }],
 			});
 
-			// Convert to LLM format and serialize
 			const llmMessages = convertToLlm(messages);
 			const conversationText = serializeConversation(llmMessages);
 			const apiKey = await ctx.modelRegistry.getApiKey(ctx.model);
@@ -174,16 +130,14 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			// Store prompt and queue session creation as a follow-up
-			// (tools run during streaming — must use followUp delivery)
-			pendingHandoffPrompt = generatedPrompt;
-			pi.sendUserMessage("/agent-handoff", { deliverAs: "followUp" });
+			ctx.ui.setEditorText(generatedPrompt);
+			ctx.ui.notify("Handoff prompt drafted in editor. Run /new, then submit it.", "info");
 
 			return {
 				content: [
 					{
 						type: "text",
-						text: "Handoff initiated. A new session will be created with the generated prompt after this turn completes. Do not send any more messages.",
+						text: "Handoff prompt generated and placed in the editor. Automatic session switching is disabled; run /new manually, then submit this prompt in the new session.",
 					},
 				],
 				details: {},
