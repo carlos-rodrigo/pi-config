@@ -18,7 +18,7 @@ Replaces Pi's default input editor with a bordered version that embeds status in
 |---|---|---|
 | Top left | Model name · thinking level | Level in **green** |
 | Bottom left | Context usage % of window · session cost | Muted |
-| Bottom right | Working directory (git branch) | Branch in **violet** |
+| Bottom right | Working directory + git state | Branch in **violet** for main checkout, **WT ...** tag for linked worktrees |
 
 ### How it works
 
@@ -91,3 +91,66 @@ The viewer tracks the original content of each file when first opened in a sessi
 
 - **tmux** is required for the "edit" mode. If not in tmux, falls back gracefully with an error message.
 - **diff** npm package (used for computing line diffs).
+
+---
+
+## worktree-manager
+
+Manage feature workspaces with native Git worktrees.
+
+### What it adds
+
+| Feature | Description |
+|---------|-------------|
+| `/ws new <feature>` | Creates `feat/<slug>` from `main` in a sibling worktree (`../<repo>-<slug>`) |
+| `/ws list` | Lists current worktrees with branch/path/dirty state |
+| `/ws open <slug>` | Opens a tmux window in an existing feature worktree and runs `pi -c` |
+| `/ws remove <slug>` | Removes a feature worktree (asks confirmation if dirty) |
+| `/ws prune` | Prunes stale worktree references |
+| `worktree_manage` tool | LLM-callable worktree management API |
+
+### Usage
+
+```text
+/ws new "add team oauth"
+/ws list
+/ws open add-team-oauth
+/ws remove add-team-oauth
+/ws prune
+```
+
+### Defaults
+
+- Branch prefix: `feat/`
+- Base branch: `main`
+- Worktree location: sibling directory `../<repo>-<slug>`
+
+---
+
+## feature-flow
+
+High-level feature orchestration that uses the same worktree core as `worktree-manager`.
+
+### What it adds
+
+| Feature | Description |
+|---------|-------------|
+| `/feature <brief>` | Creates isolated feature workspace, opens new tmux Pi window, and starts clarifying-questions-first kickoff prompt |
+| `/feature list` | Lists active `feat/*` worktrees |
+| `/feature open <slug>` | Opens feature workspace in tmux (`pi -c`) |
+| `/feature reopen <slug>` | Alias for `/feature open <slug>` |
+| `/feature close <slug>` | Removes feature workspace (with dirty-check confirmation) |
+
+### Workflow started by `/feature <brief>`
+
+1. Generate slug from brief (kebab-case)
+2. Create worktree `../<repo>-<slug>` on branch `feat/<slug>`
+3. Open a new tmux window and run Pi with an auto-generated kickoff prompt
+4. Kickoff prompt enforces: clarifying questions → PRD approval → design approval → tasks
+
+### Fallback behavior
+
+If worktree creation fails, the extension automatically:
+- creates `feat/<slug>` from `main` in the current repo,
+- checks it out when the repo is clean,
+- and continues the feature kickoff there.

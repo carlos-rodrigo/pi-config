@@ -7,27 +7,116 @@
  *
  * Top right:    model · thinking-level (level in green)
  * Bottom left:  context% of Nk · $cost
- * Bottom right: cwd (git-branch) — branch in violet
+ * Bottom right: cwd plus git state — branch (main checkout) or worktree info (linked worktree)
  */
 
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { visibleWidth } from "@mariozechner/pi-tui";
 
 const ANSI_SGR = /\x1b\[[0-9;]*m/g;
 
+interface WorktreeEntry {
+	path: string;
+	branch?: string;
+}
+
+function runGit(cwd: string, args: string[]): string | null {
+	try {
+		return execFileSync("git", ["-C", cwd, ...args], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim();
+	} catch {
+		return null;
+	}
+}
+
+function normalizePath(p: string, base: string): string {
+	const absolute = path.isAbsolute(p) ? p : path.resolve(base, p);
+	try {
+		return fs.realpathSync(absolute);
+	} catch {
+		return path.resolve(absolute);
+	}
+}
+
+function parseWorktreeListPorcelain(output: string): WorktreeEntry[] {
+	const entries: WorktreeEntry[] = [];
+	let current: Partial<WorktreeEntry> | null = null;
+
+	const push = () => {
+		if (!current?.path) return;
+		entries.push({ path: current.path, branch: current.branch });
+	};
+
+	for (const line of output.split("\n")) {
+		if (line.trim().length === 0) {
+			push();
+			current = null;
+			continue;
+		}
+
+		if (line.startsWith("worktree ")) {
+			push();
+			current = { path: line.slice("worktree ".length).trim() };
+			continue;
+		}
+
+		if (!current) continue;
+		if (line.startsWith("branch ")) {
+			const ref = line.slice("branch ".length).trim();
+			current.branch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
+		}
+	}
+
+	push();
+	return entries;
+}
+
+function getLinkedWorktreeLabel(cwd: string, fallbackBranch: string | null): string | null {
+	const topLevel = runGit(cwd, ["rev-parse", "--show-toplevel"]);
+	const gitDirRaw = runGit(cwd, ["rev-parse", "--git-dir"]);
+	const commonDirRaw = runGit(cwd, ["rev-parse", "--git-common-dir"]);
+	if (!topLevel || !gitDirRaw || !commonDirRaw) return null;
+
+	const gitDir = normalizePath(gitDirRaw, cwd);
+	const commonDir = normalizePath(commonDirRaw, cwd);
+	const isLinkedWorktree = gitDir !== commonDir;
+	if (!isLinkedWorktree) return null;
+
+	const topLevelNormalized = normalizePath(topLevel, cwd);
+	const worktreeName = path.basename(topLevelNormalized);
+	let branch = fallbackBranch ?? undefined;
+
+	const listing = runGit(cwd, ["worktree", "list", "--porcelain"]);
+	if (listing) {
+		const entries = parseWorktreeListPorcelain(listing);
+		const current = entries.find((entry) => normalizePath(entry.path, cwd) === topLevelNormalized);
+		if (current?.branch) branch = current.branch;
+	}
+
+	return branch ? `${worktreeName} · ${branch}` : worktreeName;
+}
+
 class BorderedEditor extends CustomEditor {
 	private ctx?: ExtensionContext;
 	private getGitBranch: () => string | null = () => null;
+	private getWorktreeInfo: () => string | null = () => null;
 	private getThinkingLevel: () => string = () => "off";
 
 	setDataProviders(
 		ctx: ExtensionContext,
 		getGitBranch: () => string | null,
+		getWorktreeInfo: () => string | null,
 		getThinkingLevel: () => string,
 	) {
 		this.ctx = ctx;
 		this.getGitBranch = getGitBranch;
+		this.getWorktreeInfo = getWorktreeInfo;
 		this.getThinkingLevel = getThinkingLevel;
 	}
 
@@ -80,7 +169,7 @@ class BorderedEditor extends CustomEditor {
 			);
 		}
 
-		// --- Bottom-right: path (branch) ---
+		// --- Bottom-right: path (branch or linked-worktree info) ---
 		let bottomRight = "";
 		if (this.ctx && theme) {
 			const home = process.env.HOME || process.env.USERPROFILE || "";
@@ -88,8 +177,11 @@ class BorderedEditor extends CustomEditor {
 				? this.ctx.cwd.replace(home, "~")
 				: this.ctx.cwd;
 			const branch = this.getGitBranch();
+			const worktreeInfo = this.getWorktreeInfo();
 			bottomRight = theme.fg("muted", cwd);
-			if (branch) {
+			if (worktreeInfo) {
+				bottomRight += theme.fg("dim", " ") + theme.fg("thinkingHigh", `[WT ${worktreeInfo}]`);
+			} else if (branch) {
 				bottomRight += theme.fg("dim", " ") + theme.fg("thinkingHigh", `(${branch})`);
 			}
 		}
@@ -149,12 +241,19 @@ class BorderedEditor extends CustomEditor {
 export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
 		let gitBranch: string | null = null;
+		let linkedWorktreeLabel: string | null = getLinkedWorktreeLabel(ctx.cwd, gitBranch);
+
+		const refreshWorktreeLabel = () => {
+			linkedWorktreeLabel = getLinkedWorktreeLabel(ctx.cwd, gitBranch);
+		};
 
 		// Replace default footer — all its info now lives in the editor borders
 		ctx.ui.setFooter((tui, _theme, footerData) => {
 			gitBranch = footerData.getGitBranch();
+			refreshWorktreeLabel();
 			const unsub = footerData.onBranchChange(() => {
 				gitBranch = footerData.getGitBranch();
+				refreshWorktreeLabel();
 				tui.requestRender();
 			});
 
@@ -173,6 +272,7 @@ export default function (pi: ExtensionAPI) {
 			editor.setDataProviders(
 				ctx,
 				() => gitBranch,
+				() => linkedWorktreeLabel,
 				() => pi.getThinkingLevel(),
 			);
 			return editor;
