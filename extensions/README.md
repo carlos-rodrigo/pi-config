@@ -124,6 +124,7 @@ Manage feature workspaces with native Git worktrees.
 - Branch prefix: `feat/`
 - Base branch: `main`
 - Worktree location: sibling directory `../<repo>-<slug>`
+- Slugs are derived from concise keywords in the brief, capped (48 chars), and hashed only when truncation is needed
 
 ---
 
@@ -136,6 +137,7 @@ High-level feature orchestration that uses the same worktree core as `worktree-m
 | Feature | Description |
 |---------|-------------|
 | `/feature <brief>` | Creates isolated feature workspace, opens new tmux Pi window, and starts clarifying-questions-first kickoff prompt |
+| `/feature <brief> --slug <name>` | Same as above but with explicit slug override |
 | `/feature list` | Lists active `feat/*` worktrees |
 | `/feature open <slug>` | Opens feature workspace in tmux (`pi -c`) |
 | `/feature reopen <slug>` | Alias for `/feature open <slug>` |
@@ -143,10 +145,10 @@ High-level feature orchestration that uses the same worktree core as `worktree-m
 
 ### Workflow started by `/feature <brief>`
 
-1. Generate slug from brief (kebab-case)
-2. Create worktree `../<repo>-<slug>` on branch `feat/<slug>`
+1. Generate a concise slug from the brief (or use `--slug`), then let you confirm/edit it in interactive mode
+2. Create worktree `../<repo>-<slug>` on branch `feat/<slug>` (auto-adds numeric suffix if needed)
 3. Open a new tmux window and run Pi with an auto-generated kickoff prompt
-4. Kickoff prompt enforces: clarifying questions → PRD approval → design approval → tasks
+4. Kickoff prompt enforces: clarifying questions → PRD approval → design approval → tasks, with chat-first summaries (no forced file opening)
 
 ### Fallback behavior
 

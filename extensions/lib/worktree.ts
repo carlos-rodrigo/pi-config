@@ -1,9 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 export const DEFAULT_BASE_BRANCH = "main";
 export const DEFAULT_BRANCH_PREFIX = "feat/";
+export const DEFAULT_MAX_SLUG_LENGTH = 48;
+export const DEFAULT_SLUG_WORD_LIMIT = 5;
+export const DEFAULT_SLUG_DUPLICATE_ATTEMPTS = 20;
 
 export interface RepoContext {
 	gitRoot: string;
@@ -47,17 +51,136 @@ function normalizeInput(input: string): string {
 	return text;
 }
 
-export function slugifyFeature(input: string): string {
-	const normalized = normalizeInput(input)
+const SLUG_STOPWORDS = new Set([
+	"a",
+	"an",
+	"and",
+	"are",
+	"as",
+	"at",
+	"be",
+	"but",
+	"by",
+	"can",
+	"could",
+	"first",
+	"for",
+	"from",
+	"how",
+	"i",
+	"in",
+	"into",
+	"is",
+	"it",
+	"its",
+	"let",
+	"lets",
+	"like",
+	"make",
+	"making",
+	"modify",
+	"modifying",
+	"my",
+	"need",
+	"of",
+	"on",
+	"or",
+	"our",
+	"please",
+	"second",
+	"so",
+	"that",
+	"the",
+	"their",
+	"them",
+	"then",
+	"third",
+	"this",
+	"to",
+	"try",
+	"trying",
+	"update",
+	"updating",
+	"want",
+	"we",
+	"with",
+	"would",
+	"you",
+	"your",
+]);
+
+function normalizeSlugText(input: string): string {
+	return input
 		.toLowerCase()
 		.normalize("NFKD")
 		.replace(/[\u0300-\u036f]/g, "")
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "")
 		.replace(/-{2,}/g, "-");
+}
 
-	if (normalized.length > 0) return normalized;
-	return `feature-${Date.now()}`;
+function looksLikeSlug(input: string): boolean {
+	return /^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(input);
+}
+
+function stripLeadingIntent(text: string): string {
+	const patterns = [
+		/^\s*(?:first|second|third|fourth)\s*[,:-]?\s*/i,
+		/^\s*(?:i|we)\s+(?:want|need|would\s+like|am\s+trying|are\s+trying)\s+to\s+/i,
+		/^\s*(?:please|can\s+you|could\s+you)\s+/i,
+		/^\s*let'?s\s+/i,
+	];
+
+	let current = text.trim();
+	for (const pattern of patterns) current = current.replace(pattern, "").trim();
+	return current;
+}
+
+function toWords(text: string): string[] {
+	return normalizeSlugText(text).split("-").filter(Boolean);
+}
+
+function compactSlug(normalized: string, maxWords = DEFAULT_SLUG_WORD_LIMIT): string {
+	if (!normalized) return normalized;
+	const words = normalized.split("-").filter(Boolean);
+	return words.slice(0, maxWords).join("-");
+}
+
+function truncateSlugWithHash(base: string, seed: string, maxLength: number): string {
+	const hash = createHash("sha1").update(seed).digest("hex").slice(0, 8);
+	const headLength = Math.max(1, maxLength - hash.length - 1);
+	const head = base.slice(0, headLength).replace(/-+$/g, "");
+	return `${head || "feature"}-${hash}`;
+}
+
+export function slugifyFeature(input: string, maxLength = DEFAULT_MAX_SLUG_LENGTH): string {
+	const raw = normalizeInput(input);
+	if (!raw) return `feature-${Date.now()}`;
+
+	if (looksLikeSlug(raw)) {
+		const normalizedSlug = normalizeSlugText(raw);
+		if (!normalizedSlug) return `feature-${Date.now()}`;
+		if (normalizedSlug.length <= maxLength) return normalizedSlug;
+		return truncateSlugWithHash(normalizedSlug, normalizedSlug, maxLength);
+	}
+
+	const normalized = normalizeSlugText(raw);
+	if (!normalized) return `feature-${Date.now()}`;
+
+	const firstSentence = raw.split(/[\n.!?]/).map((part) => part.trim()).find(Boolean) ?? raw;
+	const firstClause = firstSentence.split(/(?:\s+-\s+|,|;|\b(?:and\s+then|then|also|but)\b)/i)[0]?.trim() ?? firstSentence;
+	const intentStripped = stripLeadingIntent(firstClause);
+
+	const informativeWords: string[] = [];
+	for (const word of toWords(intentStripped)) {
+		if (word.length <= 2 || SLUG_STOPWORDS.has(word)) continue;
+		if (!informativeWords.includes(word)) informativeWords.push(word);
+		if (informativeWords.length >= DEFAULT_SLUG_WORD_LIMIT) break;
+	}
+
+	const base = (informativeWords.join("-") || compactSlug(normalized) || normalized).replace(/^-+|-+$/g, "");
+	if (base.length <= maxLength) return base;
+	return truncateSlugWithHash(base, normalized, maxLength);
 }
 
 export function buildFeatureBranch(slug: string, prefix = DEFAULT_BRANCH_PREFIX): string {
@@ -97,6 +220,26 @@ export async function getRepoContext(pi: ExtensionAPI, cwd: string): Promise<Rep
 async function branchExists(pi: ExtensionAPI, gitRoot: string, branch: string): Promise<boolean> {
 	const result = await git(pi, gitRoot, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
 	return result.code === 0;
+}
+
+async function reserveAvailableSlug(
+	pi: ExtensionAPI,
+	repo: RepoContext,
+	baseSlug: string,
+	branchPrefix: string,
+	maxAttempts = DEFAULT_SLUG_DUPLICATE_ATTEMPTS,
+): Promise<{ slug: string; branch: string; worktreePath: string } | null> {
+	for (let i = 0; i < maxAttempts; i++) {
+		const suffix = i === 0 ? "" : `-${i + 1}`;
+		const slug = `${baseSlug}${suffix}`;
+		const branch = buildFeatureBranch(slug, branchPrefix);
+		const worktreePath = buildWorktreePath(repo, slug);
+		if (fs.existsSync(worktreePath)) continue;
+		if (await branchExists(pi, repo.gitRoot, branch)) continue;
+		return { slug, branch, worktreePath };
+	}
+
+	return null;
 }
 
 async function isClean(pi: ExtensionAPI, cwd: string): Promise<boolean> {
@@ -185,31 +328,20 @@ export async function createFeatureWorktree(
 ): Promise<CreateWorktreeResult> {
 	const baseBranch = options?.baseBranch ?? DEFAULT_BASE_BRANCH;
 	const branchPrefix = options?.branchPrefix ?? DEFAULT_BRANCH_PREFIX;
-	const slug = slugifyFeature(briefOrSlug);
-	const branch = buildFeatureBranch(slug, branchPrefix);
+	const requestedSlug = slugifyFeature(briefOrSlug);
 
 	const repo = await getRepoContext(pi, cwd);
 	if (!repo) {
-		return { ok: false, slug, branch, worktreePath: "", error: "Not inside a git repository." };
-	}
-
-	const worktreePath = buildWorktreePath(repo, slug);
-	if (fs.existsSync(worktreePath)) {
-		return {
-			ok: false,
-			slug,
-			branch,
-			worktreePath,
-			repoContext: repo,
-			error: `Target path already exists: ${worktreePath}`,
-		};
+		return { ok: false, slug: requestedSlug, branch: buildFeatureBranch(requestedSlug, branchPrefix), worktreePath: "", error: "Not inside a git repository." };
 	}
 
 	const hasBase = await git(pi, repo.gitRoot, ["rev-parse", "--verify", baseBranch]);
 	if (hasBase.code !== 0) {
+		const branch = buildFeatureBranch(requestedSlug, branchPrefix);
+		const worktreePath = buildWorktreePath(repo, requestedSlug);
 		return {
 			ok: false,
-			slug,
+			slug: requestedSlug,
 			branch,
 			worktreePath,
 			repoContext: repo,
@@ -217,17 +349,21 @@ export async function createFeatureWorktree(
 		};
 	}
 
-	if (await branchExists(pi, repo.gitRoot, branch)) {
+	const reserved = await reserveAvailableSlug(pi, repo, requestedSlug, branchPrefix);
+	if (!reserved) {
+		const branch = buildFeatureBranch(requestedSlug, branchPrefix);
+		const worktreePath = buildWorktreePath(repo, requestedSlug);
 		return {
 			ok: false,
-			slug,
+			slug: requestedSlug,
 			branch,
 			worktreePath,
 			repoContext: repo,
-			error: `Branch '${branch}' already exists.`,
+			error: `Could not reserve a unique slug for '${requestedSlug}' after ${DEFAULT_SLUG_DUPLICATE_ATTEMPTS} attempts.`,
 		};
 	}
 
+	const { slug, branch, worktreePath } = reserved;
 	const addResult = await git(pi, repo.gitRoot, ["worktree", "add", "-b", branch, worktreePath, baseBranch]);
 	if (addResult.code !== 0) {
 		return {

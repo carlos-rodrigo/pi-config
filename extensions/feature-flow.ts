@@ -19,10 +19,22 @@ function stripWrappingQuotes(input: string): string {
 	return text;
 }
 
+function parseFeatureInput(raw: string): { brief: string; slugOverride?: string } {
+	const match = raw.match(/(?:^|\s)--slug\s+("[^"]+"|'[^']+'|\S+)/i);
+	if (!match) return { brief: stripWrappingQuotes(raw) };
+
+	const slugOverride = stripWrappingQuotes(match[1] ?? "");
+	const withoutFlag = `${raw.slice(0, match.index ?? 0)} ${raw.slice((match.index ?? 0) + match[0].length)}`.trim();
+	const brief = stripWrappingQuotes(withoutFlag || slugOverride);
+	return { brief, slugOverride };
+}
+
 function featureHelpText(): string {
 	return [
 		"Usage:",
 		"  /feature <brief>",
+		"  /feature <brief> --slug <name>",
+		"  /feature --slug <name> <brief>",
 		"  /feature list",
 		"  /feature open <slug>",
 		"  /feature reopen <slug>",
@@ -30,6 +42,8 @@ function featureHelpText(): string {
 		"",
 		"Behavior:",
 		"- Creates feat/<slug> worktree at ../<repo>-<slug>",
+		"- Generates a concise slug from the brief (or uses --slug override)",
+		"- In interactive mode, asks you to confirm/edit the slug before creating worktree",
 		"- Opens a new tmux window and starts pi with a kickoff prompt",
 		"- If worktree creation fails, creates feat/<slug> from main in current repo",
 	].join("\n");
@@ -66,11 +80,16 @@ function buildKickoffPrompt(input: {
 		"## Required Workflow",
 		"1. Ask 3-5 clarifying questions with lettered options (A/B/C/...).",
 		`2. After answers, create PRD at .features/${input.slug}/prd.md (use the prd skill instructions).`,
-		"3. Present PRD and wait for explicit human approval.",
+		"3. Summarize PRD directly in chat and ask for explicit approval (do not ask user to open files).",
 		`4. After PRD approval, create technical design at .features/${input.slug}/design.md (use design-solution skill).`,
-		"5. Present design and wait for explicit human approval.",
+		"5. Summarize design directly in chat and ask for explicit approval.",
 		`6. After design approval, create tasks under .features/${input.slug}/tasks/ (use simple-tasks skill).`,
-		"7. Only then proceed to implementation.",
+		"7. Summarize tasks in chat, confirm readiness, then proceed to implementation.",
+		"",
+		"## UX Rules",
+		"- Keep the workflow conversational and smooth.",
+		"- Do not require /open or manual file navigation unless user explicitly asks.",
+		"- Use short status updates and clear next actions.",
 		"",
 		"## Hard Gates",
 		"- Do not proceed to design before PRD approval.",
@@ -201,13 +220,28 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			const brief = stripWrappingQuotes(rawInput);
+			const parsed = parseFeatureInput(rawInput);
+			const brief = parsed.brief;
 			if (!brief) {
 				ctx.ui.notify("Feature brief is required", "error");
 				return;
 			}
 
-			const slug = slugifyFeature(brief);
+			let slug = slugifyFeature(parsed.slugOverride || brief);
+			if (ctx.hasUI && !parsed.slugOverride) {
+				const editedSlug = await ctx.ui.editor("Confirm feature slug (edit or keep)", slug);
+				if (editedSlug === undefined) {
+					ctx.ui.notify("Cancelled", "info");
+					return;
+				}
+				const cleaned = stripWrappingQuotes(editedSlug).trim();
+				if (!cleaned) {
+					ctx.ui.notify("Feature slug cannot be empty", "error");
+					return;
+				}
+				slug = slugifyFeature(cleaned);
+			}
+
 			const desiredBranch = buildFeatureBranch(slug);
 			let workspacePath = "";
 			let branch = desiredBranch;
@@ -216,6 +250,7 @@ export default function (pi: ExtensionAPI) {
 
 			const created = await createFeatureWorktree(pi, ctx.cwd, slug);
 			if (created.ok) {
+				slug = created.slug;
 				workspacePath = created.worktreePath;
 				branch = created.branch;
 			} else {
