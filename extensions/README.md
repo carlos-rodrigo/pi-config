@@ -149,7 +149,7 @@ High-level feature orchestration that uses the same worktree core as `worktree-m
 1. Generate a concise slug from the brief (or use `--slug`), then let you confirm/edit it in interactive mode
 2. Create worktree `../<repo>-<slug>` on branch `feat/<slug>` (auto-adds numeric suffix if needed)
 3. Open a tmux split pane by default (or a new window with `--window`) and run Pi with an auto-generated kickoff prompt
-4. Kickoff prompt enforces: clarifying questions → PRD approval → design approval → tasks, with chat-first summaries (no forced file opening)
+4. Kickoff prompt enforces: clarifying questions → PRD approval → design approval → tasks, and auto-opens generated PRD/design files for immediate review
 
 ### Fallback behavior
 
