@@ -19,6 +19,28 @@ function stripWrappingQuotes(input: string): string {
 	return text;
 }
 
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasStandaloneFlag(input: string, flag: string): boolean {
+	const pattern = new RegExp(`(?:^|\\s)${escapeRegExp(flag)}(?=\\s|$)`, "i");
+	return pattern.test(input);
+}
+
+function stripStandaloneFlag(input: string, flag: string): string {
+	const pattern = new RegExp(`(?:^|\\s)${escapeRegExp(flag)}(?=\\s|$)`, "gi");
+	return input.replace(pattern, " ").replace(/\s+/g, " ").trim();
+}
+
+function getLaunchMode(input: string): { cleanedInput: string; launchMode: "pane" | "window" } {
+	const useWindow = hasStandaloneFlag(input, "--window");
+	return {
+		cleanedInput: stripStandaloneFlag(input, "--window"),
+		launchMode: useWindow ? "window" : "pane",
+	};
+}
+
 function parseFeatureInput(raw: string): { brief: string; slugOverride?: string } {
 	const match = raw.match(/(?:^|\s)--slug\s+("[^"]+"|'[^']+'|\S+)/i);
 	if (!match) return { brief: stripWrappingQuotes(raw) };
@@ -34,17 +56,18 @@ function featureHelpText(): string {
 		"Usage:",
 		"  /feature <brief>",
 		"  /feature <brief> --slug <name>",
+		"  /feature <brief> --window",
 		"  /feature --slug <name> <brief>",
 		"  /feature list",
-		"  /feature open <slug>",
-		"  /feature reopen <slug>",
+		"  /feature open <slug> [--window]",
+		"  /feature reopen <slug> [--window]",
 		"  /feature close <slug>",
 		"",
 		"Behavior:",
 		"- Creates feat/<slug> worktree at ../<repo>-<slug>",
 		"- Generates a concise slug from the brief (or uses --slug override)",
 		"- In interactive mode, asks you to confirm/edit the slug before creating worktree",
-		"- Opens a new tmux window and starts pi with a kickoff prompt",
+		"- Opens a tmux pane by default (use --window for a new window) and starts pi with a kickoff prompt",
 		"- If worktree creation fails, creates feat/<slug> from main in current repo",
 	].join("\n");
 }
@@ -118,13 +141,14 @@ export default function (pi: ExtensionAPI) {
 		description: "Create and run feature workflow in an isolated worktree",
 		handler: async (args, ctx) => {
 			const rawInput = args.trim();
-			if (!rawInput || rawInput === "help") {
+			const { cleanedInput, launchMode } = getLaunchMode(rawInput);
+			if (!cleanedInput || cleanedInput === "help") {
 				ctx.ui.setEditorText(featureHelpText());
 				ctx.ui.notify("/feature help written to editor", "info");
 				return;
 			}
 
-			if (rawInput === "list") {
+			if (cleanedInput === "list") {
 				const listing = await listWorktrees(pi, ctx.cwd);
 				if (!listing) {
 					ctx.ui.notify("Not inside a git repository", "error");
@@ -136,11 +160,11 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			if (rawInput.startsWith("open ") || rawInput.startsWith("reopen ")) {
-				const isReopen = rawInput.startsWith("reopen ");
-				const target = rawInput.slice(isReopen ? "reopen".length : "open".length).trim();
+			if (cleanedInput.startsWith("open ") || cleanedInput.startsWith("reopen ")) {
+				const isReopen = cleanedInput.startsWith("reopen ");
+				const target = cleanedInput.slice(isReopen ? "reopen".length : "open".length).trim();
 				if (!target) {
-					ctx.ui.notify("Usage: /feature open <slug> (alias: /feature reopen <slug>)", "error");
+					ctx.ui.notify("Usage: /feature open <slug> [--window] (alias: /feature reopen <slug> [--window])", "error");
 					return;
 				}
 				const slug = slugifyFeature(target);
@@ -160,19 +184,23 @@ export default function (pi: ExtensionAPI) {
 					cwd: found.path,
 					windowName: buildWindowName(slug),
 					continueSession: true,
+					launchMode,
 				});
 				if (!launched.ok) {
-					ctx.ui.notify(launched.error ?? "Failed to open tmux window", "warning");
+					ctx.ui.notify(launched.error ?? "Failed to open tmux session", "warning");
 					if (launched.fallbackCommand) ctx.ui.setEditorText(launched.fallbackCommand);
 					return;
 				}
 
-				ctx.ui.notify(`${isReopen ? "Reopened" : "Opened"} ${slug} in tmux`, "info");
+				ctx.ui.notify(
+					`${isReopen ? "Reopened" : "Opened"} ${slug} in tmux ${launchMode === "window" ? "window" : "pane"}`,
+					"info",
+				);
 				return;
 			}
 
-			if (rawInput.startsWith("close ")) {
-				const target = rawInput.slice("close".length).trim();
+			if (cleanedInput.startsWith("close ")) {
+				const target = cleanedInput.slice("close".length).trim();
 				if (!target) {
 					ctx.ui.notify("Usage: /feature close <slug>", "error");
 					return;
@@ -220,7 +248,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			const parsed = parseFeatureInput(rawInput);
+			const parsed = parseFeatureInput(cleanedInput);
 			const brief = parsed.brief;
 			if (!brief) {
 				ctx.ui.notify("Feature brief is required", "error");
@@ -289,10 +317,11 @@ export default function (pi: ExtensionAPI) {
 				cwd: workspacePath,
 				windowName: buildWindowName(slug),
 				initialPrompt: kickoffPrompt,
+				launchMode,
 			});
 
 			if (!launched.ok) {
-				ctx.ui.notify(launched.error ?? "Failed to open tmux window", "warning");
+				ctx.ui.notify(launched.error ?? "Failed to open tmux session", "warning");
 				if (launched.fallbackCommand) ctx.ui.setEditorText(launched.fallbackCommand);
 				return;
 			}

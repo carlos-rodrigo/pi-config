@@ -16,6 +16,28 @@ function stripPrefix(input: string, prefix: string): string {
 	return input.slice(prefix.length).trim();
 }
 
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasStandaloneFlag(input: string, flag: string): boolean {
+	const pattern = new RegExp(`(?:^|\\s)${escapeRegExp(flag)}(?=\\s|$)`, "i");
+	return pattern.test(input);
+}
+
+function stripStandaloneFlag(input: string, flag: string): string {
+	const pattern = new RegExp(`(?:^|\\s)${escapeRegExp(flag)}(?=\\s|$)`, "gi");
+	return input.replace(pattern, " ").replace(/\s+/g, " ").trim();
+}
+
+function getLaunchMode(input: string): { cleanedInput: string; launchMode: "pane" | "window" } {
+	const useWindow = hasStandaloneFlag(input, "--window");
+	return {
+		cleanedInput: stripStandaloneFlag(input, "--window"),
+		launchMode: useWindow ? "window" : "pane",
+	};
+}
+
 function formatWorktreeList(
 	items: Array<{ path: string; branch?: string; detached: boolean; dirty: boolean; isMain: boolean; isPrunable: boolean }>,
 ): string {
@@ -37,7 +59,7 @@ function wsHelpText(): string {
 		"Usage:",
 		"  /ws new <feature name or slug>",
 		"  /ws list",
-		"  /ws open <slug>",
+		"  /ws open <slug> [--window]",
 		"  /ws remove <slug> [--force]",
 		"  /ws prune",
 	].join("\n");
@@ -47,14 +69,15 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("ws", {
 		description: "Manage git worktrees for feature branches",
 		handler: async (args, ctx) => {
-			const input = args.trim();
-			if (!input || input === "help") {
+			const rawInput = args.trim();
+			const { cleanedInput, launchMode } = getLaunchMode(rawInput);
+			if (!cleanedInput || cleanedInput === "help") {
 				ctx.ui.setEditorText(wsHelpText());
 				ctx.ui.notify("/ws help written to editor", "info");
 				return;
 			}
 
-			if (input === "list") {
+			if (cleanedInput === "list") {
 				const listing = await listWorktrees(pi, ctx.cwd);
 				if (!listing) {
 					ctx.ui.notify("Not inside a git repository", "error");
@@ -65,8 +88,8 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			if (input.startsWith("new ")) {
-				const brief = stripPrefix(input, "new");
+			if (cleanedInput.startsWith("new ")) {
+				const brief = stripPrefix(cleanedInput, "new");
 				if (!brief) {
 					ctx.ui.notify("Usage: /ws new <feature name>", "error");
 					return;
@@ -83,10 +106,10 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			if (input.startsWith("open ")) {
-				const target = stripPrefix(input, "open");
+			if (cleanedInput.startsWith("open ")) {
+				const target = stripPrefix(cleanedInput, "open");
 				if (!target) {
-					ctx.ui.notify("Usage: /ws open <slug>", "error");
+					ctx.ui.notify("Usage: /ws open <slug> [--window]", "error");
 					return;
 				}
 				const slug = slugifyFeature(target);
@@ -106,21 +129,22 @@ export default function (pi: ExtensionAPI) {
 					cwd: found.path,
 					windowName: buildWindowName(slug),
 					continueSession: true,
+					launchMode,
 				});
 
 				if (!launched.ok) {
-					ctx.ui.notify(launched.error ?? "Failed to open tmux window", "warning");
+					ctx.ui.notify(launched.error ?? "Failed to open tmux session", "warning");
 					if (launched.fallbackCommand) ctx.ui.setEditorText(launched.fallbackCommand);
 					return;
 				}
 
-				ctx.ui.notify(`Opened ${slug} in tmux`, "info");
+				ctx.ui.notify(`Opened ${slug} in tmux ${launchMode === "window" ? "window" : "pane"}`, "info");
 				return;
 			}
 
-			if (input.startsWith("remove ")) {
-				const force = input.includes("--force");
-				const raw = stripPrefix(input.replace("--force", "").trim(), "remove");
+			if (cleanedInput.startsWith("remove ")) {
+				const force = cleanedInput.includes("--force");
+				const raw = stripPrefix(cleanedInput.replace("--force", "").trim(), "remove");
 				if (!raw) {
 					ctx.ui.notify("Usage: /ws remove <slug> [--force]", "error");
 					return;
@@ -170,7 +194,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			if (input === "prune") {
+			if (cleanedInput === "prune") {
 				const pruned = await pruneWorktrees(pi, ctx.cwd);
 				if (!pruned.ok) {
 					ctx.ui.notify(pruned.error ?? "Failed to prune worktrees", "error");
@@ -199,6 +223,9 @@ export default function (pi: ExtensionAPI) {
 				}),
 			),
 			force: Type.Optional(Type.Boolean({ description: "Force removal of dirty worktrees when action is remove." })),
+			window: Type.Optional(
+				Type.Boolean({ description: "When action=open, launch in a new tmux window instead of the default split pane." }),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			if (params.action === "list") {
@@ -251,6 +278,7 @@ export default function (pi: ExtensionAPI) {
 					cwd: found.path,
 					windowName: buildWindowName(slug),
 					continueSession: true,
+					launchMode: params.window ? "window" : "pane",
 				});
 				if (!launched.ok) {
 					return {
@@ -258,7 +286,7 @@ export default function (pi: ExtensionAPI) {
 							{
 								type: "text",
 								text:
-									`${launched.error ?? "Failed to open tmux window."}` +
+									`${launched.error ?? "Failed to open tmux session."}` +
 									(launched.fallbackCommand ? `\nFallback: ${launched.fallbackCommand}` : ""),
 							},
 						],
@@ -266,7 +294,10 @@ export default function (pi: ExtensionAPI) {
 						isError: true,
 					};
 				}
-				return { content: [{ type: "text", text: `Opened ${slug} in tmux.` }], details: { slug, path: found.path } };
+				return {
+					content: [{ type: "text", text: `Opened ${slug} in tmux ${params.window ? "window" : "pane"}.` }],
+					details: { slug, path: found.path },
+				};
 			}
 
 			if (params.action === "remove") {

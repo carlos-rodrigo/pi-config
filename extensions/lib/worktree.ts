@@ -474,10 +474,20 @@ export async function pruneWorktrees(pi: ExtensionAPI, cwd: string): Promise<{ o
 	return { ok: true };
 }
 
+export type TmuxLaunchMode = "pane" | "window";
+
 export async function launchPiInTmux(
 	pi: ExtensionAPI,
-	options: { cwd: string; windowName: string; initialPrompt?: string; continueSession?: boolean },
+	options: {
+		cwd: string;
+		windowName: string;
+		initialPrompt?: string;
+		continueSession?: boolean;
+		launchMode?: TmuxLaunchMode;
+	},
 ): Promise<{ ok: boolean; error?: string; fallbackCommand?: string }> {
+	const launchMode = options.launchMode ?? "pane";
+
 	const tmuxVersion = await pi.exec("tmux", ["-V"]);
 	if (tmuxVersion.code !== 0) {
 		const fallbackCommand = options.initialPrompt
@@ -492,14 +502,22 @@ export async function launchPiInTmux(
 			? `pi ${shellQuote(options.initialPrompt)}`
 			: "pi";
 
-	const openResult = await pi.exec("tmux", ["new-window", "-n", options.windowName, "-c", options.cwd, piCommand]);
+	const tmuxArgs =
+		launchMode === "window"
+			? ["new-window", "-n", options.windowName, "-c", options.cwd, piCommand]
+			: ["split-window", "-h", "-c", options.cwd, piCommand];
+
+	const openResult = await pi.exec("tmux", tmuxArgs);
 	if (openResult.code !== 0) {
 		const fallbackCommand = options.initialPrompt
 			? `cd ${shellQuote(options.cwd)} && pi ${shellQuote(options.initialPrompt)}`
 			: `cd ${shellQuote(options.cwd)} && pi -c`;
 		return {
 			ok: false,
-			error: openResult.stderr.trim() || openResult.stdout.trim() || "Failed to open tmux window.",
+			error:
+				openResult.stderr.trim() ||
+				openResult.stdout.trim() ||
+				(launchMode === "window" ? "Failed to open tmux window." : "Failed to open tmux pane."),
 			fallbackCommand,
 		};
 	}
