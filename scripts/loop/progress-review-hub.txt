@@ -68,3 +68,19 @@ Task ID: 003
   - Comments sorted newest-first for better UX
 
 ---
+
+## 2026-02-28 - Visual generator
+
+Task ID: 004
+
+- Implemented `generateVisual()` and `generateVisualStyles()` in `lib/visual-generator.ts`
+- Markdown → HTML transformation with all elements (headings, lists, code, tables, blockquotes, checkboxes)
+- Basic code syntax highlighting with keyword sets
+- Progress nav sidebar with section hierarchy
+- Section comment buttons and stagger animation classes
+- **Learnings for future iterations:**
+  - Table detection needs the separator row (`|---|---|`) on the next line
+  - escapeHtml must run BEFORE inline formatting to avoid double-escaping
+  - CSS is exported as a string constant for injection into the page
+
+---

@@ -7,7 +7,7 @@ Started: 2026-02-27
 - [x] 001 - Extension scaffold and manifest system
 - [x] 002 - Review server (HTTP)
 - [x] 003 - Web app core: layout, comment panel, and comment API
-- [ ] 004 - Visual generator (markdown → cinematic HTML)
+- [x] 004 - Visual generator (markdown → cinematic HTML)
 - [ ] 005 - Web app visual presenter with scroll animations and commenting
 - [ ] 006 - Podcast script generator (sub-agent)
 - [ ] 007 - TTS provider interface and auto-installer
