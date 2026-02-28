@@ -7,10 +7,129 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <div id="app">
-    <h1>Review Hub</h1>
-    <p>Loading...</p>
+  <!-- Top Bar -->
+  <header class="top-bar">
+    <div class="top-bar-left">
+      <h1 class="top-bar-title">Review Hub</h1>
+      <span class="document-name" id="document-name"></span>
+      <span class="lang-badge" id="lang-badge"></span>
+    </div>
+    <div class="top-bar-right">
+      <button class="btn btn-done" id="btn-done">Done Reviewing</button>
+    </div>
+  </header>
+
+  <!-- Main Layout -->
+  <div class="main-layout">
+    <!-- Content Area -->
+    <main class="content-area">
+      <!-- Podcast Player Zone (populated in task 010) -->
+      <section class="player-zone" id="player-zone" style="display: none;">
+        <div class="player-placeholder">
+          <span class="player-icon">🎙️</span>
+          <span>Podcast player — loading...</span>
+        </div>
+      </section>
+
+      <!-- Visual Presentation Zone (populated in task 005) -->
+      <section class="visual-zone" id="visual-zone">
+        <div class="visual-placeholder">
+          <p>Visual presentation will appear here.</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- Comment Panel -->
+    <aside class="comment-panel" id="comment-panel">
+      <div class="comment-panel-header">
+        <h2 class="comment-panel-title">
+          Comments <span class="comment-count" id="comment-count">(0)</span>
+        </h2>
+        <button class="btn btn-add-comment" id="btn-add-comment">+ Add Comment</button>
+      </div>
+
+      <!-- Filter Bar -->
+      <div class="comment-filters" id="comment-filters">
+        <button class="filter-btn active" data-filter="all">All</button>
+        <button class="filter-btn" data-filter="change">🔄 Change</button>
+        <button class="filter-btn" data-filter="question">❓ Question</button>
+        <button class="filter-btn" data-filter="approval">✅ Approval</button>
+        <button class="filter-btn" data-filter="concern">⚠️ Concern</button>
+      </div>
+
+      <!-- Comment Form (hidden by default) -->
+      <div class="comment-form" id="comment-form" style="display: none;">
+        <div class="form-group">
+          <label for="form-section">Section</label>
+          <select id="form-section" class="form-select"></select>
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <div class="type-selector" id="form-type">
+            <label class="type-option">
+              <input type="radio" name="comment-type" value="change" checked>
+              <span class="type-label type-change">🔄 Change</span>
+            </label>
+            <label class="type-option">
+              <input type="radio" name="comment-type" value="question">
+              <span class="type-label type-question">❓ Question</span>
+            </label>
+            <label class="type-option">
+              <input type="radio" name="comment-type" value="approval">
+              <span class="type-label type-approval">✅ Approval</span>
+            </label>
+            <label class="type-option">
+              <input type="radio" name="comment-type" value="concern">
+              <span class="type-label type-concern">⚠️ Concern</span>
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Priority</label>
+          <div class="priority-selector" id="form-priority">
+            <label class="priority-option">
+              <input type="radio" name="comment-priority" value="high">
+              <span class="priority-label priority-high">High</span>
+            </label>
+            <label class="priority-option">
+              <input type="radio" name="comment-priority" value="medium" checked>
+              <span class="priority-label priority-medium">Medium</span>
+            </label>
+            <label class="priority-option">
+              <input type="radio" name="comment-priority" value="low">
+              <span class="priority-label priority-low">Low</span>
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="form-text">Comment</label>
+          <textarea id="form-text" class="form-textarea" rows="3" placeholder="Your feedback..."></textarea>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-save" id="btn-save-comment">Save</button>
+          <button class="btn btn-cancel" id="btn-cancel-comment">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Comment List -->
+      <div class="comment-list" id="comment-list"></div>
+    </aside>
   </div>
+
+  <!-- Bottom Bar -->
+  <footer class="bottom-bar">
+    <span class="current-section" id="current-section">Ready</span>
+  </footer>
+
+  <!-- Completion Overlay -->
+  <div class="completion-overlay" id="completion-overlay" style="display: none;">
+    <div class="completion-card">
+      <h2>✅ Review Complete</h2>
+      <div class="completion-summary" id="completion-summary"></div>
+      <p class="completion-hint">Return to your terminal to apply the review.</p>
+    </div>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>
