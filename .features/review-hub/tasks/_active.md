@@ -14,7 +14,7 @@ Started: 2026-02-27
 - [ ] 008 - Dia TTS provider (English)
 - [ ] 009 - Bark TTS provider (Spanish)
 - [ ] 010 - Web app audio player (wavesurfer.js) and sync
-- [ ] 011 - Comment applicator (apply review → update source)
+- [x] 011 - Comment applicator (apply review → update source)
 - [ ] 012 - Pi commands and tools (entry point wiring)
 
 ## Key References

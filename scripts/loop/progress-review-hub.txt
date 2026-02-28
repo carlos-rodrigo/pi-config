@@ -131,3 +131,18 @@ Task ID: 007
   - df -g for GB-level disk space check on macOS
 
 ---
+
+## 2026-02-28 - Comment applicator
+
+Task ID: 011
+
+- buildApplyPrompt groups comments by section with priority ordering
+- All-approval reviews produce empty prompt (no LLM call needed)
+- Diff summary tracks sections modified, lines added/removed
+- Drift detection warns about source changes since review
+- **Learnings for future iterations:**
+  - Prompt instructs LLM to output complete document (not just changes)
+  - Comments sorted: high priority first, then change > concern > question > approval
+  - The LLM itself applies changes — the applicator just builds the prompt
+
+---
