@@ -100,3 +100,18 @@ Task ID: 005
   - IntersectionObserver root should be .visual-content or .content-area
 
 ---
+
+## 2026-02-28 - Podcast script generator
+
+Task ID: 006
+
+- Script generator spawns `pi --mode json -p --no-session` with screenwriter prompt
+- Source annotation with `<!-- SECTION: id -->` markers
+- Parser extracts ScriptSegment[] with speaker, text, direction
+- Retry on failure with simplified prompt
+- **Learnings for future iterations:**
+  - pi JSON mode outputs newline-delimited events; parse message_end for output
+  - Direction annotations `(pauses)` extracted at start of dialogue line
+  - Sub-agent temp files cleaned up in finally block
+
+---

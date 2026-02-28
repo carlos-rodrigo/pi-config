@@ -9,7 +9,7 @@ Started: 2026-02-27
 - [x] 003 - Web app core: layout, comment panel, and comment API
 - [x] 004 - Visual generator (markdown → cinematic HTML)
 - [x] 005 - Web app visual presenter with scroll animations and commenting
-- [ ] 006 - Podcast script generator (sub-agent)
+- [x] 006 - Podcast script generator (sub-agent)
 - [ ] 007 - TTS provider interface and auto-installer
 - [ ] 008 - Dia TTS provider (English)
 - [ ] 009 - Bark TTS provider (Spanish)
