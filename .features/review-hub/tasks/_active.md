@@ -13,7 +13,7 @@ Started: 2026-02-27
 - [x] 007 - TTS provider interface and auto-installer
 - [x] 008 - Dia TTS provider (English)
 - [x] 009 - Bark TTS provider (Spanish)
-- [ ] 010 - Web app audio player (wavesurfer.js) and sync
+- [x] 010 - Web app audio player (wavesurfer.js) and sync
 - [x] 011 - Comment applicator (apply review → update source)
 - [ ] 012 - Pi commands and tools (entry point wiring)
 

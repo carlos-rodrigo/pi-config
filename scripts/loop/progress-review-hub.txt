@@ -162,3 +162,19 @@ Task IDs: 008, 009
   - Bark needs ETA in progress (much slower than Dia)
 
 ---
+
+## 2026-02-28 - Web app audio player
+
+Task ID: 010
+
+- Vendored wavesurfer.js v7 UMD (no ESM regions plugin — custom DOM instead)
+- AudioPlayer module with WaveSurfer integration
+- Play/pause, skip, speed control, spacebar shortcut
+- Sync toggle for visual-follows-audio mode
+- Click waveform → timestamped comment
+- **Learnings for future iterations:**
+  - wavesurfer.js v7 regions plugin is ESM-only — UMD version doesn't have it
+  - Custom section markers via DOM overlays work fine as alternative
+  - Player zone conditionally hidden based on manifest.audio presence
+
+---
