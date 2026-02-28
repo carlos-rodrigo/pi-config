@@ -1,0 +1,15 @@
+{
+  "name": "review-hub",
+  "version": "0.1.0",
+  "description": "Interactive review experience for PRDs and design documents — podcast audio + cinematic visual + commenting",
+  "main": "index.ts",
+  "type": "module",
+  "pi": {
+    "extensionEntry": "index.ts"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.55.3",
+    "@types/node": "^25.3.2",
+    "typescript": "^5.9.3"
+  }
+}
