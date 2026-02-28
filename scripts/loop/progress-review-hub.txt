@@ -12,6 +12,9 @@ Feature: review-hub
 - **Import pattern**: `import type { ExtensionAPI } from "@mariozechner/pi-coding-agent"` for types.
 - **Manifest file naming**: `review-NNN.manifest.json` in `.features/{feature}/reviews/`
 - **Section ID format**: `s-{slugified-heading-path}` with `--` between levels, `-N` suffix for duplicates.
+- **Server creation**: `createReviewServer()` returns `{start, stop, isRunning}` — factory pattern, not a class.
+- **Server state**: Maintained via closure, not class properties. The `state` object holds httpServer, port, token, manifest, reviewDir.
+- **import.meta.url**: Use `path.dirname(import.meta.url.replace("file://", ""))` to resolve paths relative to the extension.
 
 ---
 
@@ -32,5 +35,21 @@ Task ID: 001
   - Extensions must be created in the repo's `extensions/` dir, not `~/.pi/agent/extensions/` directly
   - Atomic writes via temp file + rename pattern works well for JSON persistence
   - Section IDs include full heading path for uniqueness — important for comment anchoring
+
+---
+
+## 2026-02-28 - Review server (HTTP)
+
+Task ID: 002
+
+- Implemented ephemeral HTTP server in `lib/server.ts`
+- GET routes for static files, manifest, audio, source
+- POST /comments with full validation (type, priority, sectionId, body size limit)
+- POST /complete, DELETE /comments/:id
+- Session token auth, 127.0.0.1 binding, port scanning, lock file lifecycle
+- **Learnings for future iterations:**
+  - Factory pattern works well for server — avoids `this` binding issues
+  - Body size limit (1MB) prevents abuse
+  - Lock file at ~/.pi/review-hub/ persists across sessions
 
 ---
