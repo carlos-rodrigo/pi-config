@@ -544,6 +544,202 @@ const VisualPresenter = {
   },
 };
 
+// ── Audio Player ───────────────────────────────────────────────────────────
+
+const AudioPlayer = {
+  ws: null,
+  syncEnabled: false,
+
+  async init() {
+    const manifest = ReviewApp.state.manifest;
+    if (!manifest?.audio) {
+      // No audio — hide player zone
+      const zone = document.getElementById("player-zone");
+      if (zone) zone.style.display = "none";
+      return;
+    }
+
+    // Show player zone
+    const zone = document.getElementById("player-zone");
+    if (zone) zone.style.display = "block";
+
+    // Check if WaveSurfer is available
+    if (typeof WaveSurfer === "undefined") {
+      console.warn("WaveSurfer not loaded — audio player unavailable");
+      return;
+    }
+
+    try {
+      // Create wavesurfer instance
+      this.ws = WaveSurfer.create({
+        container: "#waveform",
+        waveColor: "#4a5568",
+        progressColor: "#805ad5",
+        cursorColor: "#e2e8f0",
+        height: 80,
+        barWidth: 2,
+        barGap: 1,
+        dragToSeek: true,
+        normalize: true,
+      });
+
+      // Load audio
+      await this.ws.load("/audio");
+
+      // Setup controls
+      this.setupControls();
+
+      // Setup sync toggle
+      this.setupSyncToggle();
+
+      // Setup time tracking
+      this.setupTimeTracking(manifest);
+
+      // Setup click-to-comment on waveform
+      this.setupWaveformCommenting(manifest);
+    } catch (err) {
+      console.error("Failed to initialize audio player:", err);
+    }
+  },
+
+  setupControls() {
+    const playBtn = document.getElementById("btn-play");
+    const skipBackBtn = document.getElementById("btn-skip-back");
+    const skipFwdBtn = document.getElementById("btn-skip-fwd");
+
+    // Play/Pause
+    playBtn?.addEventListener("click", () => {
+      this.ws?.playPause();
+    });
+
+    this.ws?.on("play", () => {
+      if (playBtn) playBtn.textContent = "⏸";
+    });
+
+    this.ws?.on("pause", () => {
+      if (playBtn) playBtn.textContent = "▶";
+    });
+
+    // Skip
+    skipBackBtn?.addEventListener("click", () => {
+      this.ws?.skip(-10);
+    });
+
+    skipFwdBtn?.addEventListener("click", () => {
+      this.ws?.skip(10);
+    });
+
+    // Spacebar to play/pause
+    document.addEventListener("keydown", (e) => {
+      if (e.code === "Space" && !e.target.closest("textarea, input, select")) {
+        e.preventDefault();
+        this.ws?.playPause();
+      }
+    });
+
+    // Speed controls
+    document.querySelectorAll(".speed-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const speed = parseFloat(btn.dataset.speed);
+        this.ws?.setPlaybackRate(speed);
+        document.querySelectorAll(".speed-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+      });
+    });
+  },
+
+  setupSyncToggle() {
+    const toggle = document.getElementById("sync-toggle");
+    toggle?.addEventListener("change", (e) => {
+      this.syncEnabled = e.target.checked;
+    });
+  },
+
+  setupTimeTracking(manifest) {
+    const timeDisplay = document.getElementById("player-time");
+    const sectionLabel = document.getElementById("player-section-label");
+
+    this.ws?.on("timeupdate", (currentTime) => {
+      // Update time display
+      const duration = this.ws?.getDuration() || 0;
+      if (timeDisplay) {
+        timeDisplay.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
+      }
+
+      // Find current section
+      const section = findSectionAtTime(currentTime, manifest.sections);
+      if (section) {
+        if (sectionLabel) {
+          const title = section.headingPath[section.headingPath.length - 1];
+          sectionLabel.textContent = title || "—";
+        }
+
+        // Notify SyncManager
+        if (this.syncEnabled) {
+          SyncManager.onAudioTime(currentTime);
+        }
+
+        // Update current section without visual scroll when sync is off
+        ReviewApp.updateCurrentSection(section.id);
+      }
+    });
+
+    this.ws?.on("ready", () => {
+      const duration = this.ws?.getDuration() || 0;
+      if (timeDisplay) {
+        timeDisplay.textContent = `0:00 / ${formatTime(duration)}`;
+      }
+    });
+  },
+
+  setupWaveformCommenting(manifest) {
+    this.ws?.on("click", (relativeX) => {
+      if (this.ws?.isPlaying()) return; // Don't open comment form while playing
+
+      const time = relativeX * (this.ws?.getDuration() || 0);
+      const section = findSectionAtTime(time, manifest.sections);
+      if (section) {
+        CommentPanel.openNew({
+          sectionId: section.id,
+          audioTimestamp: time,
+        });
+      }
+    });
+  },
+
+  setSpeed(rate) {
+    this.ws?.setPlaybackRate(rate);
+  },
+
+  seekTo(time) {
+    if (this.ws) {
+      const duration = this.ws.getDuration();
+      if (duration > 0) {
+        this.ws.setTime(time);
+      }
+    }
+  },
+};
+
+function findSectionAtTime(time, sections) {
+  if (!sections) return null;
+  for (const s of sections) {
+    if (s.audioStartTime != null && s.audioEndTime != null) {
+      if (time >= s.audioStartTime && time < s.audioEndTime) {
+        return s;
+      }
+    }
+  }
+  return sections[0] || null;
+}
+
+function formatTime(seconds) {
+  if (!seconds || isNaN(seconds)) return "0:00";
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 // ── Review App ─────────────────────────────────────────────────────────────
 
 const ReviewApp = {
@@ -581,6 +777,9 @@ const ReviewApp = {
 
       // Initialize visual presenter
       await VisualPresenter.init();
+
+      // Initialize audio player (if audio available)
+      await AudioPlayer.init();
 
       // Done Reviewing button
       document.getElementById("btn-done").addEventListener("click", () => {
@@ -661,9 +860,10 @@ document.addEventListener("DOMContentLoaded", () => {
   ReviewApp.init();
 });
 
-// Export for use by other modules (audio player in task 010)
+// Export for cross-module access
 window.ReviewApp = ReviewApp;
 window.CommentPanel = CommentPanel;
 window.ApiClient = ApiClient;
 window.VisualPresenter = VisualPresenter;
 window.SyncManager = SyncManager;
+window.AudioPlayer = AudioPlayer;

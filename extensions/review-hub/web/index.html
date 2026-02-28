@@ -24,11 +24,27 @@
   <div class="main-layout">
     <!-- Content Area -->
     <main class="content-area">
-      <!-- Podcast Player Zone (populated in task 010) -->
+      <!-- Podcast Player Zone -->
       <section class="player-zone" id="player-zone" style="display: none;">
-        <div class="player-placeholder">
+        <div class="player-header">
           <span class="player-icon">🎙️</span>
-          <span>Podcast player — loading...</span>
+          <span class="player-section-label" id="player-section-label">—</span>
+          <label class="sync-toggle">
+            <input type="checkbox" id="sync-toggle"> Sync visual to audio
+          </label>
+        </div>
+        <div id="waveform" class="waveform-container"></div>
+        <div class="player-controls">
+          <button class="player-btn" id="btn-skip-back" title="Back 10s">⏪</button>
+          <button class="player-btn player-btn-play" id="btn-play" title="Play/Pause">▶</button>
+          <button class="player-btn" id="btn-skip-fwd" title="Forward 10s">⏩</button>
+          <span class="player-time" id="player-time">0:00 / 0:00</span>
+          <div class="player-speed">
+            <button class="speed-btn" data-speed="1">1x</button>
+            <button class="speed-btn active" data-speed="1.25">1.25x</button>
+            <button class="speed-btn" data-speed="1.5">1.5x</button>
+            <button class="speed-btn" data-speed="2">2x</button>
+          </div>
         </div>
       </section>
 
@@ -131,6 +147,7 @@
     </div>
   </div>
 
+  <script src="/wavesurfer.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
