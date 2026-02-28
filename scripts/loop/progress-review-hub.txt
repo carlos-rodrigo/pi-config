@@ -53,3 +53,18 @@ Task ID: 002
   - Lock file at ~/.pi/review-hub/ persists across sessions
 
 ---
+
+## 2026-02-28 - Web app core
+
+Task ID: 003
+
+- Built full web app shell: HTML layout, CSS dark theme, JS modules
+- CommentPanel: CRUD, filtering, inline editing, form with section/type/priority
+- ApiClient: fetch with retry, session token from URL params
+- ReviewApp: state management, header rendering, done reviewing flow
+- **Learnings for future iterations:**
+  - Expose modules on window (window.ReviewApp, etc.) so task 005/010 scripts can extend
+  - Section dropdown uses headingLevel for indentation — visual hierarchy
+  - Comments sorted newest-first for better UX
+
+---
