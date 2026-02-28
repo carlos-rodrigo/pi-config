@@ -15,6 +15,7 @@ import * as os from "node:os";
 
 import type { ReviewManifest, ReviewComment } from "./manifest.js";
 import { saveManifest, loadManifest } from "./manifest.js";
+import { generateVisual, generateVisualStyles } from "./visual-generator.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -152,6 +153,9 @@ function getContentType(filePath: string): string {
 export function createReviewServer(): ReviewServer {
   let state: ServerState | null = null;
 
+  // Visual cache: HTML + CSS generated from source markdown
+  let visualCache: { html: string; css: string; sourceHash: string } | null = null;
+
   // Resolve the extension's web directory (relative to this file)
   const extensionDir = path.resolve(path.dirname(import.meta.url.replace("file://", "")), "..");
   const webDir = path.join(extensionDir, "web");
@@ -285,8 +289,56 @@ export function createReviewServer(): ReviewServer {
       return serveFile(res, sourcePath);
     }
 
+    // Visual HTML (generated from markdown, cached)
+    if (pathname === "/visual") {
+      if (!state) {
+        res.writeHead(503, { "Content-Type": "text/plain" });
+        res.end("Server not ready");
+        return;
+      }
+      try {
+        const visual = getVisualHtml(state.manifest);
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(visual.html);
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end("Failed to generate visual");
+      }
+      return;
+    }
+
+    // Visual CSS
+    if (pathname === "/visual-styles") {
+      if (!state) {
+        res.writeHead(503, { "Content-Type": "text/plain" });
+        res.end("Server not ready");
+        return;
+      }
+      const visual = getVisualHtml(state.manifest);
+      res.writeHead(200, { "Content-Type": "text/css; charset=utf-8" });
+      res.end(visual.css);
+      return;
+    }
+
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("Not Found");
+  }
+
+  function getVisualHtml(manifest: ReviewManifest): { html: string; css: string } {
+    // Check cache
+    if (visualCache && visualCache.sourceHash === manifest.sourceHash) {
+      return { html: visualCache.html, css: visualCache.css };
+    }
+
+    // Read source and generate
+    const sourcePath = path.resolve(manifest.source);
+    const sourceContent = fs.readFileSync(sourcePath, "utf-8");
+    const html = generateVisual(manifest, sourceContent);
+    const css = generateVisualStyles();
+
+    // Cache it
+    visualCache = { html, css, sourceHash: manifest.sourceHash };
+    return { html, css };
   }
 
   function serveFile(res: http.ServerResponse, filePath: string): void {

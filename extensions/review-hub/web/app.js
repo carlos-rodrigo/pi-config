@@ -356,6 +356,194 @@ const CommentPanel = {
   },
 };
 
+// ── Sync Manager ───────────────────────────────────────────────────────────
+
+const SyncManager = {
+  /** Called when audio playback reaches a time position. */
+  onAudioTime(seconds) {
+    const manifest = ReviewApp.state.manifest;
+    if (!manifest) return;
+
+    const section = manifest.sections.find(
+      (s) =>
+        s.audioStartTime != null &&
+        s.audioEndTime != null &&
+        seconds >= s.audioStartTime &&
+        seconds < s.audioEndTime,
+    );
+
+    if (section && section.id !== ReviewApp.state.currentSection) {
+      ReviewApp.updateCurrentSection(section.id);
+      VisualPresenter.scrollToSection(section.id);
+    }
+  },
+
+  /** Called when user scrolls the visual presentation. */
+  onVisualScroll(sectionId) {
+    if (sectionId !== ReviewApp.state.currentSection) {
+      ReviewApp.updateCurrentSection(sectionId);
+      // Don't seek audio — visual browsing is independent
+    }
+  },
+};
+
+// ── Visual Presenter ───────────────────────────────────────────────────────
+
+const VisualPresenter = {
+  observer: null,
+  sectionElements: [],
+
+  async init() {
+    const visualZone = document.getElementById("visual-zone");
+    if (!visualZone) return;
+
+    try {
+      // Fetch generated visual HTML
+      const res = await fetch("/visual");
+      if (!res.ok) {
+        visualZone.innerHTML = `<div class="visual-placeholder"><p>Visual presentation unavailable.</p></div>`;
+        return;
+      }
+
+      const html = await res.text();
+      visualZone.innerHTML = html;
+
+      // Setup intersection observer for scroll animations
+      this.setupScrollAnimations();
+
+      // Setup section comment buttons
+      this.setupCommentButtons();
+
+      // Setup progress nav
+      this.setupProgressNav();
+
+      // Setup click-to-scroll on comments
+      this.setupCommentScrolling();
+    } catch (err) {
+      console.error("Failed to load visual:", err);
+      visualZone.innerHTML = `<div class="visual-placeholder"><p>Failed to load visual presentation.</p></div>`;
+    }
+  },
+
+  setupScrollAnimations() {
+    this.sectionElements = Array.from(document.querySelectorAll(".review-section"));
+
+    this.observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("visible");
+
+            // Track current section
+            const sectionId = entry.target.getAttribute("data-section-id");
+            if (sectionId) {
+              SyncManager.onVisualScroll(sectionId);
+              this.updateProgressNav(sectionId);
+            }
+          }
+        }
+      },
+      {
+        root: document.querySelector(".visual-content") || document.querySelector(".content-area"),
+        threshold: 0.15,
+        rootMargin: "0px 0px -10% 0px",
+      },
+    );
+
+    for (const el of this.sectionElements) {
+      this.observer.observe(el);
+    }
+  },
+
+  setupCommentButtons() {
+    document.querySelectorAll(".section-comment-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const sectionId = btn.getAttribute("data-section-id");
+        if (sectionId) {
+          CommentPanel.openNew({ sectionId });
+
+          // Brief highlight effect
+          const section = btn.closest(".review-section");
+          if (section) {
+            section.style.outline = "1px solid var(--accent)";
+            section.style.outlineOffset = "4px";
+            setTimeout(() => {
+              section.style.outline = "";
+              section.style.outlineOffset = "";
+            }, 1500);
+          }
+        }
+      });
+    });
+  },
+
+  setupProgressNav() {
+    document.querySelectorAll(".progress-item").forEach((item) => {
+      item.addEventListener("click", (e) => {
+        e.preventDefault();
+        const sectionId = item.getAttribute("data-section-id");
+        if (sectionId) {
+          this.scrollToSection(sectionId);
+        }
+      });
+    });
+  },
+
+  setupCommentScrolling() {
+    // This patches the comment panel's render to add scroll-to-section on click
+    const originalRender = CommentPanel.render.bind(CommentPanel);
+    CommentPanel.render = () => {
+      originalRender();
+
+      // After rendering, add click handlers to scroll to sections
+      document.querySelectorAll(".comment-section-title").forEach((el) => {
+        const commentItem = el.closest(".comment-item");
+        if (!commentItem) return;
+        const commentId = commentItem.dataset.commentId;
+        const comment = ReviewApp.state.comments.find((c) => c.id === commentId);
+        if (comment) {
+          el.style.cursor = "pointer";
+          el.title = "Click to scroll to section";
+        }
+      });
+    };
+  },
+
+  updateProgressNav(activeSectionId) {
+    document.querySelectorAll(".progress-item").forEach((item) => {
+      if (item.getAttribute("data-section-id") === activeSectionId) {
+        item.classList.add("active");
+      } else {
+        item.classList.remove("active");
+      }
+    });
+  },
+
+  scrollToSection(sectionId) {
+    const el = document.querySelector(`.review-section[data-section-id="${sectionId}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      el.classList.add("visible");
+
+      // Brief highlight
+      el.style.outline = "1px solid var(--accent-dim)";
+      el.style.outlineOffset = "4px";
+      setTimeout(() => {
+        el.style.outline = "";
+        el.style.outlineOffset = "";
+      }, 1200);
+    }
+
+    this.updateProgressNav(sectionId);
+  },
+
+  /** Highlight a specific section (e.g., from comment panel click). */
+  highlightSection(sectionId) {
+    this.updateProgressNav(sectionId);
+  },
+};
+
 // ── Review App ─────────────────────────────────────────────────────────────
 
 const ReviewApp = {
@@ -390,6 +578,9 @@ const ReviewApp = {
       CommentPanel.init();
       CommentPanel.populateSectionDropdown(manifest.sections);
       CommentPanel.render();
+
+      // Initialize visual presenter
+      await VisualPresenter.init();
 
       // Done Reviewing button
       document.getElementById("btn-done").addEventListener("click", () => {
@@ -470,7 +661,9 @@ document.addEventListener("DOMContentLoaded", () => {
   ReviewApp.init();
 });
 
-// Export for use by other modules (visual presenter, audio player)
+// Export for use by other modules (audio player in task 010)
 window.ReviewApp = ReviewApp;
 window.CommentPanel = CommentPanel;
 window.ApiClient = ApiClient;
+window.VisualPresenter = VisualPresenter;
+window.SyncManager = SyncManager;
