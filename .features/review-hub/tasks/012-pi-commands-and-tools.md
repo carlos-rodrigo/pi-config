@@ -1,6 +1,6 @@
 ---
 id: 012
-status: open
+status: done
 depends: [002, 005, 006, 008, 009, 010, 011]
 created: 2026-02-27
 ---

@@ -178,3 +178,25 @@ Task ID: 010
   - Player zone conditionally hidden based on manifest.audio presence
 
 ---
+
+## 2026-02-28 - Pi commands and tools (entry point wiring)
+
+Task ID: 012
+
+- Wired full generation pipeline in index.ts: manifest → script → TTS → serve → browser
+- Registered /review, /review-apply, /review-list commands
+- Registered review_document and review_apply tools with TypeBox params and custom renderCall/renderResult
+- Added lifecycle handlers: session_start → cleanupOrphanServers(), session_shutdown → server.stop()
+- Implemented parseReviewArgs() with --audio-only, --visual-only, --lang flags and @ prefix stripping
+- Implemented resolveReviewDir() for .features/ detection
+- Added conflicting flags validation (--audio-only + --visual-only)
+- TTS failure gracefully falls back to visual-only
+- Status bar cleared on errors
+- **Learnings for future iterations:**
+  - AgentToolResult<T> requires `details` to always be present (not optional) — use typed details with error field instead of isError
+  - Tool parameter schemas must be defined as const before registerTool (for generic type inference)
+  - pi.sendUserMessage() can send prompts to the LLM from command handlers — useful for delegating complex work
+  - Extension tools use pi.registerTool<ParamsType, DetailsType>() for proper type narrowing in renderCall/renderResult
+  - pi.exec("open", [url]) opens browser on macOS from extensions
+
+---
