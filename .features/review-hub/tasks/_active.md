@@ -11,8 +11,8 @@ Started: 2026-02-27
 - [x] 005 - Web app visual presenter with scroll animations and commenting
 - [x] 006 - Podcast script generator (sub-agent)
 - [x] 007 - TTS provider interface and auto-installer
-- [ ] 008 - Dia TTS provider (English)
-- [ ] 009 - Bark TTS provider (Spanish)
+- [x] 008 - Dia TTS provider (English)
+- [x] 009 - Bark TTS provider (Spanish)
 - [ ] 010 - Web app audio player (wavesurfer.js) and sync
 - [x] 011 - Comment applicator (apply review → update source)
 - [ ] 012 - Pi commands and tools (entry point wiring)

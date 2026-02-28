@@ -146,3 +146,19 @@ Task ID: 011
   - The LLM itself applies changes — the applicator just builds the prompt
 
 ---
+
+## 2026-02-28 - Dia and Bark TTS providers
+
+Task IDs: 008, 009
+
+- Dia: chunk-based generation with native [S1]/[S2] support
+- Bark: per-segment generation with speaker presets, emotion mapping
+- Both: venv management, WAV output, MP3 conversion, section timestamps
+- Python scripts report progress via JSON lines on stdout
+- **Learnings for future iterations:**
+  - Dia groups consecutive segments by section for better coherence
+  - Bark processes each segment individually — slower but more controllable
+  - Emotion annotations mapped: (laughs)→[laughter], (pauses)→silence gap
+  - Bark needs ETA in progress (much slower than Dia)
+
+---
