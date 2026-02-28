@@ -10,7 +10,7 @@ Started: 2026-02-27
 - [x] 004 - Visual generator (markdown → cinematic HTML)
 - [x] 005 - Web app visual presenter with scroll animations and commenting
 - [x] 006 - Podcast script generator (sub-agent)
-- [ ] 007 - TTS provider interface and auto-installer
+- [x] 007 - TTS provider interface and auto-installer
 - [ ] 008 - Dia TTS provider (English)
 - [ ] 009 - Bark TTS provider (Spanish)
 - [ ] 010 - Web app audio player (wavesurfer.js) and sync

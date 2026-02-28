@@ -115,3 +115,19 @@ Task ID: 006
   - Sub-agent temp files cleaned up in finally block
 
 ---
+
+## 2026-02-28 - TTS provider interface and auto-installer
+
+Task ID: 007
+
+- TTSProvider interface + TTSResult/SectionTimestamp types
+- Auto-installer with pre-flight checks and UI confirmation
+- Venv management (create, validate, install packages)
+- WAV → MP3 via ffmpeg with fallback
+- Install status caching
+- **Learnings for future iterations:**
+  - Apple Silicon torch works with default pip (no special index URL)
+  - Venv path: ~/.pi/review-hub/venv-{provider}
+  - df -g for GB-level disk space check on macOS
+
+---
