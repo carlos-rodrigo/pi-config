@@ -84,3 +84,19 @@ Task ID: 004
   - CSS is exported as a string constant for injection into the page
 
 ---
+
+## 2026-02-28 - Web app visual presenter
+
+Task ID: 005
+
+- Added /visual and /visual-styles routes to server with caching
+- VisualPresenter + SyncManager modules in app.js
+- IntersectionObserver for scroll-triggered section animations
+- Comment buttons → section pre-filled comment form
+- Progress sidebar with click-to-scroll
+- **Learnings for future iterations:**
+  - Visual HTML caching keyed on sourceHash avoids regeneration
+  - Monkey-patching CommentPanel.render to add scroll-to-section behavior
+  - IntersectionObserver root should be .visual-content or .content-area
+
+---
