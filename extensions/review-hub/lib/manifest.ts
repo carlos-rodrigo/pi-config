@@ -265,6 +265,11 @@ export async function createManifest(
   language: "en" | "es",
 ): Promise<ReviewManifest> {
   const resolvedPath = path.resolve(sourcePath);
+
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`Source file not found: ${resolvedPath}`);
+  }
+
   const content = fs.readFileSync(resolvedPath, "utf-8");
   const sourceHash = sha256(content);
 
@@ -330,8 +335,20 @@ function getNextReviewId(reviewDir: string): string {
  */
 export async function loadManifest(manifestPath: string): Promise<ReviewManifest> {
   const resolvedPath = path.resolve(manifestPath);
+
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`Manifest file not found: ${resolvedPath}`);
+  }
+
   const content = fs.readFileSync(resolvedPath, "utf-8");
-  return JSON.parse(content) as ReviewManifest;
+  const parsed = JSON.parse(content) as ReviewManifest;
+
+  // Basic shape validation
+  if (!parsed.id || !parsed.source || !parsed.sections) {
+    throw new Error(`Invalid manifest format: missing required fields (id, source, sections)`);
+  }
+
+  return parsed;
 }
 
 /**
@@ -373,6 +390,11 @@ export async function saveManifest(manifest: ReviewManifest, dir: string): Promi
  */
 export async function detectDrift(manifest: ReviewManifest): Promise<DriftResult> {
   const resolvedPath = path.resolve(manifest.source);
+
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`Source file not found for drift detection: ${resolvedPath}`);
+  }
+
   const content = fs.readFileSync(resolvedPath, "utf-8");
   const currentHash = sha256(content);
 
