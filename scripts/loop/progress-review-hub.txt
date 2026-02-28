@@ -1,0 +1,36 @@
+# Loop Progress Log
+
+Started: 2026-02-28
+Feature: review-hub
+
+## Codebase Patterns
+
+- **Extension location**: Extensions live in `extensions/` in the repo and get symlinked to `~/.pi/agent/extensions/` via `install.sh`. Always create in the repo, not directly in `~/.pi`.
+- **Extension devDeps**: Need `typescript`, `@types/node`, `@mariozechner/pi-coding-agent` as devDependencies for typecheck.
+- **Typecheck command**: `npx tsc --noEmit --esModuleInterop --module nodenext --moduleResolution nodenext --strict --skipLibCheck index.ts lib/manifest.ts`
+- **Extension load test**: `pi -e ~/.pi/agent/extensions/review-hub/index.ts -p "hello"` to verify loading.
+- **Import pattern**: `import type { ExtensionAPI } from "@mariozechner/pi-coding-agent"` for types.
+- **Manifest file naming**: `review-NNN.manifest.json` in `.features/{feature}/reviews/`
+- **Section ID format**: `s-{slugified-heading-path}` with `--` between levels, `-N` suffix for duplicates.
+
+---
+
+## 2026-02-28 - Extension scaffold and manifest system
+
+Task ID: 001
+
+- Created extension directory structure at `extensions/review-hub/`
+- Implemented full manifest system in `lib/manifest.ts`:
+  - Markdown section parser with heading hierarchy tracking
+  - Stable section ID generation with duplicate disambiguation
+  - SHA-256 hashing for files and sections
+  - createManifest, loadManifest (with validation), saveManifest (atomic), detectDrift
+  - Full TypeScript types: ReviewManifest, ReviewSection, ReviewComment, DriftResult
+- Created `index.ts` entry point with placeholder /review commands
+- Symlinked to `~/.pi/agent/extensions/review-hub/`
+- **Learnings for future iterations:**
+  - Extensions must be created in the repo's `extensions/` dir, not `~/.pi/agent/extensions/` directly
+  - Atomic writes via temp file + rename pattern works well for JSON persistence
+  - Section IDs include full heading path for uniqueness — important for comment anchoring
+
+---
