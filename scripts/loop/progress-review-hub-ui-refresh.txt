@@ -10,6 +10,7 @@ Feature: review-hub-ui-refresh
 - `lib/server.ts` now prefers `web-app/dist` and falls back to legacy `web/`; treat `/manifest.json`, `/audio`, `/visual*`, `/comments*`, and `/complete` as reserved API routes before SPA fallback.
 - Frontend API types are imported from backend contracts via `web-app/src/lib/api/types.ts` (type-only import from `../../../../lib/manifest`).
 - Layout is split into reusable rails (`components/layout/toc-rail.tsx`, `components/layout/comment-rail.tsx`) and controlled from `App.tsx` mode state (`read` | `review`).
+- `VisualContentHost` is the integration point for `/visual` + `/visual-styles`, with `IntersectionObserver` driving active TOC sync and imperative `scrollToSection` for TOC clicks.
 
 ---
 
@@ -70,5 +71,20 @@ Task ID: 004
 - **Learnings for future iterations:**
   - Keep mode state in the app shell and let rails stay mostly presentational for simpler feature layering.
   - Reusing the same rail components in desktop columns and mobile sheets keeps behavior aligned across breakpoints.
+
+---
+
+## 2026-03-02 - Integrate server-generated visual content and TOC active sync
+
+Task ID: 005
+
+- Added `components/visual/visual-content-host.tsx` to fetch and render `/visual`, attach `/visual-styles`, and observe active `.review-section` elements.
+- Wired TOC click handling to imperative section scrolling via `VisualContentHost` ref.
+- Updated center column in `App.tsx` to host server-rendered visual content instead of placeholder section cards.
+- Preserved active-section feedback in the shell while syncing observer-driven updates.
+
+- **Learnings for future iterations:**
+  - Keep visual integration isolated in one host component so later comment/audio sync features can target a stable API.
+  - A single source of truth for active section (`App.tsx`) keeps TOC state and visual scroll behavior aligned.
 
 ---

@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ListTree, MessageSquare, PanelLeftOpen, PanelRightOpen } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,7 @@ import { useReviewBootstrap } from "@/hooks/use-review-bootstrap";
 import { useSessionToken } from "@/hooks/use-session-token";
 import { CommentRail, type CommentFormState } from "@/components/layout/comment-rail";
 import { TocRail } from "@/components/layout/toc-rail";
+import { VisualContentHost, type VisualContentHostHandle } from "@/components/visual/visual-content-host";
 
 const EMPTY_FORM: CommentFormState = {
   sectionId: "",
@@ -44,6 +45,7 @@ export default function App() {
   const [formState, setFormState] = useState<CommentFormState>(EMPTY_FORM);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const visualHostRef = useRef<VisualContentHostHandle | null>(null);
 
   const sectionOptions = manifest?.sections ?? [];
 
@@ -148,6 +150,11 @@ export default function App() {
     }
   }
 
+  function handleTocSelect(sectionId: string) {
+    setActiveSectionId(sectionId);
+    visualHostRef.current?.scrollToSection(sectionId);
+  }
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="bg-background/95 sticky top-0 z-40 border-b backdrop-blur">
@@ -170,7 +177,7 @@ export default function App() {
                       <TocRail
                         sections={manifest.sections}
                         activeSectionId={activeSectionId}
-                        onSelect={setActiveSectionId}
+                        onSelect={handleTocSelect}
                       />
                     </div>
                   </SheetContent>
@@ -259,7 +266,7 @@ export default function App() {
               <TocRail
                 sections={manifest.sections}
                 activeSectionId={activeSectionId}
-                onSelect={setActiveSectionId}
+                onSelect={handleTocSelect}
               />
             </div>
           ) : null}
@@ -267,37 +274,16 @@ export default function App() {
           <main className={cn("min-w-0 rounded-xl border p-4 sm:p-5", mode === "read" && "lg:px-10 lg:py-8")}
           >
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Document flow</h2>
+              <h2 className="text-sm font-semibold">Visual review content</h2>
               <Badge variant="outline">{manifest.sections.length} sections</Badge>
             </div>
 
-            <div className="space-y-3">
-              {manifest.sections.map((section) => {
-                const title = section.headingPath[section.headingPath.length - 1] ?? section.id;
-                const isActive = section.id === activeSectionId;
-
-                return (
-                  <article
-                    key={section.id}
-                    className={cn(
-                      "rounded-lg border p-4 transition-colors",
-                      isActive ? "border-primary bg-primary/5" : "hover:bg-muted/50",
-                    )}
-                    onClick={() => setActiveSectionId(section.id)}
-                  >
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      {section.headingPath.slice(0, -1).join(" / ") || "Root"}
-                    </p>
-                    <h3 className={cn("mt-1 font-medium", mode === "read" ? "text-xl leading-relaxed" : "text-base")}>{title}</h3>
-                    {mode === "review" ? (
-                      <p className="text-muted-foreground mt-2 text-xs">
-                        Lines {section.sourceLineStart}–{section.sourceLineEnd}
-                      </p>
-                    ) : null}
-                  </article>
-                );
-              })}
-            </div>
+            <VisualContentHost
+              ref={visualHostRef}
+              className={cn("rounded-lg", mode === "read" ? "px-1" : "")}
+              activeSectionId={activeSectionId}
+              onActiveSectionChange={setActiveSectionId}
+            />
 
             {activeSection ? (
               <p className="text-muted-foreground mt-4 text-xs">Active section: {activeSection.id}</p>
