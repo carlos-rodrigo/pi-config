@@ -13,3 +13,10 @@
 **Context:** Backend modules use ESM imports ending with `.js` while source files are TypeScript.
 **Learning:** Running tests with `tsx --test` avoids module resolution issues that appear with Node strip-types in this setup.
 **Applies to:** Extension-level integration tests under `extensions/review-hub/test`.
+
+## Review Hub: Model keyboard workflows as pure helpers
+
+**Date:** 2026-03-02
+**Context:** Task 008 added next-unresolved navigation plus a keyboard shortcut.
+**Learning:** Put event-gating rules in a pure helper (`shouldHandleNextUnresolvedShortcut`) so shortcuts are testable without browser harnesses and easier to reason about.
+**Applies to:** Any feature with global keyboard shortcuts in the React frontend.

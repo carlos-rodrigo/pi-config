@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
   CommentComposer,
@@ -24,6 +25,8 @@ export function CommentRail({
   formState,
   canSubmit,
   isSaving,
+  unresolvedCount,
+  onNextUnresolved,
   onSubmit,
   onFieldChange,
   onReset,
@@ -37,6 +40,8 @@ export function CommentRail({
   formState: CommentFormState;
   canSubmit: boolean;
   isSaving: boolean;
+  unresolvedCount: number;
+  onNextUnresolved: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onFieldChange: <K extends keyof CommentFormState>(key: K, value: CommentFormState[K]) => void;
   onReset: () => void;
@@ -52,8 +57,32 @@ export function CommentRail({
       <div className="space-y-3 border-b px-4 py-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold">Comments</h2>
-          <Badge variant="outline">{comments.length}</Badge>
+          <div className="flex items-center gap-1">
+            <Badge variant="outline">{comments.length}</Badge>
+            <Badge variant={unresolvedCount > 0 ? "destructive" : "secondary"}>
+              {unresolvedCount} open
+            </Badge>
+          </div>
         </div>
+
+        <div className="space-y-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full justify-between"
+            onClick={onNextUnresolved}
+            disabled={unresolvedCount === 0}
+          >
+            <span>Next unresolved</span>
+            <span className="text-muted-foreground text-xs">N</span>
+          </Button>
+
+          {unresolvedCount === 0 ? (
+            <p className="text-muted-foreground text-xs">All caught up — no unresolved comments.</p>
+          ) : null}
+        </div>
+
         <CommentFilters comments={comments} activeFilter={activeFilter} onChange={setActiveFilter} />
       </div>
 

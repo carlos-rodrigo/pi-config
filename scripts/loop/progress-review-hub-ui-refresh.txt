@@ -13,6 +13,7 @@ Feature: review-hub-ui-refresh
 - `VisualContentHost` is the integration point for `/visual` + `/visual-styles`, with `IntersectionObserver` driving active TOC sync and imperative `scrollToSection` for TOC clicks.
 - Comment rail is composed from `components/comments/*` (filters, composer, list) so behavior updates can be isolated without rewriting shell layout.
 - `/comments` is an upsert endpoint: server owns `createdAt`/`updatedAt` and normalizes missing status to `open`; status toggles should send full comment payload + desired `status`.
+- Keep unresolved workflow logic in pure utilities (`web-app/src/lib/unresolved-navigation.ts`, `web-app/src/lib/unresolved-shortcut.ts`) and let hooks/components compose them for easier testing.
 
 ---
 
@@ -118,5 +119,20 @@ Task ID: 007
 - **Learnings for future iterations:**
   - Keep timestamp authority on the server to prevent client-side audit drift.
   - `tsx --test` works well here because backend files import `.js` specifiers while source remains TypeScript.
+
+---
+
+## 2026-03-02 - Add unresolved workflow and section-level unresolved badges
+
+Task ID: 008
+
+- Added unresolved navigation workflow with `Next unresolved` action + `N` keyboard shortcut gated to review mode.
+- Added section-level unresolved badges in the TOC and unresolved/open count summaries in the comment rail.
+- Added pure unresolved utilities (`web-app/src/lib/unresolved-navigation.ts`, `web-app/src/lib/unresolved-shortcut.ts`) with dedicated tests.
+- Added “All caught up” empty-state messaging when no open comments remain.
+
+- **Learnings for future iterations:**
+  - Extracting keyboard and queue logic into pure utilities keeps React components lean and makes behavior verifiable without browser test harnesses.
+  - Unknown section IDs should sort after known sections to keep next-unresolved traversal predictable.
 
 ---

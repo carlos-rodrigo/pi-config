@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ListTree, MessageSquare, PanelLeftOpen, PanelRightOpen } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -12,9 +12,11 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { shouldHandleNextUnresolvedShortcut } from "@/lib/unresolved-shortcut";
 import type { ReviewComment, SaveCommentInput } from "@/lib/api";
 import { useReviewBootstrap } from "@/hooks/use-review-bootstrap";
 import { useSessionToken } from "@/hooks/use-session-token";
+import { useUnresolvedNavigation } from "@/hooks/use-unresolved-navigation";
 import { CommentRail, type CommentFormState } from "@/components/layout/comment-rail";
 import { TocRail } from "@/components/layout/toc-rail";
 import { VisualContentHost, type VisualContentHostHandle } from "@/components/visual/visual-content-host";
@@ -48,6 +50,8 @@ export default function App() {
   const visualHostRef = useRef<VisualContentHostHandle | null>(null);
 
   const sectionOptions = manifest?.sections ?? [];
+  const { unresolvedCount, unresolvedCountsBySection, goToNextUnresolved } =
+    useUnresolvedNavigation(comments, sectionOptions);
 
   useEffect(() => {
     if (!manifest?.sections.length) return;
@@ -167,10 +171,37 @@ export default function App() {
     }
   }
 
-  function handleTocSelect(sectionId: string) {
+  const handleTocSelect = useCallback((sectionId: string) => {
     setActiveSectionId(sectionId);
     visualHostRef.current?.scrollToSection(sectionId);
-  }
+  }, []);
+
+  const handleNextUnresolved = useCallback(() => {
+    const nextComment = goToNextUnresolved();
+    if (!nextComment) {
+      return;
+    }
+
+    handleTocSelect(nextComment.sectionId);
+  }, [goToNextUnresolved, handleTocSelect]);
+
+  useEffect(() => {
+    if (mode !== "review" || unresolvedCount === 0) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!shouldHandleNextUnresolvedShortcut(event, { mode, unresolvedCount })) {
+        return;
+      }
+
+      event.preventDefault();
+      handleNextUnresolved();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [handleNextUnresolved, mode, unresolvedCount]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -194,6 +225,7 @@ export default function App() {
                       <TocRail
                         sections={manifest.sections}
                         activeSectionId={activeSectionId}
+                        unresolvedCountsBySection={unresolvedCountsBySection}
                         onSelect={handleTocSelect}
                       />
                     </div>
@@ -218,6 +250,8 @@ export default function App() {
                         formState={formState}
                         canSubmit={canSubmit}
                         isSaving={isSaving}
+                        unresolvedCount={unresolvedCount}
+                        onNextUnresolved={handleNextUnresolved}
                         onSubmit={handleSubmit}
                         onFieldChange={(key, value) => setFormState((prev) => ({ ...prev, [key]: value }))}
                         onReset={() => setFormState({ ...EMPTY_FORM, sectionId: formState.sectionId })}
@@ -285,6 +319,7 @@ export default function App() {
               <TocRail
                 sections={manifest.sections}
                 activeSectionId={activeSectionId}
+                unresolvedCountsBySection={unresolvedCountsBySection}
                 onSelect={handleTocSelect}
               />
             </div>
@@ -317,6 +352,8 @@ export default function App() {
                 formState={formState}
                 canSubmit={canSubmit}
                 isSaving={isSaving}
+                unresolvedCount={unresolvedCount}
+                onNextUnresolved={handleNextUnresolved}
                 onSubmit={handleSubmit}
                 onFieldChange={(key, value) => setFormState((prev) => ({ ...prev, [key]: value }))}
                 onReset={() => setFormState({ ...EMPTY_FORM, sectionId: formState.sectionId })}

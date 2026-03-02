@@ -1,3 +1,4 @@
+import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
@@ -10,10 +11,12 @@ type TocSection = {
 export function TocRail({
   sections,
   activeSectionId,
+  unresolvedCountsBySection,
   onSelect,
 }: {
   sections: TocSection[];
   activeSectionId: string | null;
+  unresolvedCountsBySection?: Record<string, number>;
   onSelect: (sectionId: string) => void;
 }) {
   return (
@@ -26,13 +29,14 @@ export function TocRail({
           {sections.map((section) => {
             const label = section.headingPath[section.headingPath.length - 1] ?? section.id;
             const depthPadding = Math.max(section.headingLevel - 1, 0) * 10;
+            const unresolvedCount = unresolvedCountsBySection?.[section.id] ?? 0;
 
             return (
               <li key={section.id}>
                 <button
                   type="button"
                   className={cn(
-                    "w-full rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+                    "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
                     activeSectionId === section.id
                       ? "bg-primary text-primary-foreground"
                       : "hover:bg-muted text-muted-foreground",
@@ -40,7 +44,12 @@ export function TocRail({
                   style={{ paddingLeft: `${8 + depthPadding}px` }}
                   onClick={() => onSelect(section.id)}
                 >
-                  {label}
+                  <span className="truncate">{label}</span>
+                  {unresolvedCount > 0 ? (
+                    <Badge variant={activeSectionId === section.id ? "secondary" : "destructive"}>
+                      {unresolvedCount}
+                    </Badge>
+                  ) : null}
                 </button>
               </li>
             );
