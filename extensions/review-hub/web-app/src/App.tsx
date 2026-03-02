@@ -206,6 +206,7 @@ export default function App() {
                         onReset={() => setFormState({ ...EMPTY_FORM, sectionId: formState.sectionId })}
                         onEdit={(comment) => handleEdit(comment.id)}
                         onDelete={handleDelete}
+                        onJumpToSection={handleTocSelect}
                       />
                     </div>
                   </SheetContent>
@@ -303,6 +304,7 @@ export default function App() {
                 onReset={() => setFormState({ ...EMPTY_FORM, sectionId: formState.sectionId })}
                 onEdit={(comment) => handleEdit(comment.id)}
                 onDelete={handleDelete}
+                onJumpToSection={handleTocSelect}
               />
             </div>
           ) : null}

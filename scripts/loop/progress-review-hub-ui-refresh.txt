@@ -11,6 +11,7 @@ Feature: review-hub-ui-refresh
 - Frontend API types are imported from backend contracts via `web-app/src/lib/api/types.ts` (type-only import from `../../../../lib/manifest`).
 - Layout is split into reusable rails (`components/layout/toc-rail.tsx`, `components/layout/comment-rail.tsx`) and controlled from `App.tsx` mode state (`read` | `review`).
 - `VisualContentHost` is the integration point for `/visual` + `/visual-styles`, with `IntersectionObserver` driving active TOC sync and imperative `scrollToSection` for TOC clicks.
+- Comment rail is composed from `components/comments/*` (filters, composer, list) so behavior updates can be isolated without rewriting shell layout.
 
 ---
 
@@ -86,5 +87,20 @@ Task ID: 005
 - **Learnings for future iterations:**
   - Keep visual integration isolated in one host component so later comment/audio sync features can target a stable API.
   - A single source of truth for active section (`App.tsx`) keeps TOC state and visual scroll behavior aligned.
+
+---
+
+## 2026-03-02 - Migrate comment CRUD UI to React shadcn comment rail
+
+Task ID: 006
+
+- Extracted comment UX into dedicated components under `web-app/src/components/comments/` (filter bar, composer, list).
+- Reworked `CommentRail` to compose those pieces with type filtering and count summaries.
+- Added section-jump interaction from comment cards back to visual content anchors.
+- Kept create/edit/delete flows and Done Reviewing path wired through typed API hooks.
+
+- **Learnings for future iterations:**
+  - Splitting filter/composer/list dramatically reduces rail complexity and makes future status-based workflows easier.
+  - Section jump callbacks should route through the shared TOC scroll helper to keep navigation behavior consistent.
 
 ---
