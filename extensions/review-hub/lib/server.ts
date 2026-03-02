@@ -12,6 +12,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { fileURLToPath } from "node:url";
 
 import type { ReviewManifest, ReviewComment } from "./manifest.js";
 import { saveManifest, loadManifest } from "./manifest.js";
@@ -32,6 +33,11 @@ interface ServerState {
   manifest: ReviewManifest;
   reviewDir: string;
 }
+
+type FrontendMode =
+  | { kind: "dist"; distDir: string }
+  | { kind: "legacy"; webDir: string }
+  | { kind: "missing"; distDir: string; webDir: string };
 
 // ── Lock File ──────────────────────────────────────────────────────────────
 
@@ -137,15 +143,66 @@ const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
   ".mp3": "audio/mpeg",
   ".wav": "audio/wav",
   ".md": "text/markdown; charset=utf-8",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
 };
 
 function getContentType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase();
   return CONTENT_TYPES[ext] ?? "application/octet-stream";
+}
+
+function resolveFrontendMode(distDir: string, webDir: string): FrontendMode {
+  const distIndex = path.join(distDir, "index.html");
+  if (fs.existsSync(distIndex)) {
+    return { kind: "dist", distDir };
+  }
+
+  const legacyIndex = path.join(webDir, "index.html");
+  if (fs.existsSync(legacyIndex)) {
+    return { kind: "legacy", webDir };
+  }
+
+  return { kind: "missing", distDir, webDir };
+}
+
+function isReservedApiPath(pathname: string): boolean {
+  return (
+    pathname === "/manifest.json" ||
+    pathname === "/audio" ||
+    pathname === "/source" ||
+    pathname === "/visual" ||
+    pathname === "/visual-styles" ||
+    pathname === "/complete" ||
+    pathname.startsWith("/comments")
+  );
+}
+
+function safeResolve(rootDir: string, requestPath: string): string | null {
+  const sanitized = requestPath.replace(/^\/+/, "");
+  const candidate = path.resolve(rootDir, sanitized);
+  const resolvedRoot = path.resolve(rootDir);
+
+  if (candidate === resolvedRoot || candidate.startsWith(resolvedRoot + path.sep)) {
+    return candidate;
+  }
+
+  return null;
 }
 
 // ── Server Implementation ──────────────────────────────────────────────────
@@ -156,9 +213,11 @@ export function createReviewServer(): ReviewServer {
   // Visual cache: HTML + CSS generated from source markdown
   let visualCache: { html: string; css: string; sourceHash: string } | null = null;
 
-  // Resolve the extension's web directory (relative to this file)
-  const extensionDir = path.resolve(path.dirname(import.meta.url.replace("file://", "")), "..");
+  // Resolve extension directories (relative to this file)
+  const extensionDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const webDir = path.join(extensionDir, "web");
+  const distDir = path.join(extensionDir, "web-app", "dist");
+  const frontendMode = resolveFrontendMode(distDir, webDir);
 
   async function start(
     manifest: ReviewManifest,
@@ -185,7 +244,7 @@ export function createReviewServer(): ReviewServer {
       }
 
       if (req.method === "GET") {
-        handleGet(req, res, sessionToken, resolvedReviewDir, webDir);
+        handleGet(req, res, sessionToken, resolvedReviewDir, frontendMode);
         return;
       }
 
@@ -236,24 +295,10 @@ export function createReviewServer(): ReviewServer {
     res: http.ServerResponse,
     _token: string,
     reviewDir: string,
-    webDir: string,
+    frontendMode: FrontendMode,
   ): void {
     const url = new URL(req.url ?? "/", `http://127.0.0.1`);
     const pathname = url.pathname;
-
-    // Static web files — strict allowlist, no path traversal
-    const staticRoutes: Record<string, { file: string; dir: string }> = {
-      "/": { file: "index.html", dir: webDir },
-      "/styles.css": { file: "styles.css", dir: webDir },
-      "/app.js": { file: "app.js", dir: webDir },
-      "/wavesurfer.js": { file: path.join("vendor", "wavesurfer.min.js"), dir: webDir },
-    };
-
-    const staticRoute = staticRoutes[pathname];
-    if (staticRoute) {
-      const filePath = path.join(staticRoute.dir, staticRoute.file);
-      return serveFile(res, filePath);
-    }
 
     // Manifest
     if (pathname === "/manifest.json") {
@@ -300,7 +345,7 @@ export function createReviewServer(): ReviewServer {
         const visual = getVisualHtml(state.manifest);
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(visual.html);
-      } catch (err) {
+      } catch {
         res.writeHead(500, { "Content-Type": "text/plain" });
         res.end("Failed to generate visual");
       }
@@ -318,6 +363,94 @@ export function createReviewServer(): ReviewServer {
       res.writeHead(200, { "Content-Type": "text/css; charset=utf-8" });
       res.end(visual.css);
       return;
+    }
+
+    // Keep API paths from falling through to SPA routes
+    if (isReservedApiPath(pathname)) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Not Found" }));
+      return;
+    }
+
+    // Serve frontend shell + assets
+    if (frontendMode.kind === "dist") {
+      return serveDistFrontend(res, pathname, frontendMode.distDir);
+    }
+
+    if (frontendMode.kind === "legacy") {
+      return serveLegacyFrontend(res, pathname, frontendMode.webDir);
+    }
+
+    res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end(
+      [
+        "Review Hub frontend build is missing.",
+        `Expected: ${path.join(frontendMode.distDir, "index.html")}`,
+        "Run from extensions/review-hub:",
+        "  npm run build:web",
+      ].join("\n"),
+    );
+  }
+
+  function serveDistFrontend(res: http.ServerResponse, pathname: string, distRoot: string): void {
+    const requestPath = pathname === "/" ? "/index.html" : pathname;
+    const resolvedPath = safeResolve(distRoot, requestPath);
+
+    if (resolvedPath && fs.existsSync(resolvedPath)) {
+      try {
+        if (fs.statSync(resolvedPath).isFile()) {
+          return serveFile(res, resolvedPath);
+        }
+      } catch {
+        // Fall through to SPA/404 behavior
+      }
+    }
+
+    const ext = path.extname(pathname);
+    if (ext) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not Found");
+      return;
+    }
+
+    const spaEntry = path.join(distRoot, "index.html");
+    return serveFile(res, spaEntry);
+  }
+
+  function serveLegacyFrontend(res: http.ServerResponse, pathname: string, webRoot: string): void {
+    const staticRoutes: Record<string, string> = {
+      "/": "index.html",
+      "/styles.css": "styles.css",
+      "/app.js": "app.js",
+      "/wavesurfer.js": path.join("vendor", "wavesurfer.min.js"),
+    };
+
+    const staticFile = staticRoutes[pathname];
+    if (staticFile) {
+      const filePath = path.join(webRoot, staticFile);
+      return serveFile(res, filePath);
+    }
+
+    if (pathname.startsWith("/fonts/")) {
+      const relativeFontPath = pathname.slice("/fonts/".length);
+      const safePattern = /^[a-zA-Z0-9._/-]+$/;
+
+      if (!relativeFontPath || !safePattern.test(relativeFontPath)) {
+        res.writeHead(400, { "Content-Type": "text/plain" });
+        res.end("Invalid font path");
+        return;
+      }
+
+      const fontsDir = path.join(webRoot, "fonts");
+      const filePath = safeResolve(fontsDir, relativeFontPath);
+      const allowedExt = new Set([".woff", ".woff2", ".ttf", ".otf"]);
+      if (!filePath || !allowedExt.has(path.extname(filePath).toLowerCase())) {
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        res.end("Forbidden");
+        return;
+      }
+
+      return serveFile(res, filePath);
     }
 
     res.writeHead(404, { "Content-Type": "text/plain" });
