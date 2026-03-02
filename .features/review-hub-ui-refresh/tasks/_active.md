@@ -8,7 +8,7 @@ Design: `.features/review-hub-ui-refresh/design.md`
 
 - [x] 001 - Create React + Vite + Tailwind + shadcn frontend workspace
 - [x] 002 - Update review server to safely serve built frontend dist
-- [ ] 003 - Implement typed React API client and session token boot flow
+- [x] 003 - Implement typed React API client and session token boot flow
 - [ ] 004 - Build 3-column app shell with Read/Review mode
 - [ ] 005 - Integrate server-generated visual content and TOC active-section sync
 - [ ] 006 - Migrate comment CRUD UI to React shadcn comment rail

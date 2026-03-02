@@ -8,6 +8,7 @@ Feature: review-hub-ui-refresh
 - Frontend workspace lives in `extensions/review-hub/web-app`; invoke scripts from extension root via `npm --prefix web-app ...`.
 - Keep shadcn component aliases aligned (`@/*` → `src/*`) across `tsconfig.app.json`, `vite.config.ts`, and `components.json`.
 - `lib/server.ts` now prefers `web-app/dist` and falls back to legacy `web/`; treat `/manifest.json`, `/audio`, `/visual*`, `/comments*`, and `/complete` as reserved API routes before SPA fallback.
+- Frontend API types are imported from backend contracts via `web-app/src/lib/api/types.ts` (type-only import from `../../../../lib/manifest`).
 
 ---
 
@@ -38,5 +39,20 @@ Task ID: 002
 - **Learnings for future iterations:**
   - Keep API route detection centralized before frontend fallback to avoid accidental HTML responses for API paths.
   - Use `fileURLToPath(import.meta.url)` instead of manual `file://` stripping for robust path resolution.
+
+---
+
+## 2026-03-02 - Implement typed React API client and session token boot flow
+
+Task ID: 003
+
+- Added typed API layer under `web-app/src/lib/api` for manifest load, comment upsert/delete, and review completion.
+- Implemented token parsing and bootstrap hooks (`use-session-token`, `use-review-bootstrap`) with centralized retry/error handling.
+- Replaced placeholder app shell with a minimal interactive React UI wired to authenticated comment CRUD and Done Reviewing actions.
+- Verified web build and backend TypeScript checks continue to pass.
+
+- **Learnings for future iterations:**
+  - Keep network error retries in the API client and let hooks/components focus on state transitions.
+  - Type-only imports from backend schema files preserve a single contract without pulling Node runtime code into browser bundles.
 
 ---
