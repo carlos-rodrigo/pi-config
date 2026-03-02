@@ -7,6 +7,12 @@
   "pi": {
     "extensionEntry": "index.ts"
   },
+  "scripts": {
+    "web:install": "npm --prefix web-app install",
+    "dev:web": "npm --prefix web-app run dev",
+    "build:web": "npm run web:install && npm --prefix web-app run build",
+    "typecheck:web": "npm --prefix web-app run typecheck"
+  },
   "devDependencies": {
     "@mariozechner/pi-coding-agent": "^0.55.3",
     "@types/node": "^25.3.2",

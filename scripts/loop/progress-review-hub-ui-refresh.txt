@@ -1,0 +1,26 @@
+# Loop Progress Log
+
+Started: 2026-03-02
+Feature: review-hub-ui-refresh
+
+## Codebase Patterns
+
+- Frontend workspace lives in `extensions/review-hub/web-app`; invoke scripts from extension root via `npm --prefix web-app ...`.
+- Keep shadcn component aliases aligned (`@/*` → `src/*`) across `tsconfig.app.json`, `vite.config.ts`, and `components.json`.
+
+---
+
+## 2026-03-02 - Create React + Vite + Tailwind + shadcn frontend workspace
+
+Task ID: 001
+
+- Implemented a new `extensions/review-hub/web-app` React + TypeScript + Vite workspace.
+- Added Tailwind v4 + shadcn setup (`components.json`, `src/index.css`, `src/lib/utils.ts`, UI primitives).
+- Added extension scripts in `extensions/review-hub/package.json` to install/build/typecheck the web app.
+- Verified `npm run build:web` generates `web-app/dist/index.html` and backend TS typecheck still passes.
+
+- **Learnings for future iterations:**
+  - Build command should handle web dependency install from extension root to match existing extension workflow.
+  - Tailwind v4 with shadcn works cleanly with `@tailwindcss/vite` + CSS token setup in `src/index.css`.
+
+---

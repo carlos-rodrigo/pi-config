@@ -1,0 +1,35 @@
+{
+  "name": "review-hub-web-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "*",
+    "@radix-ui/react-scroll-area": "*",
+    "@radix-ui/react-separator": "*",
+    "@radix-ui/react-slot": "*",
+    "@radix-ui/react-tooltip": "*",
+    "class-variance-authority": "*",
+    "clsx": "*",
+    "lucide-react": "*",
+    "react": "*",
+    "react-dom": "*",
+    "tailwind-merge": "*",
+    "tw-animate-css": "*"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "*",
+    "@types/node": "*",
+    "@vitejs/plugin-react": "*",
+    "@types/react": "*",
+    "@types/react-dom": "*",
+    "typescript": "*",
+    "vite": "*"
+  }
+}
