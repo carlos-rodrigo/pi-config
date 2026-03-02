@@ -526,7 +526,7 @@ export function createReviewServer(): ReviewServer {
     req.on("end", async () => {
       try {
         if (req.method === "POST" && pathname === "/comments") {
-          await handleAddComment(body, res, reviewDir);
+          await handleUpsertComment(body, res, reviewDir);
         } else if (req.method === "POST" && pathname === "/complete") {
           await handleComplete(res, reviewDir);
         } else if (req.method === "DELETE" && pathname.startsWith("/comments/")) {
@@ -543,7 +543,7 @@ export function createReviewServer(): ReviewServer {
     });
   }
 
-  async function handleAddComment(
+  async function handleUpsertComment(
     body: string,
     res: http.ServerResponse,
     reviewDir: string,
@@ -588,6 +588,14 @@ export function createReviewServer(): ReviewServer {
       return;
     }
 
+    // Validate additive status field
+    const validStatuses: NonNullable<ReviewComment["status"]>[] = ["open", "resolved"];
+    if (commentData.status != null && !validStatuses.includes(commentData.status)) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` }));
+      return;
+    }
+
     // Validate sectionId exists in manifest
     const sectionExists = state.manifest.sections.some((s) => s.id === commentData.sectionId);
     if (!sectionExists) {
@@ -596,19 +604,24 @@ export function createReviewServer(): ReviewServer {
       return;
     }
 
-    // Build comment
+    const commentId = commentData.id ?? crypto.randomUUID();
+    const existingIdx = state.manifest.comments.findIndex((comment) => comment.id === commentId);
+    const existingComment = existingIdx >= 0 ? state.manifest.comments[existingIdx] : undefined;
+    const now = new Date().toISOString();
+
+    // Build comment (status defaults to open for backward compatibility)
     const comment: ReviewComment = {
-      id: commentData.id ?? crypto.randomUUID(),
+      id: commentId,
       sectionId: commentData.sectionId!,
       audioTimestamp: commentData.audioTimestamp,
       type: commentData.type as ReviewComment["type"],
       priority: commentData.priority as ReviewComment["priority"],
       text: commentData.text!,
-      createdAt: commentData.createdAt ?? new Date().toISOString(),
+      createdAt: existingComment?.createdAt ?? now,
+      status: commentData.status ?? existingComment?.status ?? "open",
+      updatedAt: now,
     };
 
-    // Check if updating existing comment
-    const existingIdx = state.manifest.comments.findIndex((c) => c.id === comment.id);
     if (existingIdx >= 0) {
       state.manifest.comments[existingIdx] = comment;
     } else {

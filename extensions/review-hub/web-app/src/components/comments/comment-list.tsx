@@ -16,6 +16,7 @@ export function CommentList({
   filter,
   onEdit,
   onDelete,
+  onToggleStatus,
   onJumpToSection,
 }: {
   comments: ReviewComment[];
@@ -23,6 +24,7 @@ export function CommentList({
   filter: CommentFilter;
   onEdit: (comment: ReviewComment) => void;
   onDelete: (commentId: string) => void;
+  onToggleStatus: (comment: ReviewComment) => void;
   onJumpToSection: (sectionId: string) => void;
 }) {
   const filteredComments = comments
@@ -39,32 +41,39 @@ export function CommentList({
         </p>
       ) : (
         <ul className="space-y-2 pb-2">
-          {filteredComments.map((comment) => (
-            <li key={comment.id} className="space-y-2 rounded-lg border p-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs">
-                  <Badge variant="outline">{comment.type}</Badge>
-                  <Badge variant="secondary">{comment.priority}</Badge>
+          {filteredComments.map((comment) => {
+            const status = comment.status ?? "open";
+            return (
+              <li key={comment.id} className="space-y-2 rounded-lg border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs">
+                    <Badge variant="outline">{comment.type}</Badge>
+                    <Badge variant="secondary">{comment.priority}</Badge>
+                    <Badge variant={status === "resolved" ? "default" : "outline"}>{status}</Badge>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="sm" onClick={() => onToggleStatus(comment)}>
+                      {status === "resolved" ? "Reopen" : "Resolve"}
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => onEdit(comment)}>
+                      Edit
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => onDelete(comment.id)}>
+                      Delete
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex gap-1">
-                  <Button variant="ghost" size="sm" onClick={() => onEdit(comment)}>
-                    Edit
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => onDelete(comment.id)}>
-                    Delete
-                  </Button>
-                </div>
-              </div>
-              <p className="text-sm">{comment.text}</p>
-              <button
-                type="button"
-                className="text-muted-foreground hover:text-foreground text-left text-xs underline-offset-4 hover:underline"
-                onClick={() => onJumpToSection(comment.sectionId)}
-              >
-                {resolveSectionLabel(comment.sectionId, sections)}
-              </button>
-            </li>
-          ))}
+                <p className="text-sm">{comment.text}</p>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground text-left text-xs underline-offset-4 hover:underline"
+                  onClick={() => onJumpToSection(comment.sectionId)}
+                >
+                  {resolveSectionLabel(comment.sectionId, sections)}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </ScrollArea>

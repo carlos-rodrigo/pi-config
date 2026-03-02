@@ -93,6 +93,10 @@ export interface ReviewComment {
   text: string;
   /** ISO timestamp of comment creation */
   createdAt: string;
+  /** Resolution status. Missing means open for backward compatibility. */
+  status?: "open" | "resolved";
+  /** Last update timestamp (edits/status changes). */
+  updatedAt?: string;
 }
 
 /** Result of drift detection between manifest and current source. */

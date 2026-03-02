@@ -29,6 +29,7 @@ export function CommentRail({
   onReset,
   onEdit,
   onDelete,
+  onToggleStatus,
   onJumpToSection,
 }: {
   comments: ReviewComment[];
@@ -41,6 +42,7 @@ export function CommentRail({
   onReset: () => void;
   onEdit: (comment: ReviewComment) => void;
   onDelete: (commentId: string) => void;
+  onToggleStatus: (comment: ReviewComment) => void;
   onJumpToSection: (sectionId: string) => void;
 }) {
   const [activeFilter, setActiveFilter] = useState<CommentFilter>("all");
@@ -75,6 +77,7 @@ export function CommentRail({
         filter={activeFilter}
         onEdit={onEdit}
         onDelete={onDelete}
+        onToggleStatus={onToggleStatus}
         onJumpToSection={onJumpToSection}
       />
     </aside>

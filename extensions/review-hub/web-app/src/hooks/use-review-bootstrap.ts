@@ -30,8 +30,9 @@ export function useReviewBootstrap(token: string | null) {
       .fetchManifest()
       .then((nextManifest) => {
         if (isCancelled) return;
-        setManifest(nextManifest);
-        setComments(nextManifest.comments ?? []);
+        const normalizedComments = (nextManifest.comments ?? []).map(normalizeComment);
+        setManifest({ ...nextManifest, comments: normalizedComments });
+        setComments(normalizedComments);
       })
       .catch((err: unknown) => {
         if (isCancelled) return;
@@ -53,7 +54,7 @@ export function useReviewBootstrap(token: string | null) {
         throw new Error("API client not initialized.");
       }
 
-      const saved = await client.saveComment(input);
+      const saved = normalizeComment(await client.saveComment(input));
       setComments((prev) => {
         const existingIndex = prev.findIndex((item) => item.id === saved.id);
         if (existingIndex >= 0) {
@@ -116,5 +117,12 @@ export function useReviewBootstrap(token: string | null) {
     saveComment,
     deleteComment,
     completeReview,
+  };
+}
+
+function normalizeComment(comment: ReviewComment): ReviewComment {
+  return {
+    ...comment,
+    status: comment.status ?? "open",
   };
 }

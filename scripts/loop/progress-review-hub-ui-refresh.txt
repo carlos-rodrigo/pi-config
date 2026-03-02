@@ -12,6 +12,7 @@ Feature: review-hub-ui-refresh
 - Layout is split into reusable rails (`components/layout/toc-rail.tsx`, `components/layout/comment-rail.tsx`) and controlled from `App.tsx` mode state (`read` | `review`).
 - `VisualContentHost` is the integration point for `/visual` + `/visual-styles`, with `IntersectionObserver` driving active TOC sync and imperative `scrollToSection` for TOC clicks.
 - Comment rail is composed from `components/comments/*` (filters, composer, list) so behavior updates can be isolated without rewriting shell layout.
+- `/comments` is an upsert endpoint: server owns `createdAt`/`updatedAt` and normalizes missing status to `open`; status toggles should send full comment payload + desired `status`.
 
 ---
 
@@ -102,5 +103,20 @@ Task ID: 006
 - **Learnings for future iterations:**
   - Splitting filter/composer/list dramatically reduces rail complexity and makes future status-based workflows easier.
   - Section jump callbacks should route through the shared TOC scroll helper to keep navigation behavior consistent.
+
+---
+
+## 2026-03-02 - Add additive comment status persistence (open/resolved) in manifest/API
+
+Task ID: 007
+
+- Extended `ReviewComment` with optional `status` and `updatedAt` for additive manifest compatibility.
+- Updated `/comments` mutation handling to validate statuses, upsert comments, keep `createdAt` server-owned, and set `updatedAt` on every write.
+- Added status normalization in `useReviewBootstrap` and wired comment resolve/reopen controls in the React comment rail.
+- Added backend integration tests (`test/comment-status.test.ts`) covering default-open behavior, legacy manifests without status, resolved-status persistence, and invalid status rejection.
+
+- **Learnings for future iterations:**
+  - Keep timestamp authority on the server to prevent client-side audit drift.
+  - `tsx --test` works well here because backend files import `.js` specifiers while source remains TypeScript.
 
 ---

@@ -11,11 +11,13 @@
     "web:install": "npm --prefix web-app install",
     "dev:web": "npm --prefix web-app run dev",
     "build:web": "npm run web:install && npm --prefix web-app run build",
-    "typecheck:web": "npm --prefix web-app run typecheck"
+    "typecheck:web": "npm --prefix web-app run typecheck",
+    "test": "tsx --test test/**/*.test.ts"
   },
   "devDependencies": {
     "@mariozechner/pi-coding-agent": "^0.55.3",
     "@types/node": "^25.3.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }

@@ -16,7 +16,7 @@ export interface SaveCommentInput {
   type: CommentType;
   priority: CommentPriority;
   text: string;
-  createdAt?: string;
+  status?: ReviewComment["status"];
 }
 
 export interface CompleteReviewResponse {

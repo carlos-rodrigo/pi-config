@@ -12,7 +12,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import type { CommentPriority, CommentType, SaveCommentInput } from "@/lib/api";
+import type { ReviewComment, SaveCommentInput } from "@/lib/api";
 import { useReviewBootstrap } from "@/hooks/use-review-bootstrap";
 import { useSessionToken } from "@/hooks/use-session-token";
 import { CommentRail, type CommentFormState } from "@/components/layout/comment-rail";
@@ -141,6 +141,23 @@ export default function App() {
     }
   }
 
+  async function handleToggleStatus(comment: ReviewComment) {
+    try {
+      await saveComment({
+        id: comment.id,
+        sectionId: comment.sectionId,
+        type: comment.type,
+        priority: comment.priority,
+        text: comment.text,
+        audioTimestamp: comment.audioTimestamp,
+        status: (comment.status ?? "open") === "resolved" ? "open" : "resolved",
+      });
+      setMutationError(null);
+    } catch (err) {
+      setMutationError(err instanceof Error ? err.message : "Failed to update comment status.");
+    }
+  }
+
   async function handleComplete() {
     try {
       await completeReview();
@@ -206,6 +223,7 @@ export default function App() {
                         onReset={() => setFormState({ ...EMPTY_FORM, sectionId: formState.sectionId })}
                         onEdit={(comment) => handleEdit(comment.id)}
                         onDelete={handleDelete}
+                        onToggleStatus={handleToggleStatus}
                         onJumpToSection={handleTocSelect}
                       />
                     </div>
@@ -304,6 +322,7 @@ export default function App() {
                 onReset={() => setFormState({ ...EMPTY_FORM, sectionId: formState.sectionId })}
                 onEdit={(comment) => handleEdit(comment.id)}
                 onDelete={handleDelete}
+                onToggleStatus={handleToggleStatus}
                 onJumpToSection={handleTocSelect}
               />
             </div>

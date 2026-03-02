@@ -12,7 +12,7 @@ Design: `.features/review-hub-ui-refresh/design.md`
 - [x] 004 - Build 3-column app shell with Read/Review mode
 - [x] 005 - Integrate server-generated visual content and TOC active-section sync
 - [x] 006 - Migrate comment CRUD UI to React shadcn comment rail
-- [ ] 007 - Add additive comment status persistence (open/resolved) in manifest/API
+- [x] 007 - Add additive comment status persistence (open/resolved) in manifest/API
 - [ ] 008 - Add unresolved workflow and section-level unresolved badges
 - [ ] 009 - Build sticky bottom narration player with sync controls and audio-state UX
 - [ ] 010 - Replace functional emojis with Lucide icons across app and visual controls
