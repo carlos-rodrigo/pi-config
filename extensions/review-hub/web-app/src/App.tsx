@@ -1,20 +1,22 @@
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { ListTree, MessageSquare, PanelLeftOpen, PanelRightOpen } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import type { CommentPriority, CommentType, ReviewComment, SaveCommentInput } from "@/lib/api";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
+import type { CommentPriority, CommentType, SaveCommentInput } from "@/lib/api";
 import { useReviewBootstrap } from "@/hooks/use-review-bootstrap";
 import { useSessionToken } from "@/hooks/use-session-token";
-
-type CommentFormState = {
-  id?: string;
-  sectionId: string;
-  type: CommentType;
-  priority: CommentPriority;
-  text: string;
-};
+import { CommentRail, type CommentFormState } from "@/components/layout/comment-rail";
+import { TocRail } from "@/components/layout/toc-rail";
 
 const EMPTY_FORM: CommentFormState = {
   sectionId: "",
@@ -37,18 +39,32 @@ export default function App() {
     completeReview,
   } = useReviewBootstrap(token);
 
+  const [mode, setMode] = useState<"read" | "review">("review");
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [formState, setFormState] = useState<CommentFormState>(EMPTY_FORM);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   const sectionOptions = manifest?.sections ?? [];
 
-  const canSubmit = Boolean(formState.sectionId && formState.text.trim().length > 0);
+  useEffect(() => {
+    if (!manifest?.sections.length) return;
 
-  const sortedComments = useMemo(
-    () => [...comments].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    [comments],
+    const fallbackSectionId = activeSectionId ?? manifest.sections[0]?.id ?? null;
+    setActiveSectionId(fallbackSectionId);
+
+    setFormState((prev) => ({
+      ...prev,
+      sectionId: prev.sectionId || fallbackSectionId || "",
+    }));
+  }, [manifest, activeSectionId]);
+
+  const activeSection = useMemo(
+    () => manifest?.sections.find((section) => section.id === activeSectionId) ?? null,
+    [manifest, activeSectionId],
   );
+
+  const canSubmit = Boolean(formState.sectionId && formState.text.trim().length > 0);
 
   if (tokenError) {
     return <ErrorState title="Session token missing" message={tokenError} />;
@@ -98,7 +114,10 @@ export default function App() {
     }
   }
 
-  function handleEdit(comment: ReviewComment) {
+  function handleEdit(commentId: string) {
+    const comment = comments.find((item) => item.id === commentId);
+    if (!comment) return;
+
     setFormState({
       id: comment.id,
       sectionId: comment.sectionId,
@@ -106,6 +125,7 @@ export default function App() {
       priority: comment.priority,
       text: comment.text,
     });
+    setActiveSectionId(comment.sectionId);
     setMutationError(null);
   }
 
@@ -113,7 +133,7 @@ export default function App() {
     try {
       await deleteComment(commentId);
       setMutationError(null);
-      setFormState((prev) => (prev.id === commentId ? EMPTY_FORM : prev));
+      setFormState((prev) => (prev.id === commentId ? { ...EMPTY_FORM, sectionId: prev.sectionId } : prev));
     } catch (err) {
       setMutationError(err instanceof Error ? err.message : "Failed to delete comment.");
     }
@@ -129,141 +149,190 @@ export default function App() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-6 py-10">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Review Hub</h1>
-          <p className="text-muted-foreground text-sm">{manifest.source}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="secondary">{manifest.language.toUpperCase()}</Badge>
-          <Badge variant={manifest.status === "reviewed" ? "default" : "outline"}>{manifest.status}</Badge>
-          <Button onClick={handleComplete} disabled={isCompleting}>
-            {isCompleting ? "Completing…" : "Done Reviewing"}
-          </Button>
+    <div className="min-h-screen bg-background text-foreground">
+      <header className="bg-background/95 sticky top-0 z-40 border-b backdrop-blur">
+        <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between gap-3 px-4 py-3 lg:px-6">
+          <div className="flex min-w-0 items-center gap-2">
+            {mode === "review" ? (
+              <div className="flex items-center gap-1 lg:hidden">
+                <Sheet>
+                  <SheetTrigger asChild>
+                    <Button variant="outline" size="icon" aria-label="Open contents panel">
+                      <PanelLeftOpen />
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="left" className="w-[320px] p-0 sm:max-w-[360px]">
+                    <SheetHeader className="px-4 pt-5">
+                      <SheetTitle>Contents</SheetTitle>
+                      <SheetDescription>Navigate between review sections.</SheetDescription>
+                    </SheetHeader>
+                    <div className="h-[calc(100%-4.5rem)] p-4 pt-2">
+                      <TocRail
+                        sections={manifest.sections}
+                        activeSectionId={activeSectionId}
+                        onSelect={setActiveSectionId}
+                      />
+                    </div>
+                  </SheetContent>
+                </Sheet>
+
+                <Sheet>
+                  <SheetTrigger asChild>
+                    <Button variant="outline" size="icon" aria-label="Open comments panel">
+                      <PanelRightOpen />
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="right" className="w-[360px] p-0 sm:max-w-[420px]">
+                    <SheetHeader className="px-4 pt-5">
+                      <SheetTitle>Comments</SheetTitle>
+                      <SheetDescription>Add and manage review feedback.</SheetDescription>
+                    </SheetHeader>
+                    <div className="h-[calc(100%-4.5rem)] p-4 pt-2">
+                      <CommentRail
+                        comments={comments}
+                        sections={sectionOptions}
+                        formState={formState}
+                        canSubmit={canSubmit}
+                        isSaving={isSaving}
+                        onSubmit={handleSubmit}
+                        onFieldChange={(key, value) => setFormState((prev) => ({ ...prev, [key]: value }))}
+                        onReset={() => setFormState({ ...EMPTY_FORM, sectionId: formState.sectionId })}
+                        onEdit={(comment) => handleEdit(comment.id)}
+                        onDelete={handleDelete}
+                      />
+                    </div>
+                  </SheetContent>
+                </Sheet>
+              </div>
+            ) : null}
+
+            <div className="min-w-0">
+              <h1 className="truncate text-base font-semibold sm:text-lg">Review Hub</h1>
+              <p className="text-muted-foreground hidden truncate text-xs sm:block">{manifest.source}</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 rounded-lg border p-1">
+              <Button
+                variant={mode === "read" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setMode("read")}
+                aria-label="Switch to read mode"
+              >
+                <ListTree className="mr-1" />
+                Read
+              </Button>
+              <Button
+                variant={mode === "review" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setMode("review")}
+                aria-label="Switch to review mode"
+              >
+                <MessageSquare className="mr-1" />
+                Review
+              </Button>
+            </div>
+
+            <Badge variant="secondary" className="hidden sm:inline-flex">
+              {manifest.language.toUpperCase()}
+            </Badge>
+            <Badge variant={manifest.status === "reviewed" ? "default" : "outline"}>{manifest.status}</Badge>
+            <Button onClick={handleComplete} disabled={isCompleting}>
+              {isCompleting ? "Completing…" : "Done Reviewing"}
+            </Button>
+          </div>
         </div>
       </header>
 
-      <div className="grid gap-6 md:grid-cols-[1.1fr_1.4fr]">
-        <section className="rounded-xl border p-4">
-          <h2 className="text-sm font-semibold">Comment editor</h2>
-          <p className="text-muted-foreground mt-1 text-xs">Typed API client uses token auth for all mutations.</p>
+      <div className="mx-auto grid w-full max-w-[1400px] gap-4 p-4 lg:p-6">
+        <div
+          className={cn(
+            "grid min-h-[calc(100vh-8.5rem)] gap-4",
+            mode === "review"
+              ? "lg:grid-cols-[16rem_minmax(0,1fr)_24rem]"
+              : "lg:grid-cols-[minmax(0,1fr)]",
+          )}
+        >
+          {mode === "review" ? (
+            <div className="hidden lg:block">
+              <TocRail
+                sections={manifest.sections}
+                activeSectionId={activeSectionId}
+                onSelect={setActiveSectionId}
+              />
+            </div>
+          ) : null}
 
-          <form className="mt-4 space-y-3" onSubmit={handleSubmit}>
-            <label className="text-xs font-medium">Section</label>
-            <select
-              className="w-full rounded-md border bg-transparent px-3 py-2 text-sm"
-              value={formState.sectionId}
-              onChange={(event) => setFormState((prev) => ({ ...prev, sectionId: event.target.value }))}
-            >
-              <option value="">Select a section</option>
-              {sectionOptions.map((section) => (
-                <option key={section.id} value={section.id}>
-                  {section.headingPath[section.headingPath.length - 1]}
-                </option>
-              ))}
-            </select>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs font-medium">Type</label>
-                <select
-                  className="w-full rounded-md border bg-transparent px-3 py-2 text-sm"
-                  value={formState.type}
-                  onChange={(event) =>
-                    setFormState((prev) => ({ ...prev, type: event.target.value as CommentType }))
-                  }
-                >
-                  <option value="change">Change</option>
-                  <option value="question">Question</option>
-                  <option value="approval">Approval</option>
-                  <option value="concern">Concern</option>
-                </select>
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-medium">Priority</label>
-                <select
-                  className="w-full rounded-md border bg-transparent px-3 py-2 text-sm"
-                  value={formState.priority}
-                  onChange={(event) =>
-                    setFormState((prev) => ({ ...prev, priority: event.target.value as CommentPriority }))
-                  }
-                >
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
-                </select>
-              </div>
+          <main className={cn("min-w-0 rounded-xl border p-4 sm:p-5", mode === "read" && "lg:px-10 lg:py-8")}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-sm font-semibold">Document flow</h2>
+              <Badge variant="outline">{manifest.sections.length} sections</Badge>
             </div>
 
-            <label className="text-xs font-medium">Comment</label>
-            <textarea
-              className="min-h-28 w-full rounded-md border bg-transparent px-3 py-2 text-sm"
-              value={formState.text}
-              onChange={(event) => setFormState((prev) => ({ ...prev, text: event.target.value }))}
-              placeholder="Write your feedback…"
-            />
+            <div className="space-y-3">
+              {manifest.sections.map((section) => {
+                const title = section.headingPath[section.headingPath.length - 1] ?? section.id;
+                const isActive = section.id === activeSectionId;
 
-            <div className="flex gap-2">
-              <Button type="submit" disabled={!canSubmit || isSaving}>
-                {isSaving ? "Saving…" : formState.id ? "Update comment" : "Add comment"}
-              </Button>
-              {formState.id ? (
-                <Button type="button" variant="outline" onClick={() => setFormState(EMPTY_FORM)}>
-                  Cancel edit
-                </Button>
-              ) : null}
+                return (
+                  <article
+                    key={section.id}
+                    className={cn(
+                      "rounded-lg border p-4 transition-colors",
+                      isActive ? "border-primary bg-primary/5" : "hover:bg-muted/50",
+                    )}
+                    onClick={() => setActiveSectionId(section.id)}
+                  >
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {section.headingPath.slice(0, -1).join(" / ") || "Root"}
+                    </p>
+                    <h3 className={cn("mt-1 font-medium", mode === "read" ? "text-xl leading-relaxed" : "text-base")}>{title}</h3>
+                    {mode === "review" ? (
+                      <p className="text-muted-foreground mt-2 text-xs">
+                        Lines {section.sourceLineStart}–{section.sourceLineEnd}
+                      </p>
+                    ) : null}
+                  </article>
+                );
+              })}
             </div>
-          </form>
-        </section>
 
-        <section className="rounded-xl border p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Comments</h2>
-            <Badge variant="outline">{comments.length}</Badge>
-          </div>
-          <Separator />
-          <ScrollArea className="mt-3 h-[420px] pr-2">
-            {sortedComments.length === 0 ? (
-              <p className="text-muted-foreground p-2 text-sm">No comments yet.</p>
-            ) : (
-              <ul className="space-y-2">
-                {sortedComments.map((comment) => (
-                  <li key={comment.id} className="space-y-2 rounded-lg border p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 text-xs">
-                        <Badge variant="outline">{comment.type}</Badge>
-                        <Badge variant="secondary">{comment.priority}</Badge>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => handleEdit(comment)}>
-                          Edit
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleDelete(comment.id)}>
-                          Delete
-                        </Button>
-                      </div>
-                    </div>
-                    <p className="text-sm">{comment.text}</p>
-                    <p className="text-muted-foreground text-xs">{resolveSectionLabel(comment.sectionId, sectionOptions)}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </ScrollArea>
-        </section>
+            {activeSection ? (
+              <p className="text-muted-foreground mt-4 text-xs">Active section: {activeSection.id}</p>
+            ) : null}
+          </main>
+
+          {mode === "review" ? (
+            <div className="hidden lg:block">
+              <CommentRail
+                comments={comments}
+                sections={sectionOptions}
+                formState={formState}
+                canSubmit={canSubmit}
+                isSaving={isSaving}
+                onSubmit={handleSubmit}
+                onFieldChange={(key, value) => setFormState((prev) => ({ ...prev, [key]: value }))}
+                onReset={() => setFormState({ ...EMPTY_FORM, sectionId: formState.sectionId })}
+                onEdit={(comment) => handleEdit(comment.id)}
+                onDelete={handleDelete}
+              />
+            </div>
+          ) : null}
+        </div>
+
+        {completedAt ? (
+          <p className="text-sm font-medium text-emerald-600">
+            Review marked complete at {new Date(completedAt).toLocaleString()}.
+          </p>
+        ) : null}
+
+        {mutationError || error ? (
+          <p className="text-sm text-red-600">{mutationError ?? error}</p>
+        ) : null}
       </div>
-
-      {completedAt ? (
-        <p className="text-sm font-medium text-emerald-600">
-          Review marked complete at {new Date(completedAt).toLocaleString()}.
-        </p>
-      ) : null}
-
-      {mutationError || error ? (
-        <p className="text-sm text-red-600">{mutationError ?? error}</p>
-      ) : null}
-    </main>
+    </div>
   );
 }
 
@@ -276,12 +345,4 @@ function ErrorState({ title, message }: { title: string; message: string }) {
       </section>
     </main>
   );
-}
-
-function resolveSectionLabel(
-  sectionId: string,
-  sections: Array<{ id: string; headingPath: string[] }>,
-): string {
-  const section = sections.find((item) => item.id === sectionId);
-  return section ? section.headingPath[section.headingPath.length - 1] : sectionId;
 }
