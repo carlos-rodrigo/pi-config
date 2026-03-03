@@ -665,8 +665,9 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
       updatedAt: now,
     };
 
-    // Pass through anchor payload if present (validation handled by loadManifest normalization)
-    if (commentData.anchor) {
+    // Pass through anchor payload if structurally valid
+    // (loadManifest normalization handles corrupt anchors on read)
+    if (commentData.anchor && isValidAnchorShape(commentData.anchor)) {
       comment.anchor = commentData.anchor;
     }
 
@@ -738,4 +739,18 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
   }
 
   return { start, stop, isRunning, bridge: resolvedBridge };
+}
+
+/** Basic structural validation for anchor payload before persistence. */
+function isValidAnchorShape(anchor: unknown): anchor is ReviewComment["anchor"] {
+  if (typeof anchor !== "object" || anchor === null) return false;
+  const a = anchor as Record<string, unknown>;
+  return (
+    a.version === 2 &&
+    a.anchorAlgoVersion === "v2-section-text" &&
+    typeof a.sectionId === "string" &&
+    typeof a.quote === "string" &&
+    a.quote.length > 0 &&
+    a.quote.length <= 300 // MAX_QUOTE_LENGTH + margin for ellipsis
+  );
 }
