@@ -9,10 +9,10 @@ export function readSessionTokenFromSearch(search: string): string | null {
 }
 
 export function readSessionTokenFromPath(pathname: string): string | null {
-  // Supports /t/<token> URL form
-  const match = pathname.match(/^\/t\/([^/]+)$/);
-  if (!match) return null;
-  const token = decodeURIComponent(match[1]).trim();
+  // Supports /t/<token> and /t/<token>/ URL forms
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments.length < 2 || segments[0] !== "t") return null;
+  const token = decodeURIComponent(segments[1] ?? "").trim();
   return token ? token : null;
 }
 
@@ -29,8 +29,14 @@ export function useSessionToken(search: string = window.location.search): {
   error: string | null;
 } {
   const cleanedRef = useRef(false);
+  const tokenRef = useRef<string | null>(null);
 
   const result = useMemo(() => {
+    // Keep previously captured token stable even after URL cleanup/re-renders
+    if (tokenRef.current) {
+      return { token: tokenRef.current, error: null };
+    }
+
     // 1. Try URL-provided token forms (query, path, hash)
     const urlToken =
       readSessionTokenFromSearch(search) ||
@@ -38,15 +44,17 @@ export function useSessionToken(search: string = window.location.search): {
       readSessionTokenFromHash(window.location.hash);
 
     if (urlToken) {
-      // Persist to sessionStorage so it survives URL cleanup + refresh
+      tokenRef.current = urlToken;
+      // Persist to sessionStorage so it survives hard refresh
       try { sessionStorage.setItem(SESSION_TOKEN_KEY, urlToken); } catch { /* noop */ }
       return { token: urlToken, error: null };
     }
 
-    // 2. Fallback to sessionStorage (page refresh after URL cleanup)
+    // 2. Fallback to sessionStorage (hard refresh after URL cleanup)
     try {
       const stored = sessionStorage.getItem(SESSION_TOKEN_KEY)?.trim();
       if (stored) {
+        tokenRef.current = stored;
         return { token: stored, error: null };
       }
     } catch { /* noop */ }

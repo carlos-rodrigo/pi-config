@@ -205,6 +205,7 @@ describe("Token hygiene", () => {
 
   test("readSessionTokenFromPath extracts /t/<token> format", () => {
     assert.equal(readSessionTokenFromPath("/t/abc123"), "abc123");
+    assert.equal(readSessionTokenFromPath("/t/abc123/"), "abc123");
     assert.equal(readSessionTokenFromPath("/t/e028fa4d-f617-4558-8b2f-5b6f55e8dcb6"), "e028fa4d-f617-4558-8b2f-5b6f55e8dcb6");
     assert.equal(readSessionTokenFromPath("/"), null);
     assert.equal(readSessionTokenFromPath("/t/"), null);
