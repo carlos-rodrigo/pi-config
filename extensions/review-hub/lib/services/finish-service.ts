@@ -45,14 +45,19 @@ export class FinishService {
     request: FinishRequest,
   ): Promise<FinishResult> {
     // Idempotency check — return success for duplicate keys
-    if (
-      manifest.finishMeta?.lastFinishIdempotencyKey === request.idempotencyKey &&
-      manifest.finishMeta?.lastExportHash === request.exportHash
-    ) {
+    if (manifest.finishMeta?.lastFinishIdempotencyKey === request.idempotencyKey) {
+      if (manifest.finishMeta?.lastExportHash === request.exportHash) {
+        return {
+          success: true,
+          handedOff: manifest.status === "reviewed",
+          warning: "Idempotent replay — finish already completed with this key",
+        };
+      }
+      // Same key but different hash = conflict
       return {
-        success: true,
-        handedOff: true,
-        warning: "Idempotent replay — finish already completed with this key",
+        success: false,
+        handedOff: false,
+        warning: "Idempotency key already used with a different export hash",
       };
     }
 
