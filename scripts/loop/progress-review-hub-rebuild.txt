@@ -11,6 +11,8 @@ Feature: review-hub-rebuild
 - Service classes use constructor injection with accessor functions (`getManifest`, `getReviewDir`) to avoid stale state.
 - `import type` is erased at runtime by tsx/esbuild — always include a value import when testing module existence.
 - Use `type X = A | B` not `interface X { } | { }` — esbuild doesn't support the latter syntax.
+- Cache source-derived payloads by `sourceHash` — pattern used by both `getVisualHtml` and `/visual-model`.
+- `RenderSection` from `/visual-model` is the frontend's single source of truth for section identity.
 
 ---
 
@@ -48,5 +50,22 @@ Task ID: 002
 **Learnings for future iterations:**
 - Services with accessor injection (`getManifest()`, `getReviewDir()`) are easily testable without full server setup.
 - Keep bridge callbacks thin — they just delegate to pi/OS; all logic stays in services.
+
+---
+
+## 2026-02-27 - Canonical visual model endpoint (`/visual-model`)
+
+Task ID: 003
+
+- Created `lib/visual-model.ts` with `RenderSection` type and `buildVisualModel()` function.
+- Added `GET /visual-model` handler in server with JSON response of `{ sections: RenderSection[] }`.
+- Added `/visual-model` to reserved API paths to prevent SPA fallthrough.
+- Added cache for visual model (keyed on `sourceHash`) to avoid re-reading source on every request.
+- Error handling: 503 when server not ready, 404 when source file missing.
+- 9 new tests covering unit + endpoint + error cases.
+
+**Learnings for future iterations:**
+- Cache source-derived payloads by `sourceHash` (pattern from existing `getVisualHtml`).
+- Frontend should never derive section IDs — always use `RenderSection.sectionId` from `/visual-model`.
 
 ---
