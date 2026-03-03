@@ -12,7 +12,7 @@ Design: `.features/review-hub-rebuild/design.md`
 - [x] 004 - Fresh React shell (Read/Review) foundation
 - [x] 005 - Document viewport with `react-markdown`
 - [x] 006 - Text selection capture + anchor payload
-- [ ] 007 - Re-anchor highlights + degraded fallback UX
+- [x] 007 - Re-anchor highlights + degraded fallback UX
 - [ ] 008 - Comment rail workflow (CRUD, filters, unresolved nav)
 - [ ] 009 - Compact export endpoint (`/export-feedback`) with hash
 - [ ] 010 - Finish flow UX (copy/close/auto-paste + fallback)

@@ -21,6 +21,10 @@ Feature: review-hub-rebuild
 - Anchor capture: pure `buildAnchorFromSelection()` in `lib/anchor/capture.ts` (testable), DOM hook `useSelectionAnchor` in hooks layer.
 - Server validates anchor shape via `isValidAnchorShape()` before persisting. `loadManifest` normalization handles corrupt anchors on read.
 - `DocumentViewportHandle.getContainerRef()` exposes container for scoped DOM event listeners.
+- `resolveAnchor()` in `lib/anchor/reanchor.ts` is pure: text in → resolution out (exact/reanchored/degraded).
+- `useReanchorMap(comments, sections)` returns `Map<commentId, AnchorResolution>`. Uses section text Map for O(1) lookup.
+- `HighlightLayer` renders quote chips below sections. Highlight chips > inline marks for react-markdown content.
+- `highlightsBySectionId` groups `HighlightEntry[]` by sectionId for efficient per-section rendering.
 
 ---
 
@@ -133,5 +137,24 @@ Task ID: 006
 - Pure capture function + DOM hook separation enables thorough testing without mocking.
 - Validate anchor shape at write boundary, not just read normalization.
 - Expose container ref via imperative handle for hook-based DOM scoping.
+
+---
+
+## 2026-02-27 - Re-anchor highlights + degraded fallback UX
+
+Task ID: 007
+
+- Created `lib/anchor/reanchor.ts` with `resolveAnchor()` pure function: 3-strategy resolution (offset+quote, quote search with context scoring, degraded fallback).
+- Created `useReanchorMap` hook computing `Map<commentId, AnchorResolution>` from comments + sections.
+- Created `HighlightLayer` + `HighlightChip` components showing quote chips with state indicators (📌 exact, 🔄 reanchored, ⚠️ degraded).
+- Wired highlights into `DocumentViewport` via `highlightsBySectionId` Map and `onHighlightClick` callback.
+- Highlight click loads comment into form for editing.
+- 9 new unit tests covering all resolution strategies.
+- Files: `web-app/src/lib/anchor/reanchor.ts`, `web-app/src/hooks/use-reanchor-map.ts`, `web-app/src/components/document/highlight-layer.tsx`, `test/reanchor.test.ts`.
+
+**Learnings for future iterations:**
+- Pure reanchor function enables thorough testing without React/DOM dependencies.
+- Overlay-style highlight chips are simpler than injecting marks into react-markdown AST.
+- Map-based section text lookup avoids O(n*m) complexity in reanchor map computation.
 
 ---
