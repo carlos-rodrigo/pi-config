@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import type { ReviewManifest } from "../lib/manifest.ts";
 import {
   CommentService,
   ExportService,
@@ -8,7 +9,33 @@ import {
   AudioActionService,
 } from "../lib/services/index.ts";
 
-// Verify service classes are importable and constructible
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function createTestManifest(): ReviewManifest {
+  return {
+    id: "review-001",
+    schemaVersion: 2,
+    source: "test.md",
+    sourceHash: "hash",
+    reviewType: "prd",
+    language: "en",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    completedAt: null,
+    status: "ready",
+    sections: [{
+      id: "s-intro",
+      headingPath: ["Intro"],
+      headingLevel: 1,
+      occurrenceIndex: 0,
+      sourceLineStart: 1,
+      sourceLineEnd: 3,
+      sourceTextHash: "hash",
+    }],
+    comments: [],
+  };
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────
 
 test("CommentService is constructible with manifest/dir accessors", () => {
   const service = new CommentService(
@@ -72,48 +99,28 @@ test("CommentService returns error when manifest not ready", async () => {
 
 test("ExportService exports only open comments by default", () => {
   const service = new ExportService();
-  const manifest = {
-    id: "review-001",
-    schemaVersion: 2 as const,
-    source: "test.md",
-    sourceHash: "hash",
-    reviewType: "prd" as const,
-    language: "en" as const,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    completedAt: null,
-    status: "in-progress" as const,
-    sections: [
-      {
-        id: "s-intro",
-        headingPath: ["Intro"],
-        headingLevel: 1,
-        occurrenceIndex: 0,
-        sourceLineStart: 1,
-        sourceLineEnd: 3,
-        sourceTextHash: "hash",
-      },
-    ],
-    comments: [
-      {
-        id: "c1",
-        sectionId: "s-intro",
-        type: "change" as const,
-        priority: "high" as const,
-        text: "Fix this",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        status: "open" as const,
-      },
-      {
-        id: "c2",
-        sectionId: "s-intro",
-        type: "approval" as const,
-        priority: "low" as const,
-        text: "Looks good",
-        createdAt: "2026-01-01T01:00:00.000Z",
-        status: "resolved" as const,
-      },
-    ],
-  };
+  const manifest = createTestManifest();
+  manifest.status = "in-progress";
+  manifest.comments = [
+    {
+      id: "c1",
+      sectionId: "s-intro",
+      type: "change",
+      priority: "high",
+      text: "Fix this",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "open",
+    },
+    {
+      id: "c2",
+      sectionId: "s-intro",
+      type: "approval",
+      priority: "low",
+      text: "Looks good",
+      createdAt: "2026-01-01T01:00:00.000Z",
+      status: "resolved",
+    },
+  ];
 
   const result = service.export(manifest);
 
@@ -127,41 +134,115 @@ test("ExportService exports only open comments by default", () => {
 
 test("ExportService produces deterministic output", () => {
   const service = new ExportService();
-  const manifest = {
-    id: "review-001",
-    schemaVersion: 2 as const,
-    source: "test.md",
-    sourceHash: "hash",
-    reviewType: "prd" as const,
-    language: "en" as const,
+  const manifest = createTestManifest();
+  manifest.status = "in-progress";
+  manifest.comments = [{
+    id: "c1",
+    sectionId: "s-intro",
+    type: "change",
+    priority: "high",
+    text: "Fix this",
     createdAt: "2026-01-01T00:00:00.000Z",
-    completedAt: null,
-    status: "in-progress" as const,
-    sections: [{
-      id: "s-intro",
-      headingPath: ["Intro"],
-      headingLevel: 1,
-      occurrenceIndex: 0,
-      sourceLineStart: 1,
-      sourceLineEnd: 3,
-      sourceTextHash: "hash",
-    }],
-    comments: [{
-      id: "c1",
-      sectionId: "s-intro",
-      type: "change" as const,
-      priority: "high" as const,
-      text: "Fix this",
-      createdAt: "2026-01-01T00:00:00.000Z",
-      status: "open" as const,
-    }],
-  };
+    status: "open",
+  }];
 
   const result1 = service.export(manifest);
   const result2 = service.export(manifest);
 
   assert.equal(result1.markdown, result2.markdown);
   assert.equal(result1.exportHash, result2.exportHash);
+});
+
+test("CommentService validates comment type", async () => {
+  const manifest = createTestManifest();
+  const service = new CommentService(
+    () => manifest,
+    () => "/tmp/nonexistent",
+  );
+
+  const result = await service.upsert({
+    sectionId: "s-intro",
+    type: "invalid" as any,
+    priority: "high",
+    text: "test",
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.status, 400);
+    assert.match(result.error, /Invalid comment type/);
+  }
+});
+
+test("CommentService validates unknown sectionId", async () => {
+  const manifest = createTestManifest();
+  const service = new CommentService(
+    () => manifest,
+    () => "/tmp/nonexistent",
+  );
+
+  const result = await service.upsert({
+    sectionId: "s-nonexistent",
+    type: "change",
+    priority: "high",
+    text: "test",
+  });
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.status, 400);
+    assert.match(result.error, /Unknown section/);
+  }
+});
+
+test("CommentService delete returns 404 for unknown comment", async () => {
+  const manifest = createTestManifest();
+  const service = new CommentService(
+    () => manifest,
+    () => "/tmp/nonexistent",
+  );
+
+  const result = await service.delete("nonexistent-id");
+
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.status, 404);
+    assert.match(result.error, /not found/i);
+  }
+});
+
+test("ExportService includes anchored quotes in export", () => {
+  const service = new ExportService();
+  const manifest = createTestManifest();
+  manifest.comments = [{
+    id: "c1",
+    sectionId: "s-intro",
+    type: "change",
+    priority: "high",
+    text: "Fix wording",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    status: "open",
+    anchor: {
+      version: 2,
+      sectionId: "s-intro",
+      quote: "some selected text",
+      anchorAlgoVersion: "v2-section-text",
+    },
+  }];
+
+  const result = service.export(manifest);
+  assert.match(result.markdown, /some selected text/);
+});
+
+test("ExportService handles empty comments gracefully", () => {
+  const service = new ExportService();
+  const manifest = createTestManifest();
+  manifest.comments = [];
+
+  const result = service.export(manifest);
+  assert.equal(result.stats.totalComments, 0);
+  assert.equal(result.stats.openComments, 0);
+  assert.ok(result.exportHash.length === 64);
 });
 
 test("AudioActionService reports correct status from manifest", () => {
