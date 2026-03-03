@@ -12,12 +12,14 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
 } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import type { RenderSection } from "@/lib/api";
+import { HighlightLayer, type HighlightEntry } from "./highlight-layer";
 
 // Stable reference to avoid re-creating on every render
 const REMARK_PLUGINS = [remarkGfm];
@@ -35,6 +37,10 @@ export interface DocumentViewportProps {
   activeSectionId: string | null;
   onActiveSectionChange: (sectionId: string) => void;
   onSectionCommentRequest?: (sectionId: string) => void;
+  /** Highlight entries grouped by sectionId */
+  highlightsBySectionId?: Map<string, HighlightEntry[]>;
+  /** Called when clicking a highlight chip */
+  onHighlightClick?: (commentId: string) => void;
   className?: string;
 }
 
@@ -42,7 +48,7 @@ export interface DocumentViewportProps {
 
 export const DocumentViewport = forwardRef<DocumentViewportHandle, DocumentViewportProps>(
   function DocumentViewport(
-    { sections, activeSectionId, onActiveSectionChange, onSectionCommentRequest, className },
+    { sections, activeSectionId, onActiveSectionChange, onSectionCommentRequest, highlightsBySectionId, onHighlightClick, className },
     ref,
   ) {
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -120,6 +126,8 @@ export const DocumentViewport = forwardRef<DocumentViewportHandle, DocumentViewp
             isActive={activeSectionId === section.sectionId}
             onRef={(el) => setSectionRef(section.sectionId, el)}
             onCommentRequest={onSectionCommentRequest}
+            highlights={highlightsBySectionId?.get(section.sectionId)}
+            onHighlightClick={onHighlightClick}
           />
         ))}
       </div>
@@ -134,6 +142,8 @@ interface SectionBlockProps {
   isActive: boolean;
   onRef: (el: HTMLElement | null) => void;
   onCommentRequest?: (sectionId: string) => void;
+  highlights?: HighlightEntry[];
+  onHighlightClick?: (commentId: string) => void;
 }
 
 const SectionBlock = memo(function SectionBlock({
@@ -141,6 +151,8 @@ const SectionBlock = memo(function SectionBlock({
   isActive,
   onRef,
   onCommentRequest,
+  highlights,
+  onHighlightClick,
 }: SectionBlockProps) {
   return (
     <section
@@ -156,6 +168,13 @@ const SectionBlock = memo(function SectionBlock({
           {section.markdown}
         </Markdown>
       </div>
+
+      {highlights && highlights.length > 0 && (
+        <HighlightLayer
+          highlights={highlights}
+          onHighlightClick={onHighlightClick}
+        />
+      )}
 
       {onCommentRequest ? (
         <button

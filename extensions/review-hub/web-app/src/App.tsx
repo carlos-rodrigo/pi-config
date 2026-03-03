@@ -15,7 +15,9 @@ import { useSessionToken } from "@/hooks/use-session-token";
 import { useVisualModel } from "@/hooks/use-visual-model";
 import { useUnresolvedNavigation } from "@/hooks/use-unresolved-navigation";
 import { useSelectionAnchor } from "@/hooks/use-selection-anchor";
+import { useReanchorMap } from "@/hooks/use-reanchor-map";
 import type { AnchorPayload } from "@/lib/anchor/capture";
+import type { HighlightEntry } from "@/components/document";
 import { NarrationPlayerBar } from "@/components/audio";
 import { CommentRail, type CommentFormState } from "@/components/layout/comment-rail";
 import { TocRail } from "@/components/layout/toc-rail";
@@ -72,6 +74,23 @@ export default function App() {
       setMutationError(null);
     }, []),
   });
+
+  // ── Re-anchor map + highlight grouping ──────────────────────────────
+  const anchorMap = useReanchorMap(comments, visualSections);
+
+  const highlightsBySectionId = useMemo(() => {
+    const map = new Map<string, HighlightEntry[]>();
+    for (const comment of comments) {
+      if (!comment.anchor) continue;
+      const resolution = anchorMap.get(comment.id);
+      if (!resolution) continue;
+      const sid = comment.anchor.sectionId;
+      const list = map.get(sid) ?? [];
+      list.push({ comment, resolution });
+      map.set(sid, list);
+    }
+    return map;
+  }, [comments, anchorMap]);
 
   const sectionOptions = manifest?.sections ?? [];
   const { unresolvedCount, unresolvedCountsBySection, goToNextUnresolved } =
@@ -194,6 +213,23 @@ export default function App() {
     setFormState({ ...EMPTY_FORM, sectionId });
     setMutationError(null);
   }, []);
+
+  const handleHighlightClick = useCallback((commentId: string) => {
+    const comment = comments.find((c) => c.id === commentId);
+    if (comment) {
+      setMode("review");
+      setActiveSectionId(comment.sectionId);
+      // Load comment into form for editing
+      setFormState({
+        id: comment.id,
+        sectionId: comment.sectionId,
+        type: comment.type,
+        priority: comment.priority,
+        text: comment.text,
+      });
+      setAnchorDraft(null);
+    }
+  }, [comments]);
 
   const handleNextUnresolved = useCallback(() => {
     const nextComment = goToNextUnresolved();
@@ -323,6 +359,8 @@ export default function App() {
           activeSectionId={activeSectionId}
           onActiveSectionChange={setActiveSectionId}
           onSectionCommentRequest={handleSectionCommentRequest}
+          highlightsBySectionId={highlightsBySectionId}
+          onHighlightClick={handleHighlightClick}
         />
       )}
 
