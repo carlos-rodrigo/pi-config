@@ -10,7 +10,7 @@ Design: `.features/review-hub-rebuild/design.md`
 - [x] 002 - Runtime bridge + server service skeleton
 - [x] 003 - Canonical visual model endpoint (`/visual-model`)
 - [x] 004 - Fresh React shell (Read/Review) foundation
-- [ ] 005 - Document viewport with `react-markdown`
+- [x] 005 - Document viewport with `react-markdown`
 - [ ] 006 - Text selection capture + anchor payload
 - [ ] 007 - Re-anchor highlights + degraded fallback UX
 - [ ] 008 - Comment rail workflow (CRUD, filters, unresolved nav)

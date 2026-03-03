@@ -15,6 +15,9 @@ Feature: review-hub-rebuild
 - `RenderSection` from `/visual-model` is the frontend's single source of truth for section identity.
 - Shell layout uses slot pattern: `ReviewShell` accepts `tocRail`, `commentRail`, `bottomBar`, `statusBar` as ReactNode props.
 - Mobile drawers use controlled `Sheet` with `open`/`onOpenChange` — triggers live in ShellHeader, content in ReviewShell.
+- `react-markdown` remarkPlugins must be a module-level stable reference (not inline `[remarkGfm]`). Don't use `as const` — Pluggable[] type is mutable.
+- Memoize individual section blocks with `memo()` to avoid re-rendering all sections on active section change.
+- `useVisualModel(token)` hook fetches from `/visual-model` — returns `{ sections, isLoading, error }`.
 
 ---
 
@@ -87,5 +90,25 @@ Task ID: 004
 - Slot-based shell pattern keeps state management separate from layout.
 - Controlled `Sheet` pattern needed when trigger and content live in different components.
 - `const` type assertion on manifest version needs explicit `number` annotation for comparison.
+
+---
+
+## 2026-02-27 - Document viewport with react-markdown
+
+Task ID: 005
+
+- Created `DocumentViewport` component rendering sections via `react-markdown` + `remark-gfm`.
+- Created `useVisualModel` hook fetching canonical section data from `/visual-model`.
+- Added `RenderSection` and `VisualModelResponse` types to frontend API layer.
+- Added `fetchVisualModel()` method to `ReviewApiClient`.
+- Replaced old `VisualContentHost` (dangerouslySetInnerHTML) with new `DocumentViewport` in App.tsx.
+- Memoized `SectionBlock` component and stable `REMARK_PLUGINS` reference.
+- IntersectionObserver tracks active section for TOC sync.
+- Files: `web-app/src/components/document/{document-viewport,index}.tsx`, `web-app/src/hooks/use-visual-model.ts`, API types/client updates.
+
+**Learnings for future iterations:**
+- react-markdown remarkPlugins must be a stable module-level constant (no `as const`).
+- Memoize each SectionBlock to avoid full re-render when activeSectionId changes.
+- useVisualModel hook keeps data fetching separate from rendering.
 
 ---
