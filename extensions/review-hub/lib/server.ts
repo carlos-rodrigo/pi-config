@@ -289,7 +289,7 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
 
     writeLockFile(process.pid, port);
 
-    const url = `http://127.0.0.1:${port}?token=${sessionToken}`;
+    const url = `http://127.0.0.1:${port}/?token=${sessionToken}`;
     return { port, url };
   }
 
