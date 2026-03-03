@@ -17,6 +17,7 @@ Feature: review-hub-ui-refresh
 - Audio UX should be split into pure helpers (`web-app/src/lib/audio-player.ts`) plus a runtime hook (`hooks/useAudioSync.ts`) so state messaging and timestamp mapping stay testable.
 - For server-rendered visual controls, prefer inline SVG markup over emoji glyphs so iconography stays consistent and grep-able for migration checks.
 - Motion should be driven by shared variants/transitions in `web-app/src/lib/motion.ts`, with reduced-motion switching animations to static states.
+- Keep release-ready verification in a feature-local parity artifact (`.features/review-hub-ui-refresh/parity-checklist.md`) so UI migration checks remain reproducible.
 
 ---
 
@@ -182,5 +183,20 @@ Task ID: 011
 - **Learnings for future iterations:**
   - Drive animation through shared variants/transitions instead of ad-hoc component values to keep motion behavior coherent.
   - Reduced-motion support is easiest to enforce when motion utilities own both animated and static variant definitions.
+
+---
+
+## 2026-03-02 - Accessibility hardening, parity smoke checks, and README migration docs
+
+Task ID: 012
+
+- Added accessibility polish in UI status/error surfaces and keyboard shortcut metadata (`aria-keyshortcuts`).
+- Added a feature-local parity checklist artifact at `.features/review-hub-ui-refresh/parity-checklist.md` covering build, core flows, audio, and accessibility checks.
+- Rewrote `extensions/review-hub/README.md` with the new frontend stack, migration workflow, troubleshooting, and fallback guidance.
+- Kept verification commands aligned with current extension/web workspace scripts.
+
+- **Learnings for future iterations:**
+  - Treat parity checklists as versioned artifacts so migration validation is repeatable across contributors.
+  - Accessibility fixes are easier to maintain when folded into normal component updates (not postponed to end-of-cycle audits).
 
 ---

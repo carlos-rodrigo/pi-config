@@ -41,3 +41,10 @@
 **Context:** Task 011 introduced Framer Motion transitions across shell panels and comment cards.
 **Learning:** Shared motion utilities should return both animated and static (reduced-motion) variants so components can opt in consistently without duplicating accessibility logic.
 **Applies to:** Any feature adding multi-component animation systems in React.
+
+## Review Hub: Keep migration parity checks as tracked artifacts
+
+**Date:** 2026-03-02
+**Context:** Task 012 finalized accessibility and migration safety checks.
+**Learning:** A versioned parity checklist in `.features/<feature>/` keeps release verification reproducible and prevents UI regressions from relying on tribal/manual memory.
+**Applies to:** Any feature migration that changes UI stack or interaction model.

@@ -17,7 +17,7 @@ Design: `.features/review-hub-ui-refresh/design.md`
 - [x] 009 - Build sticky bottom narration player with sync controls and audio-state UX
 - [x] 010 - Replace functional emojis with Lucide icons across app and visual controls
 - [x] 011 - Add Framer Motion system with reduced-motion behavior
-- [ ] 012 - Accessibility hardening, parity smoke checks, and README migration docs
+- [x] 012 - Accessibility hardening, parity smoke checks, and README migration docs
 
 ## Dependency Notes
 

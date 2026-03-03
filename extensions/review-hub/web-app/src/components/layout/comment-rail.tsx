@@ -73,6 +73,7 @@ export function CommentRail({
             className="w-full justify-between"
             onClick={onNextUnresolved}
             disabled={unresolvedCount === 0}
+            aria-keyshortcuts="N"
           >
             <span>Next unresolved</span>
             <span className="text-muted-foreground text-xs">N</span>

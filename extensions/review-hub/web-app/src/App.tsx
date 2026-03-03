@@ -408,13 +408,15 @@ export default function App() {
         </div>
 
         {completedAt ? (
-          <p className="text-sm font-medium text-emerald-600">
+          <p className="text-sm font-medium text-emerald-600" role="status" aria-live="polite">
             Review marked complete at {new Date(completedAt).toLocaleString()}.
           </p>
         ) : null}
 
         {mutationError || error ? (
-          <p className="text-sm text-red-600">{mutationError ?? error}</p>
+          <p className="text-sm text-red-600" role="alert">
+            {mutationError ?? error}
+          </p>
         ) : null}
       </div>
 

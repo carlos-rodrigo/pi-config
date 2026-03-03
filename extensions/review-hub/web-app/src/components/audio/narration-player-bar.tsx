@@ -42,7 +42,9 @@ export function NarrationPlayerBar({
       <PlayerShell>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline">Narration</Badge>
-          <p className="text-sm">{getAudioStateMessage(audioState, manifest.audioFailureReason)}</p>
+          <p className="text-sm" role="status" aria-live="polite">
+            {getAudioStateMessage(audioState, manifest.audioFailureReason)}
+          </p>
         </div>
       </PlayerShell>
     );
