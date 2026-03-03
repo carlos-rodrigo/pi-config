@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 
+const SESSION_TOKEN_KEY = "review-hub-session-token";
+
 export function readSessionTokenFromSearch(search: string): string | null {
   const params = new URLSearchParams(search);
   const token = params.get("token")?.trim();
@@ -13,15 +15,26 @@ export function useSessionToken(search: string = window.location.search): {
   const cleanedRef = useRef(false);
 
   const result = useMemo(() => {
-    const token = readSessionTokenFromSearch(search);
-    if (!token) {
-      return {
-        token: null,
-        error: "Missing session token. Open the Review Hub URL from pi.",
-      };
+    // 1. Try URL query param first (fresh open from pi)
+    const urlToken = readSessionTokenFromSearch(search);
+    if (urlToken) {
+      // Persist to sessionStorage so it survives URL cleanup + refresh
+      try { sessionStorage.setItem(SESSION_TOKEN_KEY, urlToken); } catch { /* noop */ }
+      return { token: urlToken, error: null };
     }
 
-    return { token, error: null };
+    // 2. Fallback to sessionStorage (page refresh after URL cleanup)
+    try {
+      const stored = sessionStorage.getItem(SESSION_TOKEN_KEY)?.trim();
+      if (stored) {
+        return { token: stored, error: null };
+      }
+    } catch { /* noop */ }
+
+    return {
+      token: null,
+      error: "Missing session token. Open the Review Hub URL from pi.",
+    };
   }, [search]);
 
   // Remove token from URL after capture to prevent leakage via history/referrer
@@ -30,8 +43,10 @@ export function useSessionToken(search: string = window.location.search): {
       cleanedRef.current = true;
       try {
         const url = new URL(window.location.href);
-        url.searchParams.delete("token");
-        window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+        if (url.searchParams.has("token")) {
+          url.searchParams.delete("token");
+          window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+        }
       } catch {
         // Silently ignore — URL cleanup is best-effort
       }
