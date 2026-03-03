@@ -1,22 +1,30 @@
 import type { ReactNode } from "react";
-import { FastForward, Link2, Link2Off, Pause, Play, Rewind } from "lucide-react";
+import { FastForward, Link2, Link2Off, Pause, Play, RefreshCw, Rewind } from "lucide-react";
 
 import type { ReviewManifest } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { formatAudioTime, resolveAudioUxState } from "@/lib/audio-player";
+import { formatAudioTime } from "@/lib/audio-player";
 import { useAudioSync } from "@/hooks/useAudioSync";
+import type { AudioState } from "@/hooks/use-audio-status";
 
 type ReviewSection = ReviewManifest["sections"][number];
 
 export function NarrationPlayerBar({
   manifest,
+  audioState,
+  isRegenerating,
+  regenError,
+  onRegenerate,
   onSectionSync,
 }: {
   manifest: ReviewManifest;
+  audioState: AudioState;
+  isRegenerating?: boolean;
+  regenError?: string | null;
+  onRegenerate?: () => void;
   onSectionSync: (sectionId: string) => void;
 }) {
-  const audioState = resolveAudioUxState(manifest);
   const audioUrl = audioState === "ready" ? "/audio" : null;
 
   const {
@@ -38,6 +46,7 @@ export function NarrationPlayerBar({
   });
 
   if (audioState !== "ready") {
+    const canRegenerate = audioState === "failed" || audioState === "not-requested";
     return (
       <PlayerShell>
         <div className="flex flex-wrap items-center gap-2">
@@ -45,6 +54,21 @@ export function NarrationPlayerBar({
           <p className="text-sm" role="status" aria-live="polite">
             {getAudioStateMessage(audioState, manifest.audioFailureReason)}
           </p>
+          {canRegenerate && onRegenerate ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRegenerate}
+              disabled={isRegenerating}
+              className="gap-1"
+            >
+              <RefreshCw className={`size-3.5 ${isRegenerating ? "animate-spin" : ""}`} />
+              {isRegenerating ? "Requesting…" : "Regenerate"}
+            </Button>
+          ) : null}
+          {regenError ? (
+            <p className="text-xs text-red-600">{regenError}</p>
+          ) : null}
         </div>
       </PlayerShell>
     );
@@ -111,7 +135,7 @@ function resolveActiveSectionLabel(section: ReviewSection | null): string | null
   return section.headingPath[section.headingPath.length - 1] ?? section.id;
 }
 
-function getAudioStateMessage(state: ReturnType<typeof resolveAudioUxState>, failureReason?: string): string {
+function getAudioStateMessage(state: AudioState, failureReason?: string): string {
   if (state === "generating") {
     return "Narration is still being generated. It will appear here when ready.";
   }

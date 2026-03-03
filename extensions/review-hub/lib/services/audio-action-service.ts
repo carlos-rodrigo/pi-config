@@ -35,14 +35,26 @@ export class AudioActionService {
 
   /**
    * Get current audio status from manifest state.
+   *
+   * Derives state from manifest.audioState, manifest.audio presence,
+   * and manifest.status (review lifecycle).
    */
   getStatus(manifest: ReviewManifest): AudioStatus {
-    const state: AudioState = manifest.audioState ?? (manifest.audio ? "ready" : "not-requested");
-
-    return {
-      state,
-      reason: manifest.audioFailureReason,
-    };
+    // Explicit audio state takes priority
+    if (manifest.audioState === "failed") {
+      return { state: "failed", reason: manifest.audioFailureReason };
+    }
+    if (manifest.audioState === "not-requested") {
+      return { state: "not-requested" };
+    }
+    if (manifest.audioState === "ready" || manifest.audio) {
+      return { state: "ready" };
+    }
+    // Derive "generating" from review lifecycle status
+    if (manifest.status === "generating") {
+      return { state: "generating" };
+    }
+    return { state: "not-requested" };
   }
 
   /**

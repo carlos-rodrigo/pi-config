@@ -19,6 +19,7 @@ import { saveManifest, loadManifest } from "./manifest.js";
 import { generateVisual, generateVisualStyles } from "./visual-generator.js";
 import { ExportService } from "./services/export-service.js";
 import { FinishService, type FinishRequest } from "./services/finish-service.js";
+import { AudioActionService } from "./services/audio-action-service.js";
 import { type ReviewRuntimeBridge, createNoOpBridge } from "./runtime-bridge.js";
 import { buildVisualModel } from "./visual-model.js";
 
@@ -199,6 +200,8 @@ function isReservedApiPath(pathname: string): boolean {
     pathname === "/export-feedback" ||
     pathname === "/finish" ||
     pathname === "/clipboard/copy" ||
+    pathname === "/audio/status" ||
+    pathname === "/audio/regenerate" ||
     pathname.startsWith("/comments")
   );
 }
@@ -376,6 +379,20 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
       const visual = getVisualHtml(state.manifest);
       res.writeHead(200, { "Content-Type": "text/css; charset=utf-8" });
       res.end(visual.css);
+      return;
+    }
+
+    // Audio status — pollable audio lifecycle state
+    if (pathname === "/audio/status") {
+      if (!state) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Server not ready" }));
+        return;
+      }
+      const audioService = new AudioActionService(resolvedBridge);
+      const status = audioService.getStatus(state.manifest);
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify(status));
       return;
     }
 
@@ -581,6 +598,8 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
           await handleFinish(body, res, reviewDir);
         } else if (req.method === "POST" && pathname === "/clipboard/copy") {
           await handleClipboardCopy(body, res);
+        } else if (req.method === "POST" && pathname === "/audio/regenerate") {
+          await handleAudioRegenerate(body, res, reviewDir);
         } else if (req.method === "POST" && pathname === "/complete") {
           await handleComplete(res, reviewDir);
         } else if (req.method === "DELETE" && pathname.startsWith("/comments/")) {
@@ -793,6 +812,44 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
     const exportService = new ExportService();
     const finishService = new FinishService(resolvedBridge, exportService);
     const result = await finishService.finish(state.manifest, reviewDir, request);
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result));
+  }
+
+  async function handleAudioRegenerate(
+    body: string,
+    res: http.ServerResponse,
+    reviewDir: string,
+  ): Promise<void> {
+    if (!state) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Server not ready" }));
+      return;
+    }
+
+    let parsed: unknown = {};
+    try {
+      if (body.trim()) {
+        parsed = JSON.parse(body);
+      }
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid JSON" }));
+      return;
+    }
+
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Request body must be an object" }));
+      return;
+    }
+
+    const p = parsed as Record<string, unknown>;
+    const fastAudio = p.fastAudio === true ? true : undefined;
+
+    const audioService = new AudioActionService(resolvedBridge);
+    const result = await audioService.regenerate(state.manifest, reviewDir, { fastAudio });
 
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result));

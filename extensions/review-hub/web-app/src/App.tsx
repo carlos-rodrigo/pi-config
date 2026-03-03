@@ -19,6 +19,8 @@ import { useReanchorMap } from "@/hooks/use-reanchor-map";
 import type { AnchorPayload } from "@/lib/anchor/capture";
 import type { HighlightEntry } from "@/components/document";
 import { NarrationPlayerBar } from "@/components/audio";
+import { useAudioStatus } from "@/hooks/use-audio-status";
+import { resolveAudioUxState } from "@/lib/audio-player";
 import { CommentRail, type CommentFormState } from "@/components/layout/comment-rail";
 import { TocRail } from "@/components/layout/toc-rail";
 import { DocumentViewport, type DocumentViewportHandle } from "@/components/document";
@@ -95,6 +97,13 @@ export default function App() {
   const sectionOptions = manifest?.sections ?? [];
   const { unresolvedCount, unresolvedCountsBySection, goToNextUnresolved } =
     useUnresolvedNavigation(comments, sectionOptions);
+
+  // ── Audio status + regeneration ───────────────────────────────────
+  const initialAudioState = manifest ? resolveAudioUxState(manifest) : "not-requested";
+  const { audioState, isRegenerating, regenError, regenerate: handleRegenerate } = useAudioStatus({
+    token,
+    initialState: initialAudioState,
+  });
 
   // ── Section tracking ──────────────────────────────────────────────────
 
@@ -321,7 +330,16 @@ export default function App() {
       }}
       tocRail={tocRailContent}
       commentRail={commentRailContent}
-      bottomBar={<NarrationPlayerBar manifest={manifest} onSectionSync={handleTocSelect} />}
+      bottomBar={
+        <NarrationPlayerBar
+          manifest={manifest}
+          audioState={audioState}
+          isRegenerating={isRegenerating}
+          regenError={regenError}
+          onRegenerate={handleRegenerate}
+          onSectionSync={handleTocSelect}
+        />
+      }
       statusBar={
         <>
           {completedAt ? (
