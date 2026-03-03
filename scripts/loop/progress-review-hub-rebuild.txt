@@ -30,6 +30,10 @@ Feature: review-hub-rebuild
 - `ExportService.export(manifest, { scope })` returns `{ markdown, exportHash, stats }`. Deterministic, sorted by document order.
 - `POST /export-feedback` validates body shape + scope enum before calling ExportService.
 - Export format: `- [type][priority] section: id\n  quote/[no anchor]\n  action: text` — concise for token economy.
+- `POST /finish` validates idempotencyKey, exportHash, clipboardMode. FinishService checks idempotency key + hash match for dedup.
+- `POST /clipboard/copy` backend fallback for browser clipboard failures. Validates markdown field.
+- `useFinishFlow(client)` hook: export → copy → finish → done/error state machine. Returns `{ state, startFinish, reset }`.
+- Idempotency: same key+hash = replay success; same key+different hash = conflict error.
 
 ---
 
@@ -203,5 +207,25 @@ Task ID: 009
 **Learnings for future iterations:**
 - Validate body shape + enum on all POST endpoints, not just required fields.
 - When scaffold already has the logic, the task becomes mostly wiring + testing.
+
+---
+
+## 2026-02-27 - Finish flow (copy/close/auto-paste + fallback)
+
+Task ID: 010
+
+- Added `POST /finish` endpoint with full input validation + FinishService orchestration.
+- Added `POST /clipboard/copy` endpoint for browser clipboard fallback.
+- Added idempotency dedup to FinishService (key+hash match → replay, key+hash mismatch → conflict).
+- Created `useFinishFlow` hook: export → clipboard → finish → done/error state machine.
+- Added API client methods: `exportFeedback()`, `finish()`, `clipboardCopy()`.
+- Added frontend types: `ExportFeedbackResponse`, `FinishRequest`, `FinishResponse`.
+- 7 new tests (5 unit + 2 endpoint integration).
+- Review fix: idempotent replay returns accurate `handedOff` status, key conflict detection.
+
+**Learnings for future iterations:**
+- Idempotency check must be strict: same key + different payload = conflict, not re-execute.
+- Server should validate enum values and shape for all POST endpoints.
+- Export hash is a consistency check, not authentication — treat accordingly.
 
 ---
