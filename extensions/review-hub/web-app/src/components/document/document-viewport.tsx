@@ -8,6 +8,7 @@
 
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -17,6 +18,9 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import type { RenderSection } from "@/lib/api";
+
+// Stable reference to avoid re-creating on every render
+const REMARK_PLUGINS = [remarkGfm];
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -105,34 +109,59 @@ export const DocumentViewport = forwardRef<DocumentViewportHandle, DocumentViewp
     return (
       <div ref={containerRef} className={cn("document-viewport space-y-1", className)}>
         {sections.map((section) => (
-          <section
+          <SectionBlock
             key={section.sectionId}
-            data-section-id={section.sectionId}
-            ref={(el) => setSectionRef(section.sectionId, el)}
-            className={cn(
-              "document-section scroll-mt-20 rounded-lg px-1 py-2 transition-colors duration-200",
-              activeSectionId === section.sectionId && "bg-accent/30",
-            )}
-          >
-            <div className="prose prose-neutral dark:prose-invert max-w-none prose-headings:scroll-mt-20 prose-headings:font-semibold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-h4:text-base prose-p:leading-7 prose-pre:rounded-lg prose-pre:bg-muted prose-code:text-sm prose-table:text-sm">
-              <Markdown remarkPlugins={[remarkGfm]}>
-                {section.markdown}
-              </Markdown>
-            </div>
-
-            {onSectionCommentRequest ? (
-              <button
-                type="button"
-                onClick={() => onSectionCommentRequest(section.sectionId)}
-                className="mt-1 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-primary group-hover:opacity-100 [.document-section:hover_&]:opacity-100"
-                aria-label={`Comment on ${section.headingPath[section.headingPath.length - 1] ?? "section"}`}
-              >
-                💬 Comment
-              </button>
-            ) : null}
-          </section>
+            section={section}
+            isActive={activeSectionId === section.sectionId}
+            onRef={(el) => setSectionRef(section.sectionId, el)}
+            onCommentRequest={onSectionCommentRequest}
+          />
         ))}
       </div>
     );
   },
 );
+
+// ── Memoized section block ─────────────────────────────────────────────
+
+interface SectionBlockProps {
+  section: RenderSection;
+  isActive: boolean;
+  onRef: (el: HTMLElement | null) => void;
+  onCommentRequest?: (sectionId: string) => void;
+}
+
+const SectionBlock = memo(function SectionBlock({
+  section,
+  isActive,
+  onRef,
+  onCommentRequest,
+}: SectionBlockProps) {
+  return (
+    <section
+      data-section-id={section.sectionId}
+      ref={onRef}
+      className={cn(
+        "document-section scroll-mt-20 rounded-lg px-1 py-2 transition-colors duration-200",
+        isActive && "bg-accent/30",
+      )}
+    >
+      <div className="prose prose-neutral dark:prose-invert max-w-none prose-headings:scroll-mt-20 prose-headings:font-semibold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-h4:text-base prose-p:leading-7 prose-pre:rounded-lg prose-pre:bg-muted prose-code:text-sm prose-table:text-sm">
+        <Markdown remarkPlugins={REMARK_PLUGINS}>
+          {section.markdown}
+        </Markdown>
+      </div>
+
+      {onCommentRequest ? (
+        <button
+          type="button"
+          onClick={() => onCommentRequest(section.sectionId)}
+          className="mt-1 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-primary [.document-section:hover_&]:opacity-100"
+          aria-label={`Comment on ${section.headingPath[section.headingPath.length - 1] ?? "section"}`}
+        >
+          💬 Comment
+        </button>
+      ) : null}
+    </section>
+  );
+});
