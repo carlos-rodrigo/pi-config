@@ -395,7 +395,7 @@ export async function loadManifest(manifestPath: string): Promise<ReviewManifest
     throw new Error(`Invalid manifest format: missing required fields (id, source, sections)`);
   }
 
-  const sourceSchemaVersion = parsed.schemaVersion ?? 1;
+  const sourceSchemaVersion: number = parsed.schemaVersion ?? 1;
   if (sourceSchemaVersion !== 1 && sourceSchemaVersion !== CURRENT_MANIFEST_SCHEMA_VERSION) {
     throw new Error(
       `Unsupported manifest schemaVersion: ${sourceSchemaVersion}. ` +
