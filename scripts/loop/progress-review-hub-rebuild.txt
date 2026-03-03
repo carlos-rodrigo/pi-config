@@ -34,6 +34,10 @@ Feature: review-hub-rebuild
 - `POST /clipboard/copy` backend fallback for browser clipboard failures. Validates markdown field.
 - `useFinishFlow(client)` hook: export → copy → finish → done/error state machine. Returns `{ state, startFinish, reset }`.
 - Idempotency: same key+hash = replay success; same key+different hash = conflict error.
+- `GET /audio/status` returns `{ state, reason?, progress? }`. `POST /audio/regenerate` triggers bridge delegation.
+- `AudioActionService.getStatus()` derives state from `manifest.audioState`, `manifest.audio`, and `manifest.status`.
+- `useAudioStatus({ token, initialState })` polls `/audio/status` when generating. Guards re-entry on regenerate.
+- NarrationPlayerBar accepts `audioState`, `isRegenerating`, `regenError`, `onRegenerate` from parent.
 
 ---
 
@@ -227,5 +231,23 @@ Task ID: 010
 - Idempotency check must be strict: same key + different payload = conflict, not re-execute.
 - Server should validate enum values and shape for all POST endpoints.
 - Export hash is a consistency check, not authentication — treat accordingly.
+
+---
+
+## 2026-02-27 - Audio status + regenerate flow integration
+
+Task ID: 011
+
+- Added `GET /audio/status` and `POST /audio/regenerate` endpoints.
+- Enhanced AudioActionService.getStatus to derive state from manifest.audioState, audio, and status fields.
+- Created `useAudioStatus` hook with polling for generating state + re-entry guard.
+- Enhanced NarrationPlayerBar with regenerate button for failed/not-requested states.
+- Review fixes: polling guard for null token, regenerate re-entry protection.
+- 8 new tests (6 unit + 2 endpoint integration).
+
+**Learnings for future iterations:**
+- Audio "generating" state is derived from review lifecycle, not stored directly in manifest.
+- Poll intervals need token guard — don't run no-op fetches.
+- Regenerate needs re-entry guard since button disable alone doesn't prevent programmatic calls.
 
 ---
