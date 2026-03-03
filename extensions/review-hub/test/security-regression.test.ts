@@ -16,7 +16,11 @@ import * as path from "node:path";
 
 import { createReviewServer } from "../lib/server.ts";
 import type { ReviewManifest } from "../lib/manifest.ts";
-import { readSessionTokenFromSearch } from "../web-app/src/hooks/use-session-token.ts";
+import {
+  readSessionTokenFromHash,
+  readSessionTokenFromPath,
+  readSessionTokenFromSearch,
+} from "../web-app/src/hooks/use-session-token.ts";
 
 function makeManifest(overrides: Partial<ReviewManifest> = {}): ReviewManifest {
   return {
@@ -197,6 +201,20 @@ describe("Token hygiene", () => {
     assert.equal(readSessionTokenFromSearch("?other=value"), null);
     assert.equal(readSessionTokenFromSearch(""), null);
     assert.equal(readSessionTokenFromSearch("?token=  "), null);
+  });
+
+  test("readSessionTokenFromPath extracts /t/<token> format", () => {
+    assert.equal(readSessionTokenFromPath("/t/abc123"), "abc123");
+    assert.equal(readSessionTokenFromPath("/t/e028fa4d-f617-4558-8b2f-5b6f55e8dcb6"), "e028fa4d-f617-4558-8b2f-5b6f55e8dcb6");
+    assert.equal(readSessionTokenFromPath("/"), null);
+    assert.equal(readSessionTokenFromPath("/t/"), null);
+  });
+
+  test("readSessionTokenFromHash extracts #token=<token> format", () => {
+    assert.equal(readSessionTokenFromHash("#token=abc123"), "abc123");
+    assert.equal(readSessionTokenFromHash("token=abc123"), "abc123");
+    assert.equal(readSessionTokenFromHash("#other=value"), null);
+    assert.equal(readSessionTokenFromHash(""), null);
   });
 });
 

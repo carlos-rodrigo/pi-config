@@ -289,7 +289,10 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
 
     writeLockFile(process.pid, port);
 
-    const url = `http://127.0.0.1:${port}/?token=${sessionToken}`;
+    // Include token in both path and query for compatibility:
+    // - query keeps existing tests/tooling unchanged
+    // - path survives clients that drop query params when opening URLs
+    const url = `http://127.0.0.1:${port}/t/${sessionToken}?token=${sessionToken}`;
     return { port, url };
   }
 
