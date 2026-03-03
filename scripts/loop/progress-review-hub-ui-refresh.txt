@@ -15,6 +15,7 @@ Feature: review-hub-ui-refresh
 - `/comments` is an upsert endpoint: server owns `createdAt`/`updatedAt` and normalizes missing status to `open`; status toggles should send full comment payload + desired `status`.
 - Keep unresolved workflow logic in pure utilities (`web-app/src/lib/unresolved-navigation.ts`, `web-app/src/lib/unresolved-shortcut.ts`) and let hooks/components compose them for easier testing.
 - Audio UX should be split into pure helpers (`web-app/src/lib/audio-player.ts`) plus a runtime hook (`hooks/useAudioSync.ts`) so state messaging and timestamp mapping stay testable.
+- For server-rendered visual controls, prefer inline SVG markup over emoji glyphs so iconography stays consistent and grep-able for migration checks.
 
 ---
 
@@ -150,5 +151,20 @@ Task ID: 009
 - **Learnings for future iterations:**
   - Keep sticky media controls outside the main document grid and add page bottom padding to prevent overlap.
   - Split audio behavior into pure helpers + hook to keep UI components declarative and test-friendly.
+
+---
+
+## 2026-03-02 - Replace functional emojis with Lucide icons across app and visual controls
+
+Task ID: 010
+
+- Replaced visual section comment affordance emoji with inline SVG icon markup and explicit accessible labeling.
+- Removed functional glyph literals from generated visual HTML (including checklist indicators) to satisfy no-emoji controls policy.
+- Updated visual button styling to treat icons as first-class controls rather than text glyphs.
+- Verified no functional emoji glyphs remain with the migration regex check.
+
+- **Learnings for future iterations:**
+  - Keep icon output in generated HTML as explicit SVG so visual affordances match React icon system quality.
+  - Using HTML entities (instead of literal glyphs) avoids accidental emoji-regex hits in source while preserving semantics.
 
 ---

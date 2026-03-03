@@ -27,3 +27,10 @@
 **Context:** Task 009 introduced sticky narration playback with section sync.
 **Learning:** Keep state derivation in pure helpers (`resolveAudioUxState`, `findSectionAtTime`) and keep media side effects in a dedicated hook (`useAudioSync`) for easier testing and simpler UI components.
 **Applies to:** Media/timeline features that combine server metadata with browser playback state.
+
+## Review Hub: Generated HTML controls should use SVG icons, not glyph emojis
+
+**Date:** 2026-03-02
+**Context:** Task 010 removed emoji-based controls from the visual generator.
+**Learning:** For server-rendered controls, inline SVG icons provide consistent styling, accessibility labeling, and easier compliance checks than Unicode emoji glyphs.
+**Applies to:** Any generated HTML UI affordance outside the React component tree.
