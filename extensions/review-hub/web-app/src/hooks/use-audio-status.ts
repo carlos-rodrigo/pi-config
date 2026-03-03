@@ -67,8 +67,8 @@ export function useAudioStatus({
   }, [token]);
 
   useEffect(() => {
-    if (audioState !== "generating") {
-      // Stop polling when not generating
+    if (audioState !== "generating" || !token) {
+      // Stop polling when not generating or no token
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
@@ -84,7 +84,7 @@ export function useAudioStatus({
         pollTimerRef.current = null;
       }
     };
-  }, [audioState, pollStatus, pollIntervalMs]);
+  }, [audioState, token, pollStatus, pollIntervalMs]);
 
   // Sync initial state from manifest changes
   useEffect(() => {
@@ -95,7 +95,7 @@ export function useAudioStatus({
 
   const regenerate = useCallback(
     async (options?: { fastAudio?: boolean }) => {
-      if (!token) return;
+      if (!token || isRegenerating) return;
 
       setIsRegenerating(true);
       setRegenError(null);
@@ -127,7 +127,7 @@ export function useAudioStatus({
         setIsRegenerating(false);
       }
     },
-    [token],
+    [token, isRegenerating],
   );
 
   return { audioState, audioReason, isRegenerating, regenerate, regenError };
