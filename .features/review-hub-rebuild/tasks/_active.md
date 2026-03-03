@@ -11,7 +11,7 @@ Design: `.features/review-hub-rebuild/design.md`
 - [x] 003 - Canonical visual model endpoint (`/visual-model`)
 - [x] 004 - Fresh React shell (Read/Review) foundation
 - [x] 005 - Document viewport with `react-markdown`
-- [ ] 006 - Text selection capture + anchor payload
+- [x] 006 - Text selection capture + anchor payload
 - [ ] 007 - Re-anchor highlights + degraded fallback UX
 - [ ] 008 - Comment rail workflow (CRUD, filters, unresolved nav)
 - [ ] 009 - Compact export endpoint (`/export-feedback`) with hash

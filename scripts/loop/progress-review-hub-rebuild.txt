@@ -18,6 +18,9 @@ Feature: review-hub-rebuild
 - `react-markdown` remarkPlugins must be a module-level stable reference (not inline `[remarkGfm]`). Don't use `as const` — Pluggable[] type is mutable.
 - Memoize individual section blocks with `memo()` to avoid re-rendering all sections on active section change.
 - `useVisualModel(token)` hook fetches from `/visual-model` — returns `{ sections, isLoading, error }`.
+- Anchor capture: pure `buildAnchorFromSelection()` in `lib/anchor/capture.ts` (testable), DOM hook `useSelectionAnchor` in hooks layer.
+- Server validates anchor shape via `isValidAnchorShape()` before persisting. `loadManifest` normalization handles corrupt anchors on read.
+- `DocumentViewportHandle.getContainerRef()` exposes container for scoped DOM event listeners.
 
 ---
 
@@ -110,5 +113,25 @@ Task ID: 005
 - react-markdown remarkPlugins must be a stable module-level constant (no `as const`).
 - Memoize each SectionBlock to avoid full re-render when activeSectionId changes.
 - useVisualModel hook keeps data fetching separate from rendering.
+
+---
+
+## 2026-02-27 - Text selection capture + anchor payload
+
+Task ID: 006
+
+- Created `lib/anchor/capture.ts` with `normalizeTextForAnchoring()` and `buildAnchorFromSelection()` pure functions.
+- Created `useSelectionAnchor` hook scoped to document viewport container.
+- Updated `SaveCommentInput` to accept optional `anchor` field.
+- Updated server `handleUpsertComment` to pass anchor through (with shape validation).
+- Wired selection capture into `App.tsx` — selection auto-opens composer with anchor draft.
+- Added `isValidAnchorShape()` server-side validation before persistence.
+- 12 new unit tests for anchor capture functions.
+- Files: `web-app/src/lib/anchor/capture.ts`, `web-app/src/hooks/use-selection-anchor.ts`, `test/anchor-capture.test.ts`, server/types updates.
+
+**Learnings for future iterations:**
+- Pure capture function + DOM hook separation enables thorough testing without mocking.
+- Validate anchor shape at write boundary, not just read normalization.
+- Expose container ref via imperative handle for hook-based DOM scoping.
 
 ---
