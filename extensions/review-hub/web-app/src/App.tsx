@@ -14,6 +14,8 @@ import { useReviewBootstrap } from "@/hooks/use-review-bootstrap";
 import { useSessionToken } from "@/hooks/use-session-token";
 import { useVisualModel } from "@/hooks/use-visual-model";
 import { useUnresolvedNavigation } from "@/hooks/use-unresolved-navigation";
+import { useSelectionAnchor } from "@/hooks/use-selection-anchor";
+import type { AnchorPayload } from "@/lib/anchor/capture";
 import { NarrationPlayerBar } from "@/components/audio";
 import { CommentRail, type CommentFormState } from "@/components/layout/comment-rail";
 import { TocRail } from "@/components/layout/toc-rail";
@@ -46,9 +48,30 @@ export default function App() {
   const [formState, setFormState] = useState<CommentFormState>(EMPTY_FORM);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [anchorDraft, setAnchorDraft] = useState<AnchorPayload | null>(null);
   const viewportRef = useRef<DocumentViewportHandle | null>(null);
+  const viewportContainerRef = useRef<HTMLElement | null>(null);
 
   const { sections: visualSections, isLoading: visualLoading, error: visualError } = useVisualModel(token);
+
+  // ── Selection anchor capture ──────────────────────────────────────
+  // Keep containerRef in sync with viewport's internal container
+  useEffect(() => {
+    viewportContainerRef.current = viewportRef.current?.getContainerRef() ?? null;
+  });
+
+  useSelectionAnchor({
+    containerRef: viewportContainerRef,
+    sections: visualSections,
+    enabled: mode === "review",
+    onAnchorCaptured: useCallback(({ sectionId, anchor }) => {
+      setMode("review");
+      setActiveSectionId(sectionId);
+      setAnchorDraft(anchor);
+      setFormState({ ...EMPTY_FORM, sectionId });
+      setMutationError(null);
+    }, []),
+  });
 
   const sectionOptions = manifest?.sections ?? [];
   const { unresolvedCount, unresolvedCountsBySection, goToNextUnresolved } =
@@ -87,12 +110,14 @@ export default function App() {
       type: formState.type,
       priority: formState.priority,
       text: formState.text.trim(),
+      ...(anchorDraft && !formState.id ? { anchor: anchorDraft } : {}),
     };
 
     setIsSaving(true);
     try {
       await saveComment(payload);
       setMutationError(null);
+      setAnchorDraft(null);
       setFormState((prev) => ({
         ...EMPTY_FORM,
         sectionId: prev.sectionId,
@@ -165,6 +190,7 @@ export default function App() {
   const handleSectionCommentRequest = useCallback((sectionId: string) => {
     setMode("review");
     setActiveSectionId(sectionId);
+    setAnchorDraft(null);
     setFormState({ ...EMPTY_FORM, sectionId });
     setMutationError(null);
   }, []);
@@ -235,7 +261,7 @@ export default function App() {
       onNextUnresolved={handleNextUnresolved}
       onSubmit={handleSubmit}
       onFieldChange={(key, value) => setFormState((prev) => ({ ...prev, [key]: value }))}
-      onReset={() => setFormState({ ...EMPTY_FORM, sectionId: formState.sectionId })}
+      onReset={() => { setFormState({ ...EMPTY_FORM, sectionId: formState.sectionId }); setAnchorDraft(null); }}
       onEdit={(comment) => handleEdit(comment.id)}
       onDelete={handleDelete}
       onToggleStatus={handleToggleStatus}

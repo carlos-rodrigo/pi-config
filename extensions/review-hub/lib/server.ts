@@ -665,6 +665,11 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
       updatedAt: now,
     };
 
+    // Pass through anchor payload if present (validation handled by loadManifest normalization)
+    if (commentData.anchor) {
+      comment.anchor = commentData.anchor;
+    }
+
     if (existingIdx >= 0) {
       state.manifest.comments[existingIdx] = comment;
     } else {

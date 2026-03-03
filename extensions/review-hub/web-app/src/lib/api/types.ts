@@ -17,6 +17,7 @@ export interface SaveCommentInput {
   priority: CommentPriority;
   text: string;
   status?: ReviewComment["status"];
+  anchor?: ReviewComment["anchor"];
 }
 
 export interface CompleteReviewResponse {

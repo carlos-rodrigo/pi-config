@@ -26,6 +26,8 @@ const REMARK_PLUGINS = [remarkGfm];
 
 export interface DocumentViewportHandle {
   scrollToSection: (sectionId: string) => void;
+  /** Ref to the container element — used by useSelectionAnchor */
+  getContainerRef: () => HTMLElement | null;
 }
 
 export interface DocumentViewportProps {
@@ -93,6 +95,9 @@ export const DocumentViewport = forwardRef<DocumentViewportHandle, DocumentViewp
         if (el) {
           el.scrollIntoView({ behavior: "smooth", block: "start" });
         }
+      },
+      getContainerRef() {
+        return containerRef.current;
       },
     }));
 
