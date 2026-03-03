@@ -61,6 +61,7 @@ test("findSectionAtTime resolves section from timestamps", () => {
 function createManifestFixture(): ReviewManifest {
   return {
     id: "review-001",
+    schemaVersion: 2,
     source: "doc.md",
     sourceHash: "hash",
     reviewType: "prd",

@@ -10,6 +10,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+const CURRENT_MANIFEST_SCHEMA_VERSION = 2 as const;
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,8 @@ import * as path from "node:path";
 export interface ReviewManifest {
   /** Unique review identifier, e.g. "review-001" */
   id: string;
+  /** Manifest schema version */
+  schemaVersion: typeof CURRENT_MANIFEST_SCHEMA_VERSION;
   /** Path to the source markdown file (relative or absolute) */
   source: string;
   /** SHA-256 hash of the full source file at generation time */
@@ -82,6 +85,28 @@ export interface ReviewSection {
   audioEndTime?: number;
 }
 
+/** Anchored quote metadata for v2 comment captures. */
+export interface ReviewCommentAnchor {
+  /** Anchor schema version */
+  version: 2;
+  /** Section where the quote was selected */
+  sectionId: string;
+  /** Exact selected text */
+  quote: string;
+  /** Optional context before quote */
+  prefix?: string;
+  /** Optional context after quote */
+  suffix?: string;
+  /** Optional UTF-16 start offset in normalized section text */
+  startOffset?: number;
+  /** Optional UTF-16 end offset in normalized section text */
+  endOffset?: number;
+  /** Optional section hash at capture-time */
+  sectionHashAtCapture?: string;
+  /** Anchor algorithm version */
+  anchorAlgoVersion: "v2-section-text";
+}
+
 /** A reviewer comment anchored to a section. */
 export interface ReviewComment {
   /** Unique comment ID (UUID) */
@@ -102,6 +127,8 @@ export interface ReviewComment {
   status?: "open" | "resolved";
   /** Last update timestamp (edits/status changes). */
   updatedAt?: string;
+  /** Optional anchored quote metadata (v2) */
+  anchor?: ReviewCommentAnchor;
 }
 
 /** Result of drift detection between manifest and current source. */
@@ -300,6 +327,7 @@ export async function createManifest(
 
   return {
     id: nextId,
+    schemaVersion: CURRENT_MANIFEST_SCHEMA_VERSION,
     source: sourcePath,
     sourceHash,
     reviewType,
@@ -350,14 +378,261 @@ export async function loadManifest(manifestPath: string): Promise<ReviewManifest
   }
 
   const content = fs.readFileSync(resolvedPath, "utf-8");
-  const parsed = JSON.parse(content) as ReviewManifest;
+  const parsed = JSON.parse(content) as ReviewManifest & {
+    schemaVersion?: number;
+    comments?: unknown[];
+  };
 
   // Basic shape validation
-  if (!parsed.id || !parsed.source || !parsed.sections) {
+  if (!parsed.id || !parsed.source || !Array.isArray(parsed.sections)) {
     throw new Error(`Invalid manifest format: missing required fields (id, source, sections)`);
   }
 
-  return parsed;
+  const sourceSchemaVersion = parsed.schemaVersion ?? 1;
+  if (sourceSchemaVersion !== 1 && sourceSchemaVersion !== CURRENT_MANIFEST_SCHEMA_VERSION) {
+    throw new Error(
+      `Unsupported manifest schemaVersion: ${sourceSchemaVersion}. ` +
+      `Supported versions: 1 (legacy), ${CURRENT_MANIFEST_SCHEMA_VERSION}`,
+    );
+  }
+
+  const normalizedComments = Array.isArray(parsed.comments)
+    ? parsed.comments.map((comment, idx) => normalizeComment(comment, idx))
+    : [];
+
+  const normalized: ReviewManifest = {
+    id: asRequiredString(parsed.id, "id"),
+    schemaVersion: CURRENT_MANIFEST_SCHEMA_VERSION,
+    source: asRequiredString(parsed.source, "source"),
+    sourceHash: asRequiredString(parsed.sourceHash, "sourceHash"),
+    reviewType: asReviewType(parsed.reviewType, "reviewType"),
+    language: asLanguage(parsed.language, "language"),
+    createdAt: asRequiredString(parsed.createdAt, "createdAt"),
+    completedAt: normalizeNullableString(parsed.completedAt),
+    status: asManifestStatus(parsed.status, "status"),
+    sections: parsed.sections,
+    comments: normalizedComments,
+  };
+
+  if (isRecord(parsed.audio)) {
+    const file = asOptionalString(parsed.audio.file);
+    const durationSeconds = parsed.audio.durationSeconds;
+    const scriptFile = asOptionalString(parsed.audio.scriptFile);
+
+    if (file && typeof durationSeconds === "number" && Number.isFinite(durationSeconds) && scriptFile) {
+      normalized.audio = { file, durationSeconds, scriptFile };
+    }
+  }
+
+  if (parsed.audioState === "not-requested" || parsed.audioState === "ready" || parsed.audioState === "failed") {
+    normalized.audioState = parsed.audioState;
+  }
+
+  const audioFailureReason = asOptionalString(parsed.audioFailureReason);
+  if (audioFailureReason) {
+    normalized.audioFailureReason = audioFailureReason;
+  }
+
+  if (isRecord(parsed.visual)) {
+    const visualFile = asOptionalString(parsed.visual.file);
+    if (visualFile) {
+      normalized.visual = { file: visualFile };
+    }
+  }
+
+  return normalized;
+}
+
+function normalizeComment(raw: unknown, index: number): ReviewComment {
+  if (!isRecord(raw)) {
+    throw new Error(`Invalid comment at index ${index}: expected object`);
+  }
+
+  const id = asRequiredString(raw.id, `comments[${index}].id`);
+  const sectionId = asRequiredString(raw.sectionId, `comments[${index}].sectionId`);
+  const type = asCommentType(raw.type, `comments[${index}].type`);
+  const priority = asCommentPriority(raw.priority, `comments[${index}].priority`);
+  const text = asRequiredString(raw.text, `comments[${index}].text`);
+  const createdAt = asRequiredString(raw.createdAt, `comments[${index}].createdAt`);
+
+  const normalized: ReviewComment = {
+    id,
+    sectionId,
+    type,
+    priority,
+    text,
+    createdAt,
+  };
+
+  if (typeof raw.audioTimestamp === "number" && Number.isFinite(raw.audioTimestamp)) {
+    normalized.audioTimestamp = raw.audioTimestamp;
+  }
+
+  if (raw.status === "open" || raw.status === "resolved") {
+    normalized.status = raw.status;
+  }
+
+  if (typeof raw.updatedAt === "string" && raw.updatedAt.trim().length > 0) {
+    normalized.updatedAt = raw.updatedAt;
+  }
+
+  const anchor = normalizeCommentAnchor(raw.anchor, sectionId);
+  if (anchor) {
+    normalized.anchor = anchor;
+  }
+
+  return normalized;
+}
+
+function normalizeCommentAnchor(raw: unknown, fallbackSectionId: string): ReviewCommentAnchor | undefined {
+  if (!isRecord(raw)) {
+    return undefined;
+  }
+
+  if (raw.version !== 2 || raw.anchorAlgoVersion !== "v2-section-text") {
+    return undefined;
+  }
+
+  if (typeof raw.quote !== "string") {
+    return undefined;
+  }
+
+  const quote = raw.quote.trim();
+  if (!quote) {
+    return undefined;
+  }
+
+  const sectionId = fallbackSectionId;
+
+  const startOffset = normalizeOffset(raw.startOffset);
+  const endOffset = normalizeOffset(raw.endOffset);
+  if (startOffset != null && endOffset != null && endOffset < startOffset) {
+    return undefined;
+  }
+
+  const anchor: ReviewCommentAnchor = {
+    version: 2,
+    sectionId,
+    quote,
+    anchorAlgoVersion: "v2-section-text",
+  };
+
+  const prefix = normalizeBoundedString(raw.prefix, 80);
+  if (prefix) anchor.prefix = prefix;
+
+  const suffix = normalizeBoundedString(raw.suffix, 80);
+  if (suffix) anchor.suffix = suffix;
+
+  if (startOffset != null) anchor.startOffset = startOffset;
+  if (endOffset != null) anchor.endOffset = endOffset;
+
+  if (typeof raw.sectionHashAtCapture === "string" && raw.sectionHashAtCapture.trim().length > 0) {
+    const sectionHashAtCapture = raw.sectionHashAtCapture.trim();
+    if (/^[a-f0-9]{64}$/i.test(sectionHashAtCapture)) {
+      anchor.sectionHashAtCapture = sectionHashAtCapture;
+    }
+  }
+
+  return anchor;
+}
+
+function normalizeOffset(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  const normalized = Math.trunc(value);
+  if (normalized < 0) {
+    return undefined;
+  }
+
+  return normalized;
+}
+
+function normalizeBoundedString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength).trimEnd()}…` : normalized;
+}
+
+function asRequiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`Invalid manifest format: ${field} must be a non-empty string`);
+  }
+  return value;
+}
+
+function asCommentType(value: unknown, field: string): ReviewComment["type"] {
+  if (value === "change" || value === "question" || value === "approval" || value === "concern") {
+    return value;
+  }
+  throw new Error(`Invalid manifest format: ${field} has unsupported type`);
+}
+
+function asCommentPriority(value: unknown, field: string): ReviewComment["priority"] {
+  if (value === "high" || value === "medium" || value === "low") {
+    return value;
+  }
+  throw new Error(`Invalid manifest format: ${field} has unsupported priority`);
+}
+
+function asReviewType(value: unknown, field: string): ReviewManifest["reviewType"] {
+  if (value === "prd" || value === "design") {
+    return value;
+  }
+  throw new Error(`Invalid manifest format: ${field} has unsupported review type`);
+}
+
+function asLanguage(value: unknown, field: string): ReviewManifest["language"] {
+  if (value === "en" || value === "es") {
+    return value;
+  }
+  throw new Error(`Invalid manifest format: ${field} has unsupported language`);
+}
+
+function asManifestStatus(value: unknown, field: string): ReviewManifest["status"] {
+  if (
+    value === "generating" ||
+    value === "ready" ||
+    value === "in-progress" ||
+    value === "reviewed" ||
+    value === "applied"
+  ) {
+    return value;
+  }
+  throw new Error(`Invalid manifest format: ${field} has unsupported status`);
+}
+
+function normalizeNullableString(value: unknown): string | null {
+  if (value == null) {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error("Invalid manifest format: completedAt must be a string or null");
+  }
+
+  return value;
+}
+
+function asOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 /**

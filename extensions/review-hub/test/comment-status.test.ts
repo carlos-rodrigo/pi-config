@@ -190,6 +190,7 @@ async function startServerWithManifest(manifest: ReviewManifest): Promise<Runnin
 function createManifestFixture(overrides: Partial<ReviewManifest> = {}): ReviewManifest {
   return {
     id: "review-001",
+    schemaVersion: 2,
     source: "",
     sourceHash: "fixture-hash",
     reviewType: "prd",

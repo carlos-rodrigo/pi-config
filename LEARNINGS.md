@@ -48,3 +48,10 @@
 **Context:** Task 012 finalized accessibility and migration safety checks.
 **Learning:** A versioned parity checklist in `.features/<feature>/` keeps release verification reproducible and prevents UI regressions from relying on tribal/manual memory.
 **Applies to:** Any feature migration that changes UI stack or interaction model.
+
+## Review Hub Rebuild: Centralize schema migration in manifest loader
+
+**Date:** 2026-02-27
+**Context:** Task 001 introduced manifest schema v2 and comment anchor compatibility.
+**Learning:** Put version interpretation and normalization in `loadManifest()` so all callers get the same runtime shape; fail fast on unknown schema versions but degrade corrupt per-comment anchors non-fatally.
+**Applies to:** Any local-file schema evolution where multiple subsystems read the same JSON contract.

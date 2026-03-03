@@ -1,0 +1,30 @@
+# Loop Progress Log
+
+Started: 2026-02-27
+Feature: review-hub-rebuild
+
+## Codebase Patterns
+
+- `loadManifest()` should be the single normalization gate for schema evolution: interpret missing `schemaVersion` as v1, normalize comments, and always return v2 runtime shape.
+- Degrade corrupt per-comment anchors non-fatally (drop `anchor`, keep comment), but fail fast on unsupported top-level schema versions.
+
+---
+
+## 2026-02-27 - Manifest v2 schema + normalization
+
+Task ID: 001
+
+- Added manifest schema version constant and v2 schema field on `ReviewManifest`.
+- Added v2 anchor type on `ReviewComment` (`ReviewCommentAnchor`).
+- Implemented manifest normalization in `loadManifest()`:
+  - missing schemaVersion => treated as v1 and normalized to v2
+  - unsupported schema versions => explicit error
+  - per-comment anchor normalization and non-fatal corrupt-anchor degradation
+- Added regression tests in `test/manifest-schema.test.ts` for v1 normalization, unknown version rejection, and corrupt-anchor handling.
+- Updated manifest fixtures in existing tests to include `schemaVersion: 2`.
+
+**Learnings for future iterations:**
+- Centralizing schema migration in `loadManifest()` avoids scattering compatibility logic across server/frontend.
+- Keep core comment validation strict while keeping anchor parsing tolerant; this gives safe forward progress without dropping entire reviews.
+
+---
