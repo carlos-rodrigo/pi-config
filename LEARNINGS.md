@@ -20,3 +20,10 @@
 **Context:** Task 008 added next-unresolved navigation plus a keyboard shortcut.
 **Learning:** Put event-gating rules in a pure helper (`shouldHandleNextUnresolvedShortcut`) so shortcuts are testable without browser harnesses and easier to reason about.
 **Applies to:** Any feature with global keyboard shortcuts in the React frontend.
+
+## Review Hub: Split audio UX into pure mapping + runtime hook
+
+**Date:** 2026-03-02
+**Context:** Task 009 introduced sticky narration playback with section sync.
+**Learning:** Keep state derivation in pure helpers (`resolveAudioUxState`, `findSectionAtTime`) and keep media side effects in a dedicated hook (`useAudioSync`) for easier testing and simpler UI components.
+**Applies to:** Media/timeline features that combine server metadata with browser playback state.

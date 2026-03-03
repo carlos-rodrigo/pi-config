@@ -14,6 +14,7 @@ Feature: review-hub-ui-refresh
 - Comment rail is composed from `components/comments/*` (filters, composer, list) so behavior updates can be isolated without rewriting shell layout.
 - `/comments` is an upsert endpoint: server owns `createdAt`/`updatedAt` and normalizes missing status to `open`; status toggles should send full comment payload + desired `status`.
 - Keep unresolved workflow logic in pure utilities (`web-app/src/lib/unresolved-navigation.ts`, `web-app/src/lib/unresolved-shortcut.ts`) and let hooks/components compose them for easier testing.
+- Audio UX should be split into pure helpers (`web-app/src/lib/audio-player.ts`) plus a runtime hook (`hooks/useAudioSync.ts`) so state messaging and timestamp mapping stay testable.
 
 ---
 
@@ -134,5 +135,20 @@ Task ID: 008
 - **Learnings for future iterations:**
   - Extracting keyboard and queue logic into pure utilities keeps React components lean and makes behavior verifiable without browser test harnesses.
   - Unknown section IDs should sort after known sections to keep next-unresolved traversal predictable.
+
+---
+
+## 2026-03-02 - Build sticky bottom narration player with sync controls and audio-state UX
+
+Task ID: 009
+
+- Added sticky bottom narration player with play/pause, skip, speed cycling, and sync toggle controls.
+- Added `useAudioSync` hook to manage audio playback state, section timestamp tracking, and optional section auto-sync.
+- Added audio UX helpers (`resolveAudioUxState`, `formatAudioTime`, `findSectionAtTime`) and integrated generating/ready/failed/not-requested messaging.
+- Added automated tests for audio state resolution and timestamp mapping.
+
+- **Learnings for future iterations:**
+  - Keep sticky media controls outside the main document grid and add page bottom padding to prevent overlap.
+  - Split audio behavior into pure helpers + hook to keep UI components declarative and test-friendly.
 
 ---

@@ -17,6 +17,7 @@ import type { ReviewComment, SaveCommentInput } from "@/lib/api";
 import { useReviewBootstrap } from "@/hooks/use-review-bootstrap";
 import { useSessionToken } from "@/hooks/use-session-token";
 import { useUnresolvedNavigation } from "@/hooks/use-unresolved-navigation";
+import { NarrationPlayerBar } from "@/components/audio";
 import { CommentRail, type CommentFormState } from "@/components/layout/comment-rail";
 import { TocRail } from "@/components/layout/toc-rail";
 import { VisualContentHost, type VisualContentHostHandle } from "@/components/visual/visual-content-host";
@@ -204,7 +205,7 @@ export default function App() {
   }, [handleNextUnresolved, mode, unresolvedCount]);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-background pb-24 text-foreground">
       <header className="bg-background/95 sticky top-0 z-40 border-b backdrop-blur">
         <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between gap-3 px-4 py-3 lg:px-6">
           <div className="flex min-w-0 items-center gap-2">
@@ -376,6 +377,8 @@ export default function App() {
           <p className="text-sm text-red-600">{mutationError ?? error}</p>
         ) : null}
       </div>
+
+      <NarrationPlayerBar manifest={manifest} onSectionSync={handleTocSelect} />
     </div>
   );
 }

@@ -47,6 +47,11 @@ export interface ReviewManifest {
     scriptFile: string;
   };
 
+  /** High-level audio pipeline state for UX in the web app. */
+  audioState?: "not-requested" | "ready" | "failed";
+  /** Optional short failure reason when audio generation fails. */
+  audioFailureReason?: string;
+
   /** Visual metadata */
   visual?: {
     /** Embedded in web app — no separate file */
