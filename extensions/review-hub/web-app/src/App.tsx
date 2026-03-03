@@ -216,16 +216,16 @@ export default function App() {
 
   // ── Render ────────────────────────────────────────────────────────────
 
-  const tocRailContent = (
+  const tocRailContent = useMemo(() => (
     <TocRail
       sections={manifest.sections}
       activeSectionId={activeSectionId}
       unresolvedCountsBySection={unresolvedCountsBySection}
       onSelect={handleTocSelect}
     />
-  );
+  ), [manifest?.sections, activeSectionId, unresolvedCountsBySection, handleTocSelect]);
 
-  const commentRailContent = (
+  const commentRailContent = useMemo(() => (
     <CommentRail
       comments={comments}
       sections={sectionOptions}
@@ -242,7 +242,8 @@ export default function App() {
       onToggleStatus={handleToggleStatus}
       onJumpToSection={handleTocSelect}
     />
-  );
+  ), [comments, sectionOptions, formState, canSubmit, isSaving, unresolvedCount,
+      handleNextUnresolved, handleTocSelect]);
 
   return (
     <ReviewShell
