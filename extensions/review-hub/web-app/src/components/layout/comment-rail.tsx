@@ -26,10 +26,12 @@ export function CommentRail({
   canSubmit,
   isSaving,
   unresolvedCount,
+  anchorQuote,
   onNextUnresolved,
   onSubmit,
   onFieldChange,
   onReset,
+  onClearAnchor,
   onEdit,
   onDelete,
   onToggleStatus,
@@ -41,10 +43,12 @@ export function CommentRail({
   canSubmit: boolean;
   isSaving: boolean;
   unresolvedCount: number;
+  anchorQuote?: string | null;
   onNextUnresolved: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onFieldChange: <K extends keyof CommentFormState>(key: K, value: CommentFormState[K]) => void;
   onReset: () => void;
+  onClearAnchor?: () => void;
   onEdit: (comment: ReviewComment) => void;
   onDelete: (commentId: string) => void;
   onToggleStatus: (comment: ReviewComment) => void;
@@ -93,9 +97,11 @@ export function CommentRail({
           formState={formState}
           canSubmit={canSubmit}
           isSaving={isSaving}
+          anchorQuote={anchorQuote}
           onSubmit={onSubmit}
           onFieldChange={onFieldChange}
           onReset={onReset}
+          onClearAnchor={onClearAnchor}
         />
       </div>
 

@@ -294,17 +294,19 @@ export default function App() {
       canSubmit={canSubmit}
       isSaving={isSaving}
       unresolvedCount={unresolvedCount}
+      anchorQuote={anchorDraft?.quote}
       onNextUnresolved={handleNextUnresolved}
       onSubmit={handleSubmit}
       onFieldChange={(key, value) => setFormState((prev) => ({ ...prev, [key]: value }))}
       onReset={() => { setFormState({ ...EMPTY_FORM, sectionId: formState.sectionId }); setAnchorDraft(null); }}
+      onClearAnchor={() => setAnchorDraft(null)}
       onEdit={(comment) => handleEdit(comment.id)}
       onDelete={handleDelete}
       onToggleStatus={handleToggleStatus}
       onJumpToSection={handleTocSelect}
     />
   ), [comments, sectionOptions, formState, canSubmit, isSaving, unresolvedCount,
-      handleNextUnresolved, handleTocSelect]);
+      anchorDraft, handleNextUnresolved, handleTocSelect]);
 
   return (
     <ReviewShell

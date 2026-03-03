@@ -83,6 +83,11 @@ export function CommentList({
                       </Button>
                     </div>
                   </div>
+                  {comment.anchor?.quote ? (
+                    <p className="rounded bg-yellow-50 px-2 py-1 text-xs italic text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300 line-clamp-2">
+                      &ldquo;{comment.anchor.quote}&rdquo;
+                    </p>
+                  ) : null}
                   <p className="text-sm leading-relaxed text-foreground/90">{comment.text}</p>
                   <button
                     type="button"

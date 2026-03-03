@@ -21,20 +21,48 @@ export function CommentComposer({
   formState,
   canSubmit,
   isSaving,
+  anchorQuote,
   onSubmit,
   onFieldChange,
   onReset,
+  onClearAnchor,
 }: {
   sections: SectionOption[];
   formState: CommentFormState;
   canSubmit: boolean;
   isSaving: boolean;
+  /** Quoted text from selection anchor (if any) */
+  anchorQuote?: string | null;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onFieldChange: <K extends keyof CommentFormState>(key: K, value: CommentFormState[K]) => void;
   onReset: () => void;
+  /** Clear the current anchor draft */
+  onClearAnchor?: () => void;
 }) {
   return (
     <form className="space-y-3" onSubmit={onSubmit}>
+      {anchorQuote ? (
+        <div className="rounded-lg border border-yellow-300 bg-yellow-50 px-3 py-2 dark:border-yellow-700 dark:bg-yellow-900/20">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium uppercase tracking-wide text-yellow-700 dark:text-yellow-300">
+              📌 Quoted text
+            </span>
+            {onClearAnchor ? (
+              <button
+                type="button"
+                className="text-xs text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-200"
+                onClick={onClearAnchor}
+              >
+                ✕ Clear
+              </button>
+            ) : null}
+          </div>
+          <p className="mt-1 text-sm italic text-yellow-800 dark:text-yellow-200 line-clamp-3">
+            &ldquo;{anchorQuote}&rdquo;
+          </p>
+        </div>
+      ) : null}
+
       <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Section</label>
       <select
         className="w-full rounded-lg border bg-background/70 px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
