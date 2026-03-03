@@ -7,7 +7,7 @@ Design: `.features/review-hub-rebuild/design.md`
 ## Progress
 
 - [x] 001 - Manifest v2 schema + normalization
-- [ ] 002 - Runtime bridge + server service skeleton
+- [x] 002 - Runtime bridge + server service skeleton
 - [ ] 003 - Canonical visual model endpoint (`/visual-model`)
 - [ ] 004 - Fresh React shell (Read/Review) foundation
 - [ ] 005 - Document viewport with `react-markdown`

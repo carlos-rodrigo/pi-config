@@ -7,6 +7,10 @@ Feature: review-hub-rebuild
 
 - `loadManifest()` should be the single normalization gate for schema evolution: interpret missing `schemaVersion` as v1, normalize comments, and always return v2 runtime shape.
 - Degrade corrupt per-comment anchors non-fatally (drop `anchor`, keep comment), but fail fast on unsupported top-level schema versions.
+- `createReviewServer(bridge?)` accepts an optional `ReviewRuntimeBridge` — defaults to `createNoOpBridge()` for backward compatibility.
+- Service classes use constructor injection with accessor functions (`getManifest`, `getReviewDir`) to avoid stale state.
+- `import type` is erased at runtime by tsx/esbuild — always include a value import when testing module existence.
+- Use `type X = A | B` not `interface X { } | { }` — esbuild doesn't support the latter syntax.
 
 ---
 
@@ -26,5 +30,23 @@ Task ID: 001
 **Learnings for future iterations:**
 - Centralizing schema migration in `loadManifest()` avoids scattering compatibility logic across server/frontend.
 - Keep core comment validation strict while keeping anchor parsing tolerant; this gives safe forward progress without dropping entire reviews.
+
+---
+
+## 2026-02-27 - Runtime bridge + server service skeleton
+
+Task ID: 002
+
+- Defined `ReviewRuntimeBridge` interface in `lib/runtime-bridge.ts` with `handoffFeedbackToPi`, `copyToClipboard`, `requestAudioRegeneration` methods.
+- Added `createNoOpBridge()` factory for tests/fallback.
+- Updated `createReviewServer(bridge?)` to accept optional bridge and expose it on `server.bridge`.
+- Created service layer scaffolds: `CommentService`, `ExportService`, `FinishService`, `AudioActionService` in `lib/services/`.
+- Wired bridge implementation in `index.ts` using `pi.sendUserMessage`, `pbcopy`, and stub regen.
+- Added `finishMeta` field to `ReviewManifest` type + `loadManifest()` normalization.
+- 42 tests all passing, typecheck clean.
+
+**Learnings for future iterations:**
+- Services with accessor injection (`getManifest()`, `getReviewDir()`) are easily testable without full server setup.
+- Keep bridge callbacks thin — they just delegate to pi/OS; all logic stays in services.
 
 ---
