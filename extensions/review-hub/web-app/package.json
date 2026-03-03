@@ -21,15 +21,17 @@
     "lucide-react": "*",
     "react": "*",
     "react-dom": "*",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "*",
     "tw-animate-css": "*"
   },
   "devDependencies": {
     "@tailwindcss/vite": "*",
     "@types/node": "*",
-    "@vitejs/plugin-react": "*",
     "@types/react": "*",
     "@types/react-dom": "*",
+    "@vitejs/plugin-react": "*",
     "typescript": "*",
     "vite": "*"
   }

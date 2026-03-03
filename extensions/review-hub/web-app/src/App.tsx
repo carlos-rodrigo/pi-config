@@ -6,20 +6,18 @@
  */
 
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { fadeVariants, motionTransition } from "@/lib/motion";
 import { shouldHandleNextUnresolvedShortcut } from "@/lib/unresolved-shortcut";
 import type { ReviewComment, SaveCommentInput } from "@/lib/api";
 import { useReviewBootstrap } from "@/hooks/use-review-bootstrap";
 import { useSessionToken } from "@/hooks/use-session-token";
+import { useVisualModel } from "@/hooks/use-visual-model";
 import { useUnresolvedNavigation } from "@/hooks/use-unresolved-navigation";
 import { NarrationPlayerBar } from "@/components/audio";
 import { CommentRail, type CommentFormState } from "@/components/layout/comment-rail";
 import { TocRail } from "@/components/layout/toc-rail";
-import { VisualContentHost, type VisualContentHostHandle } from "@/components/visual/visual-content-host";
+import { DocumentViewport, type DocumentViewportHandle } from "@/components/document";
 import { ReviewShell, type ReviewMode } from "@/components/shell";
 
 const EMPTY_FORM: CommentFormState = {
@@ -48,8 +46,9 @@ export default function App() {
   const [formState, setFormState] = useState<CommentFormState>(EMPTY_FORM);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const visualHostRef = useRef<VisualContentHostHandle | null>(null);
-  const prefersReducedMotion = useReducedMotion();
+  const viewportRef = useRef<DocumentViewportHandle | null>(null);
+
+  const { sections: visualSections, isLoading: visualLoading, error: visualError } = useVisualModel(token);
 
   const sectionOptions = manifest?.sections ?? [];
   const { unresolvedCount, unresolvedCountsBySection, goToNextUnresolved } =
@@ -160,7 +159,7 @@ export default function App() {
 
   const handleTocSelect = useCallback((sectionId: string) => {
     setActiveSectionId(sectionId);
-    visualHostRef.current?.scrollToSection(sectionId);
+    viewportRef.current?.scrollToSection(sectionId);
   }, []);
 
   const handleSectionCommentRequest = useCallback((sectionId: string) => {
@@ -277,37 +276,35 @@ export default function App() {
       {/* Main content area */}
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Visual review content
+          Document
         </h2>
         <Badge variant="outline" className="rounded-full px-2.5">
-          {manifest.sections.length} sections
+          {visualSections.length} sections
         </Badge>
       </div>
 
-      <VisualContentHost
-        ref={visualHostRef}
-        className={cn("rounded-xl bg-background/35", mode === "read" ? "px-1" : "")}
-        activeSectionId={activeSectionId}
-        showEmbeddedProgressNav={mode === "read"}
-        onActiveSectionChange={setActiveSectionId}
-        onSectionCommentRequest={handleSectionCommentRequest}
-      />
+      {visualLoading ? (
+        <p className="py-8 text-center text-sm text-muted-foreground">
+          Loading document…
+        </p>
+      ) : visualError ? (
+        <p className="py-8 text-center text-sm text-red-600">{visualError}</p>
+      ) : (
+        <DocumentViewport
+          ref={viewportRef}
+          sections={visualSections}
+          className={cn("rounded-xl bg-background/35", mode === "read" ? "px-1" : "")}
+          activeSectionId={activeSectionId}
+          onActiveSectionChange={setActiveSectionId}
+          onSectionCommentRequest={handleSectionCommentRequest}
+        />
+      )}
 
-      <AnimatePresence initial={false}>
-        {activeSection ? (
-          <motion.p
-            key={activeSection.id}
-            className="mt-4 text-xs text-muted-foreground"
-            variants={fadeVariants(Boolean(prefersReducedMotion))}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            transition={motionTransition(Boolean(prefersReducedMotion), 0.16)}
-          >
-            Active section: {activeSection.id}
-          </motion.p>
-        ) : null}
-      </AnimatePresence>
+      {activeSection ? (
+        <p className="mt-4 text-xs text-muted-foreground">
+          Active section: {activeSection.id}
+        </p>
+      ) : null}
     </ReviewShell>
   );
 }

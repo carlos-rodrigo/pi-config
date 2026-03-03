@@ -24,3 +24,16 @@ export interface CompleteReviewResponse {
   completedAt: string;
   commentCount: number;
 }
+
+/** A renderable section from the canonical /visual-model endpoint. */
+export interface RenderSection {
+  sectionId: string;
+  headingPath: string[];
+  headingLevel: number;
+  markdown: string;
+  sourceTextHash: string;
+}
+
+export interface VisualModelResponse {
+  sections: RenderSection[];
+}

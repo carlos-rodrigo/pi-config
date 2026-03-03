@@ -1,4 +1,4 @@
-import type { CompleteReviewResponse, ReviewManifest, SaveCommentInput, ReviewComment } from "@/lib/api/types";
+import type { CompleteReviewResponse, ReviewManifest, SaveCommentInput, ReviewComment, VisualModelResponse } from "@/lib/api/types";
 
 const DEFAULT_RETRIES = 1;
 const DEFAULT_RETRY_DELAY_MS = 600;
@@ -51,6 +51,10 @@ export class ReviewApiClient {
     return this.request<CompleteReviewResponse>("/complete", {
       method: "POST",
     });
+  }
+
+  async fetchVisualModel(): Promise<VisualModelResponse> {
+    return this.request<VisualModelResponse>("/visual-model");
   }
 
   private async request<T>(input: string, init: RequestInit = {}): Promise<T> {
