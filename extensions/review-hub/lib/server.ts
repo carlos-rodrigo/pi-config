@@ -699,10 +699,10 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
       return;
     }
 
-    let options: { scope?: "open" | "all" } = {};
+    let parsed: unknown = {};
     try {
       if (body.trim()) {
-        options = JSON.parse(body);
+        parsed = JSON.parse(body);
       }
     } catch {
       res.writeHead(400, { "Content-Type": "application/json" });
@@ -710,8 +710,24 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
       return;
     }
 
+    // Validate body shape
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Request body must be an object" }));
+      return;
+    }
+
+    const scopeValue = (parsed as Record<string, unknown>).scope;
+    if (scopeValue != null && scopeValue !== "open" && scopeValue !== "all") {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: 'Invalid scope. Must be "open" or "all"' }));
+      return;
+    }
+
     const exportService = new ExportService();
-    const result = exportService.export(state.manifest, { scope: options.scope });
+    const result = exportService.export(state.manifest, {
+      scope: (scopeValue as "open" | "all") ?? undefined,
+    });
 
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result));
