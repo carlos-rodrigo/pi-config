@@ -219,6 +219,9 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
   // Visual cache: HTML + CSS generated from source markdown
   let visualCache: { html: string; css: string; sourceHash: string } | null = null;
 
+  // Visual model cache: canonical section payloads
+  let visualModelCache: { sections: import("./visual-model.js").RenderSection[]; sourceHash: string } | null = null;
+
   // Resolve extension directories (relative to this file)
   const extensionDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const webDir = path.join(extensionDir, "web");
@@ -379,9 +382,17 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
         return;
       }
       try {
+        // Use cache if source hasn't changed
+        if (visualModelCache && visualModelCache.sourceHash === state.manifest.sourceHash) {
+          res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ sections: visualModelCache.sections }));
+          return;
+        }
+
         const sourcePath = path.resolve(state.manifest.source);
         const sourceContent = fs.readFileSync(sourcePath, "utf-8");
         const sections = buildVisualModel(state.manifest, sourceContent);
+        visualModelCache = { sections, sourceHash: state.manifest.sourceHash };
         res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ sections }));
       } catch (err) {
