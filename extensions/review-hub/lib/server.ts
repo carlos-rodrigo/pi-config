@@ -254,6 +254,11 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Session-Token");
 
+      // Security headers
+      res.setHeader("Referrer-Policy", "no-referrer");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("X-Frame-Options", "DENY");
+
       if (req.method === "OPTIONS") {
         res.writeHead(204);
         res.end();
