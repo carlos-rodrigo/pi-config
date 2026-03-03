@@ -31,6 +31,8 @@ import {
   type ReviewServer,
 } from "./lib/server.js";
 
+import type { ReviewRuntimeBridge } from "./lib/runtime-bridge.js";
+
 import {
   generateScript,
   saveScript,
@@ -504,7 +506,28 @@ export default function (pi: ExtensionAPI) {
       await server.stop();
     }
 
-    server = createReviewServer();
+    const bridge: ReviewRuntimeBridge = {
+      async handoffFeedbackToPi(markdown: string) {
+        pi.sendUserMessage(markdown);
+      },
+      async copyToClipboard(markdown: string) {
+        try {
+          // macOS clipboard via pbcopy
+          const { execSync } = await import("node:child_process");
+          execSync("pbcopy", { input: markdown, encoding: "utf-8" });
+          return { copied: true };
+        } catch (err) {
+          return { copied: false, warning: (err as Error).message };
+        }
+      },
+      async requestAudioRegeneration(reviewId: string, options?: { fastAudio?: boolean }) {
+        // Delegate to the existing generation pipeline — stub for now.
+        // Full implementation in task 011.
+        log(`Audio regeneration requested for ${reviewId} (fastAudio: ${options?.fastAudio ?? false})`);
+      },
+    };
+
+    server = createReviewServer(bridge);
     const { url } = await server.start(manifest, reviewDir);
 
     // Open browser (macOS)

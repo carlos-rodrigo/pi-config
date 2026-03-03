@@ -60,6 +60,13 @@ export interface ReviewManifest {
     /** Embedded in web app — no separate file */
     file: string;
   };
+
+  /** Finish flow metadata for idempotency and restart-safe dedupe. */
+  finishMeta?: {
+    lastFinishIdempotencyKey?: string;
+    lastExportHash?: string;
+    lastFinishedAt?: string;
+  };
 }
 
 /** A parsed section from the source markdown document. */
@@ -437,6 +444,19 @@ export async function loadManifest(manifestPath: string): Promise<ReviewManifest
     const visualFile = asOptionalString(parsed.visual.file);
     if (visualFile) {
       normalized.visual = { file: visualFile };
+    }
+  }
+
+  if (isRecord(parsed.finishMeta)) {
+    const lastFinishIdempotencyKey = asOptionalString(parsed.finishMeta.lastFinishIdempotencyKey);
+    const lastExportHash = asOptionalString(parsed.finishMeta.lastExportHash);
+    const lastFinishedAt = asOptionalString(parsed.finishMeta.lastFinishedAt);
+
+    if (lastFinishIdempotencyKey || lastExportHash || lastFinishedAt) {
+      normalized.finishMeta = {};
+      if (lastFinishIdempotencyKey) normalized.finishMeta.lastFinishIdempotencyKey = lastFinishIdempotencyKey;
+      if (lastExportHash) normalized.finishMeta.lastExportHash = lastExportHash;
+      if (lastFinishedAt) normalized.finishMeta.lastFinishedAt = lastFinishedAt;
     }
   }
 
