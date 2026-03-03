@@ -27,6 +27,9 @@ Feature: review-hub-rebuild
 - `highlightsBySectionId` groups `HighlightEntry[]` by sectionId for efficient per-section rendering.
 - CommentComposer accepts `anchorQuote` + `onClearAnchor` for anchor preview. CommentList shows anchor quotes inline.
 - The existing comment workflow (CRUD, filters, unresolved nav) was already functional — task 008 added anchor awareness on top.
+- `ExportService.export(manifest, { scope })` returns `{ markdown, exportHash, stats }`. Deterministic, sorted by document order.
+- `POST /export-feedback` validates body shape + scope enum before calling ExportService.
+- Export format: `- [type][priority] section: id\n  quote/[no anchor]\n  action: text` — concise for token economy.
 
 ---
 
@@ -174,5 +177,31 @@ Task ID: 008
 **Learnings for future iterations:**
 - When existing workflow already works, "rebuild" means enhance, not rewrite.
 - Anchor quote preview is purely presentational — no new test-worthy behavior.
+
+---
+
+## 2026-02-27 - Comment rail workflow (CRUD, filters, unresolved nav)
+
+Task ID: 008
+
+- Enhanced CommentComposer with anchor quote preview (yellow card + clear button).
+- Enhanced CommentList with inline anchor quote display for anchored comments.
+- All existing CRUD, filters, unresolved navigation preserved unchanged.
+
+---
+
+## 2026-02-27 - Compact export endpoint (`/export-feedback`) with hash
+
+Task ID: 009
+
+- ExportService already implemented in task 002 scaffold — just needed endpoint wiring + tests.
+- Added `POST /export-feedback` handler with body shape + scope enum validation.
+- Added `/export-feedback` to reserved API paths.
+- 10 new tests (9 unit + 1 endpoint integration).
+- Files: `test/export-feedback.test.ts`, `lib/server.ts`.
+
+**Learnings for future iterations:**
+- Validate body shape + enum on all POST endpoints, not just required fields.
+- When scaffold already has the logic, the task becomes mostly wiring + testing.
 
 ---

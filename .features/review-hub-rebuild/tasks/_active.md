@@ -14,7 +14,7 @@ Design: `.features/review-hub-rebuild/design.md`
 - [x] 006 - Text selection capture + anchor payload
 - [x] 007 - Re-anchor highlights + degraded fallback UX
 - [x] 008 - Comment rail workflow (CRUD, filters, unresolved nav)
-- [ ] 009 - Compact export endpoint (`/export-feedback`) with hash
+- [x] 009 - Compact export endpoint (`/export-feedback`) with hash
 - [ ] 010 - Finish flow UX (copy/close/auto-paste + fallback)
 - [ ] 011 - Audio status + regenerate flow integration
 - [ ] 012 - Security hardening + migration/regression tests
