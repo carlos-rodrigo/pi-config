@@ -18,6 +18,7 @@ import type { ReviewManifest, ReviewComment } from "./manifest.js";
 import { saveManifest, loadManifest } from "./manifest.js";
 import { generateVisual, generateVisualStyles } from "./visual-generator.js";
 import { type ReviewRuntimeBridge, createNoOpBridge } from "./runtime-bridge.js";
+import { buildVisualModel } from "./visual-model.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -191,6 +192,7 @@ function isReservedApiPath(pathname: string): boolean {
     pathname === "/source" ||
     pathname === "/visual" ||
     pathname === "/visual-styles" ||
+    pathname === "/visual-model" ||
     pathname === "/complete" ||
     pathname.startsWith("/comments")
   );
@@ -366,6 +368,32 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
       const visual = getVisualHtml(state.manifest);
       res.writeHead(200, { "Content-Type": "text/css; charset=utf-8" });
       res.end(visual.css);
+      return;
+    }
+
+    // Visual model — canonical section render payload for the frontend
+    if (pathname === "/visual-model") {
+      if (!state) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Server not ready" }));
+        return;
+      }
+      try {
+        const sourcePath = path.resolve(state.manifest.source);
+        const sourceContent = fs.readFileSync(sourcePath, "utf-8");
+        const sections = buildVisualModel(state.manifest, sourceContent);
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ sections }));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        if (message.includes("ENOENT") || message.includes("not found")) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `Source file not found: ${state.manifest.source}` }));
+        } else {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Failed to build visual model" }));
+        }
+      }
       return;
     }
 
