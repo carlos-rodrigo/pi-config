@@ -9,7 +9,7 @@ Design: `.features/review-hub-rebuild/design.md`
 - [x] 001 - Manifest v2 schema + normalization
 - [x] 002 - Runtime bridge + server service skeleton
 - [x] 003 - Canonical visual model endpoint (`/visual-model`)
-- [ ] 004 - Fresh React shell (Read/Review) foundation
+- [x] 004 - Fresh React shell (Read/Review) foundation
 - [ ] 005 - Document viewport with `react-markdown`
 - [ ] 006 - Text selection capture + anchor payload
 - [ ] 007 - Re-anchor highlights + degraded fallback UX
