@@ -1,4 +1,13 @@
-import type { CompleteReviewResponse, ReviewManifest, SaveCommentInput, ReviewComment, VisualModelResponse } from "@/lib/api/types";
+import type {
+  CompleteReviewResponse,
+  ExportFeedbackResponse,
+  FinishRequest,
+  FinishResponse,
+  ReviewComment,
+  ReviewManifest,
+  SaveCommentInput,
+  VisualModelResponse,
+} from "@/lib/api/types";
 
 const DEFAULT_RETRIES = 1;
 const DEFAULT_RETRY_DELAY_MS = 600;
@@ -55,6 +64,27 @@ export class ReviewApiClient {
 
   async fetchVisualModel(): Promise<VisualModelResponse> {
     return this.request<VisualModelResponse>("/visual-model");
+  }
+
+  async exportFeedback(scope?: "open" | "all"): Promise<ExportFeedbackResponse> {
+    return this.request<ExportFeedbackResponse>("/export-feedback", {
+      method: "POST",
+      body: JSON.stringify(scope ? { scope } : {}),
+    });
+  }
+
+  async finish(request: FinishRequest): Promise<FinishResponse> {
+    return this.request<FinishResponse>("/finish", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  async clipboardCopy(markdown: string): Promise<{ copied: boolean; warning?: string }> {
+    return this.request<{ copied: boolean; warning?: string }>("/clipboard/copy", {
+      method: "POST",
+      body: JSON.stringify({ markdown }),
+    });
   }
 
   private async request<T>(input: string, init: RequestInit = {}): Promise<T> {

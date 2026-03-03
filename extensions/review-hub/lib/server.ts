@@ -18,6 +18,7 @@ import type { ReviewManifest, ReviewComment } from "./manifest.js";
 import { saveManifest, loadManifest } from "./manifest.js";
 import { generateVisual, generateVisualStyles } from "./visual-generator.js";
 import { ExportService } from "./services/export-service.js";
+import { FinishService, type FinishRequest } from "./services/finish-service.js";
 import { type ReviewRuntimeBridge, createNoOpBridge } from "./runtime-bridge.js";
 import { buildVisualModel } from "./visual-model.js";
 
@@ -196,6 +197,8 @@ function isReservedApiPath(pathname: string): boolean {
     pathname === "/visual-model" ||
     pathname === "/complete" ||
     pathname === "/export-feedback" ||
+    pathname === "/finish" ||
+    pathname === "/clipboard/copy" ||
     pathname.startsWith("/comments")
   );
 }
@@ -574,6 +577,10 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
           await handleUpsertComment(body, res, reviewDir);
         } else if (req.method === "POST" && pathname === "/export-feedback") {
           handleExportFeedback(body, res);
+        } else if (req.method === "POST" && pathname === "/finish") {
+          await handleFinish(body, res, reviewDir);
+        } else if (req.method === "POST" && pathname === "/clipboard/copy") {
+          await handleClipboardCopy(body, res);
         } else if (req.method === "POST" && pathname === "/complete") {
           await handleComplete(res, reviewDir);
         } else if (req.method === "DELETE" && pathname.startsWith("/comments/")) {
@@ -731,6 +738,109 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
 
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result));
+  }
+
+  async function handleFinish(
+    body: string,
+    res: http.ServerResponse,
+    reviewDir: string,
+  ): Promise<void> {
+    if (!state) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Server not ready" }));
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid JSON" }));
+      return;
+    }
+
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Request body must be an object" }));
+      return;
+    }
+
+    const p = parsed as Record<string, unknown>;
+    if (typeof p.idempotencyKey !== "string" || !p.idempotencyKey) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Missing required field: idempotencyKey" }));
+      return;
+    }
+    if (typeof p.exportHash !== "string" || !p.exportHash) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Missing required field: exportHash" }));
+      return;
+    }
+    const validClipboardModes = ["browser", "backend-fallback"];
+    if (!validClipboardModes.includes(p.clipboardMode as string)) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: 'clipboardMode must be "browser" or "backend-fallback"' }));
+      return;
+    }
+
+    const request: FinishRequest = {
+      idempotencyKey: p.idempotencyKey as string,
+      exportHash: p.exportHash as string,
+      clipboardMode: p.clipboardMode as "browser" | "backend-fallback",
+    };
+
+    const exportService = new ExportService();
+    const finishService = new FinishService(resolvedBridge, exportService);
+    const result = await finishService.finish(state.manifest, reviewDir, request);
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result));
+  }
+
+  async function handleClipboardCopy(
+    body: string,
+    res: http.ServerResponse,
+  ): Promise<void> {
+    if (!state) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Server not ready" }));
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid JSON" }));
+      return;
+    }
+
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Request body must be an object" }));
+      return;
+    }
+
+    const p = parsed as Record<string, unknown>;
+    if (typeof p.markdown !== "string" || !p.markdown) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Missing required field: markdown" }));
+      return;
+    }
+
+    try {
+      const result = await resolvedBridge.copyToClipboard(p.markdown as string);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        copied: false,
+        warning: `Backend clipboard failed: ${(err as Error).message}`,
+      }));
+    }
   }
 
   async function handleComplete(

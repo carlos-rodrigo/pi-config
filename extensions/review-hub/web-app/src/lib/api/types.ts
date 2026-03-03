@@ -38,3 +38,26 @@ export interface RenderSection {
 export interface VisualModelResponse {
   sections: RenderSection[];
 }
+
+export interface ExportFeedbackResponse {
+  markdown: string;
+  exportHash: string;
+  stats: {
+    totalComments: number;
+    openComments: number;
+    resolvedComments: number;
+  };
+}
+
+export interface FinishRequest {
+  idempotencyKey: string;
+  exportHash: string;
+  clipboardMode: "browser" | "backend-fallback";
+}
+
+export interface FinishResponse {
+  success: boolean;
+  handedOff: boolean;
+  copiedByBackend?: boolean;
+  warning?: string;
+}

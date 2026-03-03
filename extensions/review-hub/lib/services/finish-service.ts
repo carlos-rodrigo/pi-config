@@ -44,6 +44,18 @@ export class FinishService {
     reviewDir: string,
     request: FinishRequest,
   ): Promise<FinishResult> {
+    // Idempotency check — return success for duplicate keys
+    if (
+      manifest.finishMeta?.lastFinishIdempotencyKey === request.idempotencyKey &&
+      manifest.finishMeta?.lastExportHash === request.exportHash
+    ) {
+      return {
+        success: true,
+        handedOff: true,
+        warning: "Idempotent replay — finish already completed with this key",
+      };
+    }
+
     // Recompute export and verify hash
     const exported = this.exportService.export(manifest);
     if (exported.exportHash !== request.exportHash) {
