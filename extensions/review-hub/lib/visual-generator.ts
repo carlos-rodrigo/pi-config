@@ -754,4 +754,131 @@ const VISUAL_CSS = `
 .visual-link:hover {
   border-bottom-color: var(--accent-light);
 }
+
+/* ── Narrative Stage Overrides (immersive scroll) ─────────────────────── */
+
+.visual-container {
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.progress-nav {
+  margin-top: 8px;
+  border-right: 1px solid rgba(111, 79, 31, 0.35);
+  border-radius: 12px;
+  height: calc(100vh - 170px);
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--bg-secondary) 88%, white), color-mix(in oklab, var(--bg-primary) 84%, white));
+  box-shadow: 0 10px 28px color-mix(in oklab, var(--foreground, #000) 10%, transparent);
+}
+
+.progress-nav-title {
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.03em;
+  color: var(--accent-light);
+  text-transform: none;
+}
+
+.progress-item {
+  margin: 3px 8px;
+  border-radius: 9px;
+  border-left-width: 0;
+}
+
+.progress-item:hover {
+  transform: translateX(3px);
+}
+
+.progress-item.active {
+  background: linear-gradient(90deg, rgba(221, 143, 47, 0.18), rgba(221, 143, 47, 0.06));
+  box-shadow: inset 0 0 0 1px rgba(221, 143, 47, 0.24);
+}
+
+.visual-content {
+  max-width: 920px;
+  padding: 8px 8px 40px;
+}
+
+.review-section {
+  margin-bottom: 24px;
+  padding: 22px 26px;
+  border: 1px solid color-mix(in oklab, var(--border-light) 75%, transparent);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--bg-secondary) 92%, white), color-mix(in oklab, var(--bg-primary) 96%, white));
+  box-shadow: 0 12px 30px color-mix(in oklab, var(--foreground, #000) 10%, transparent);
+}
+
+.review-section.visible {
+  transform: translateY(0) scale(1);
+}
+
+.review-section:hover {
+  border-color: color-mix(in oklab, var(--accent) 42%, transparent);
+  box-shadow: 0 16px 36px color-mix(in oklab, var(--foreground, #000) 16%, transparent);
+}
+
+.section-comment-btn {
+  top: 10px;
+  right: 10px;
+  opacity: 0.3;
+  background: color-mix(in oklab, var(--bg-primary) 82%, white);
+  border-color: color-mix(in oklab, var(--border-light) 78%, transparent);
+}
+
+.visual-heading-1 {
+  font-family: var(--font-display);
+  font-size: clamp(1.95rem, 2.8vw, 2.45rem);
+  margin-bottom: 18px;
+  letter-spacing: 0.01em;
+}
+
+.visual-heading-2 {
+  font-family: var(--font-display);
+  border-bottom-style: dashed;
+  border-bottom-color: rgba(111, 79, 31, 0.45);
+}
+
+.visual-heading-3 {
+  color: var(--accent);
+}
+
+.visual-paragraph {
+  font-size: 1.03rem;
+  line-height: 1.82;
+  color: var(--text-secondary);
+}
+
+.visual-code-block {
+  border-color: color-mix(in oklab, var(--border-light) 82%, transparent);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--bg-tertiary) 90%, white), color-mix(in oklab, var(--bg-secondary) 88%, white));
+}
+
+.visual-blockquote {
+  border-left-color: var(--accent);
+  background: linear-gradient(90deg, rgba(221, 143, 47, 0.12), rgba(23, 26, 39, 0.9));
+}
+
+@media (max-width: 980px) {
+  .visual-container {
+    display: block;
+  }
+
+  .progress-nav {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    max-height: 160px;
+    margin-bottom: 12px;
+  }
+
+  .visual-content {
+    padding: 0 2px 20px;
+  }
+
+  .review-section {
+    padding: 18px 16px;
+  }
+}
 `;

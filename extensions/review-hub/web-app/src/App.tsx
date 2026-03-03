@@ -76,27 +76,6 @@ export default function App() {
 
   const canSubmit = Boolean(formState.sectionId && formState.text.trim().length > 0);
 
-  if (tokenError) {
-    return <ErrorState title="Session token missing" message={tokenError} />;
-  }
-
-  if (isLoading) {
-    return (
-      <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center justify-center px-6 py-12">
-        <p className="text-muted-foreground text-sm">Loading review manifest…</p>
-      </main>
-    );
-  }
-
-  if (!manifest) {
-    return (
-      <ErrorState
-        title="Unable to load review"
-        message={error ?? "Review manifest is unavailable. Try re-opening the URL from pi."}
-      />
-    );
-  }
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSubmit) return;
@@ -180,6 +159,13 @@ export default function App() {
     visualHostRef.current?.scrollToSection(sectionId);
   }, []);
 
+  const handleSectionCommentRequest = useCallback((sectionId: string) => {
+    setMode("review");
+    setActiveSectionId(sectionId);
+    setFormState({ ...EMPTY_FORM, sectionId });
+    setMutationError(null);
+  }, []);
+
   const handleNextUnresolved = useCallback(() => {
     const nextComment = goToNextUnresolved();
     if (!nextComment) {
@@ -207,9 +193,30 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [handleNextUnresolved, mode, unresolvedCount]);
 
+  if (tokenError) {
+    return <ErrorState title="Session token missing" message={tokenError} />;
+  }
+
+  if (isLoading) {
+    return (
+      <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center justify-center px-6 py-12">
+        <p className="text-muted-foreground text-sm">Loading review manifest…</p>
+      </main>
+    );
+  }
+
+  if (!manifest) {
+    return (
+      <ErrorState
+        title="Unable to load review"
+        message={error ?? "Review manifest is unavailable. Try re-opening the URL from pi."}
+      />
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-background pb-24 text-foreground">
-      <header className="bg-background/95 sticky top-0 z-40 border-b backdrop-blur">
+    <div className="review-hub-shell min-h-screen bg-background pb-24 text-foreground">
+      <header className="sticky top-0 z-40 border-b border-border/70 bg-background/92 backdrop-blur-xl">
         <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between gap-3 px-4 py-3 lg:px-6">
           <div className="flex min-w-0 items-center gap-2">
             {mode === "review" ? (
@@ -271,13 +278,13 @@ export default function App() {
             ) : null}
 
             <div className="min-w-0">
-              <h1 className="truncate text-base font-semibold sm:text-lg">Review Hub</h1>
+              <h1 className="truncate text-base font-semibold tracking-tight sm:text-lg">Review Hub</h1>
               <p className="text-muted-foreground hidden truncate text-xs sm:block">{manifest.source}</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1 rounded-lg border p-1">
+            <div className="flex items-center gap-1 rounded-xl border border-border/70 bg-card/70 p-1 shadow-sm">
               <Button
                 variant={mode === "read" ? "default" : "ghost"}
                 size="sm"
@@ -298,10 +305,12 @@ export default function App() {
               </Button>
             </div>
 
-            <Badge variant="secondary" className="hidden sm:inline-flex">
+            <Badge variant="secondary" className="hidden sm:inline-flex rounded-full px-2.5">
               {manifest.language.toUpperCase()}
             </Badge>
-            <Badge variant={manifest.status === "reviewed" ? "default" : "outline"}>{manifest.status}</Badge>
+            <Badge variant={manifest.status === "reviewed" ? "default" : "outline"} className="rounded-full px-2.5 capitalize">
+              {manifest.status}
+            </Badge>
             <Button onClick={handleComplete} disabled={isCompleting}>
               {isCompleting ? "Completing…" : "Done Reviewing"}
             </Button>
@@ -344,18 +353,25 @@ export default function App() {
             initial="hidden"
             animate="visible"
             transition={motionTransition(Boolean(prefersReducedMotion), 0.2)}
-            className={cn("min-w-0 rounded-xl border p-4 sm:p-5", mode === "read" && "lg:px-10 lg:py-8")}
+            className={cn(
+              "min-w-0 rounded-2xl border border-border/70 bg-card/70 p-4 shadow-sm backdrop-blur sm:p-5",
+              mode === "read" && "lg:px-10 lg:py-8",
+            )}
           >
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Visual review content</h2>
-              <Badge variant="outline">{manifest.sections.length} sections</Badge>
+              <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Visual review content</h2>
+              <Badge variant="outline" className="rounded-full px-2.5">
+                {manifest.sections.length} sections
+              </Badge>
             </div>
 
             <VisualContentHost
               ref={visualHostRef}
-              className={cn("rounded-lg", mode === "read" ? "px-1" : "")}
+              className={cn("rounded-xl bg-background/35", mode === "read" ? "px-1" : "")}
               activeSectionId={activeSectionId}
+              showEmbeddedProgressNav={mode === "read"}
               onActiveSectionChange={setActiveSectionId}
+              onSectionCommentRequest={handleSectionCommentRequest}
             />
 
             <AnimatePresence initial={false}>

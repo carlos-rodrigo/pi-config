@@ -1,35 +1,92 @@
-/* ── Review Hub — Dark Cinematic Theme ─────────────────────────────────── */
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/fraunces-latin-500-normal.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/fraunces-latin-700-normal.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-sans-latin-400-normal.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-sans-latin-500-normal.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-sans-latin-600-normal.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin-400-normal.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin-600-normal.woff') format('woff');
+}
+
+/* ── Review Hub — Narrative Stage Theme ─────────────────────────────────── */
 
 :root {
-  --bg-primary: #0a0a0f;
-  --bg-secondary: #12121a;
-  --bg-tertiary: #1a1a2e;
-  --bg-hover: #222238;
-  --text-primary: #e2e8f0;
-  --text-secondary: #a0aec0;
-  --text-muted: #636b7f;
-  --accent: #805ad5;
-  --accent-light: #9f7aea;
-  --accent-dim: #553c9a;
-  --border: #2d2d44;
-  --border-light: #3d3d5c;
+  --bg-primary: #07080d;
+  --bg-secondary: #0f111a;
+  --bg-tertiary: #171a27;
+  --bg-hover: #21263a;
+  --text-primary: #ece8de;
+  --text-secondary: #c7c0b0;
+  --text-muted: #857f73;
+  --accent: #dd8f2f;
+  --accent-light: #f4c679;
+  --accent-dim: #6f4f1f;
+  --border: #2a2f41;
+  --border-light: #3b435b;
 
   /* Comment type colors */
-  --color-change: #4299e1;
-  --color-question: #ecc94b;
-  --color-approval: #48bb78;
-  --color-concern: #fc8181;
+  --color-change: #74b8ff;
+  --color-question: #ffd974;
+  --color-approval: #78df9d;
+  --color-concern: #ff8f97;
 
   /* Priority colors */
-  --priority-high: #fc8181;
-  --priority-medium: #ecc94b;
-  --priority-low: #636b7f;
+  --priority-high: #ff8f97;
+  --priority-medium: #ffd974;
+  --priority-low: #8f96a9;
 
-  --radius: 8px;
-  --radius-sm: 4px;
-  --transition: 0.2s ease;
-  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', system-ui, sans-serif;
-  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --radius: 12px;
+  --radius-sm: 6px;
+  --transition: 0.25s ease;
+  --font: 'IBM Plex Sans', 'Helvetica Neue', sans-serif;
+  --font-display: 'Fraunces', 'Georgia', serif;
+  --font-mono: 'JetBrains Mono', 'Menlo', monospace;
 }
 
 * {
@@ -45,7 +102,10 @@ html, body {
   font-size: 14px;
   line-height: 1.6;
   color: var(--text-primary);
-  background: var(--bg-primary);
+  background:
+    radial-gradient(1200px 480px at 12% -10%, rgba(221, 143, 47, 0.20), transparent 55%),
+    radial-gradient(900px 420px at 88% -10%, rgba(103, 127, 214, 0.22), transparent 55%),
+    var(--bg-primary);
   scroll-behavior: smooth;
 }
 
@@ -55,40 +115,49 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 48px;
-  padding: 0 20px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  height: 56px;
+  padding: 0 22px;
+  background: rgba(15, 17, 26, 0.92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(111, 79, 31, 0.45);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
 }
 
 .top-bar-left {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .top-bar-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
   color: var(--accent-light);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
 }
 
 .document-name {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-secondary);
   font-family: var(--font-mono);
+  max-width: 42vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lang-badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: var(--accent-dim);
+  font-size: 10px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(244, 198, 121, 0.35);
+  background: linear-gradient(180deg, rgba(111, 79, 31, 0.42), rgba(61, 37, 10, 0.42));
   color: var(--accent-light);
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
 }
 
 .top-bar-right {
@@ -111,12 +180,15 @@ html, body {
 }
 
 .btn-done {
-  background: var(--accent);
-  color: white;
+  background: linear-gradient(180deg, #d98a2c, #b76f1d);
+  color: #fff8ed;
+  border: 1px solid rgba(244, 198, 121, 0.35);
+  box-shadow: 0 8px 18px rgba(148, 89, 24, 0.28);
 }
 
 .btn-done:hover {
-  background: var(--accent-light);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(148, 89, 24, 0.36);
 }
 
 .btn-add-comment {
@@ -156,7 +228,7 @@ html, body {
 
 .main-layout {
   display: flex;
-  height: calc(100vh - 48px - 32px); /* minus top bar and bottom bar */
+  height: calc(100vh - 56px - 32px); /* minus top bar and bottom bar */
 }
 
 .content-area {
@@ -164,21 +236,73 @@ html, body {
   overflow-y: auto;
   padding: 0;
   min-width: 0;
+  background:
+    radial-gradient(700px 220px at 30% -10%, rgba(221, 143, 47, 0.09), transparent 60%),
+    radial-gradient(520px 180px at 80% -6%, rgba(116, 184, 255, 0.08), transparent 60%);
 }
 
 /* ── Player Zone ──────────────────────────────────────────────────────── */
 
+.audio-state-banner {
+  margin: 18px 24px 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-light);
+  background: linear-gradient(135deg, rgba(23, 26, 39, 0.9), rgba(15, 17, 26, 0.9));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.audio-state-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.audio-state-badge {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+
+.audio-state-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.audio-state-next-action {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.audio-state-next-action code {
+  font-family: var(--font-mono);
+  color: var(--accent-light);
+}
+
+.audio-state-banner.is-ready { border-color: rgba(120, 223, 157, 0.4); color: var(--color-approval); }
+.audio-state-banner.is-generating { border-color: rgba(255, 217, 116, 0.4); color: var(--color-question); }
+.audio-state-banner.is-failed { border-color: rgba(255, 143, 151, 0.5); color: var(--color-concern); }
+.audio-state-banner.is-neutral { border-color: rgba(116, 184, 255, 0.35); color: var(--color-change); }
+
 .player-zone {
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-secondary);
+  margin: 10px 24px 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(111, 79, 31, 0.28);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(23, 26, 39, 0.92), rgba(15, 17, 26, 0.94));
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.24);
 }
 
 .player-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .player-icon {
@@ -279,7 +403,7 @@ html, body {
 /* ── Visual Zone ──────────────────────────────────────────────────────── */
 
 .visual-zone {
-  padding: 32px 48px;
+  padding: 18px 20px 26px;
   overflow-y: auto;
   height: 100%;
 }
@@ -581,6 +705,18 @@ html, body {
   font-family: var(--font-mono);
 }
 
+/* ── Audio Optional Note ──────────────────────────────────────────────── */
+
+.audio-disabled-note {
+  margin: 0 0 0.9rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px dashed rgba(128, 90, 213, 0.5);
+  border-radius: 10px;
+  background: rgba(128, 90, 213, 0.08);
+  color: #c9b3ff;
+  font-size: 0.84rem;
+}
+
 /* ── Completion Overlay ───────────────────────────────────────────────── */
 
 .completion-overlay {
@@ -651,7 +787,15 @@ html, body {
     min-width: 220px;
   }
 
+  .audio-state-banner {
+    margin: 10px 10px 6px;
+  }
+
+  .player-zone {
+    margin: 8px 10px 0;
+  }
+
   .visual-zone {
-    padding: 24px;
+    padding: 10px;
   }
 }

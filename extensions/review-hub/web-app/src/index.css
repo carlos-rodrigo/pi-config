@@ -4,26 +4,26 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: oklch(0.985 0.002 240);
-  --foreground: oklch(0.23 0.03 256);
+  --background: oklch(0.988 0.002 252);
+  --foreground: oklch(0.18 0.024 264);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.23 0.03 256);
+  --card-foreground: oklch(0.18 0.024 264);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.23 0.03 256);
-  --primary: oklch(0.51 0.19 265);
+  --popover-foreground: oklch(0.18 0.024 264);
+  --primary: oklch(0.57 0.17 264);
   --primary-foreground: oklch(0.98 0.01 260);
-  --secondary: oklch(0.96 0.01 255);
-  --secondary-foreground: oklch(0.33 0.03 257);
-  --muted: oklch(0.96 0.01 255);
-  --muted-foreground: oklch(0.55 0.02 256);
-  --accent: oklch(0.96 0.01 255);
-  --accent-foreground: oklch(0.28 0.03 258);
+  --secondary: oklch(0.95 0.012 254);
+  --secondary-foreground: oklch(0.28 0.03 261);
+  --muted: oklch(0.96 0.008 254);
+  --muted-foreground: oklch(0.42 0.022 260);
+  --accent: oklch(0.95 0.015 252);
+  --accent-foreground: oklch(0.22 0.03 262);
   --destructive: oklch(0.63 0.23 27);
   --destructive-foreground: oklch(0.98 0.01 260);
-  --border: oklch(0.9 0.01 258);
-  --input: oklch(0.9 0.01 258);
-  --ring: oklch(0.65 0.18 262);
-  --radius: 0.75rem;
+  --border: oklch(0.85 0.012 258);
+  --input: oklch(0.85 0.012 258);
+  --ring: oklch(0.62 0.16 264);
+  --radius: 0.9rem;
 }
 
 .dark {
@@ -81,5 +81,52 @@
 
   body {
     @apply bg-background text-foreground antialiased;
+    font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+    background-image:
+      radial-gradient(1000px 420px at -5% -15%, color-mix(in oklab, var(--primary) 16%, transparent), transparent 60%),
+      radial-gradient(920px 360px at 105% -10%, color-mix(in oklab, var(--secondary) 60%, transparent), transparent 62%);
   }
+}
+
+.review-hub-shell {
+  position: relative;
+}
+
+.review-hub-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+.review-hub-visual-host {
+  --bg-primary: var(--background);
+  --bg-secondary: var(--card);
+  --bg-tertiary: var(--muted);
+  --bg-hover: var(--accent);
+  --text-primary: var(--foreground);
+  --text-secondary: var(--foreground);
+  --text-muted: var(--muted-foreground);
+  --accent: var(--primary);
+  --accent-light: var(--primary);
+  --accent-dim: var(--secondary);
+  --border: var(--border);
+  --border-light: var(--border);
+  --font: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  --transition: 0.2s ease;
+  --radius-sm: calc(var(--radius) - 4px);
+  color: var(--foreground);
+}
+
+.review-hub-visual-host .visual-content {
+  overflow: visible;
+}
+
+.review-hub-visual-host[data-embedded-progress-nav="hidden"] .progress-nav {
+  display: none;
+}
+
+.review-hub-visual-host[data-embedded-progress-nav="hidden"] .visual-content {
+  max-width: none;
+  padding-inline: 0;
 }

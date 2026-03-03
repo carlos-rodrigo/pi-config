@@ -296,12 +296,18 @@ export async function installPackages(
 
   // First upgrade pip itself
   onProgress("Upgrading pip...");
-  await runCommand(pipPath, ["install", "--upgrade", "pip"]);
+  await runCommand(
+    pipPath,
+    ["install", "--upgrade", "pip"],
+    (seconds) => onProgress(`Upgrading pip... still working (${seconds}s)`),
+  );
 
   // Build requirements list
-  const pkgs = Object.entries(requirements).map(([name, version]) =>
-    version ? `${name}==${version}` : name,
-  );
+  // Handles both regular packages ("numpy": "1.0") and git URLs ("git+https://...": "")
+  const pkgs = Object.entries(requirements).map(([name, version]) => {
+    if (name.startsWith("git+")) return name; // Git URL, use as-is
+    return version ? `${name}==${version}` : name;
+  });
 
   const args = ["install", ...pkgs];
   if (indexUrl) {
@@ -309,29 +315,75 @@ export async function installPackages(
   }
 
   onProgress(`Installing ${pkgs.length} packages...`);
-  await runCommand(pipPath, args);
+  await runCommand(
+    pipPath,
+    args,
+    (seconds) => onProgress(`Installing ${pkgs.length} packages... still working (${seconds}s)`),
+  );
 }
 
-function runCommand(command: string, args: string[]): Promise<void> {
+function appendInstallerLog(message: string): void {
+  const logPath = process.env.REVIEW_HUB_LOG_FILE;
+  if (!logPath) return;
+
+  try {
+    fs.appendFileSync(
+      logPath,
+      `[${new Date().toISOString()}] [installer] ${message}\n`,
+      "utf-8",
+    );
+  } catch {
+    // ignore logging failures
+  }
+}
+
+function runCommand(
+  command: string,
+  args: string[],
+  onKeepAlive?: (elapsedSeconds: number) => void,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const proc = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
+    const startedAt = Date.now();
+    const keepAliveTimer = setInterval(() => {
+      const seconds = Math.round((Date.now() - startedAt) / 1000);
+      onKeepAlive?.(seconds);
+      appendInstallerLog(`Command still running (${seconds}s): ${command} ${args.join(" ")}`);
+    }, 10000);
+
+    let stdout = "";
     let stderr = "";
+
+    proc.stdout.on("data", (data) => {
+      const text = data.toString();
+      stdout += text;
+      appendInstallerLog(`stdout: ${text.trim()}`);
+    });
+
     proc.stderr.on("data", (data) => {
-      stderr += data.toString();
+      const text = data.toString();
+      stderr += text;
+      appendInstallerLog(`stderr: ${text.trim()}`);
     });
 
     proc.on("close", (code) => {
+      clearInterval(keepAliveTimer);
       if (code === 0) {
+        appendInstallerLog(`Command finished successfully: ${command} ${args.join(" ")}`);
         resolve();
       } else {
-        reject(new Error(`Command failed (exit ${code}): ${command} ${args.join(" ")}\n${stderr.slice(0, 1000)}`));
+        reject(new Error(
+          `Command failed (exit ${code}): ${command} ${args.join(" ")}\n` +
+          `${stderr.slice(0, 1000) || stdout.slice(0, 1000)}`,
+        ));
       }
     });
 
     proc.on("error", (err) => {
+      clearInterval(keepAliveTimer);
       reject(new Error(`Failed to run ${command}: ${err.message}`));
     });
   });

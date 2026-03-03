@@ -53,8 +53,8 @@ export function CommentRail({
   const [activeFilter, setActiveFilter] = useState<CommentFilter>("all");
 
   return (
-    <aside className="flex h-full min-h-0 flex-col rounded-xl border">
-      <div className="space-y-3 border-b px-4 py-3">
+    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card/75 shadow-sm backdrop-blur">
+      <div className="space-y-3 border-b border-border/70 bg-muted/30 px-4 py-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold">Comments</h2>
           <div className="flex items-center gap-1">
@@ -70,7 +70,7 @@ export function CommentRail({
             type="button"
             variant="outline"
             size="sm"
-            className="w-full justify-between"
+            className="w-full justify-between bg-background/70"
             onClick={onNextUnresolved}
             disabled={unresolvedCount === 0}
             aria-keyshortcuts="N"

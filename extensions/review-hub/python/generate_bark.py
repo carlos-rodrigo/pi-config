@@ -54,7 +54,7 @@ def process_text(text, direction=None):
     return result
 
 
-def generate(script_path, output_path, lang):
+def generate(script_path, output_path, lang, fast_mode=False):
     emit_progress("loading")
 
     try:
@@ -74,6 +74,8 @@ def generate(script_path, output_path, lang):
 
     segments = script_data.get("segments", [])
     gap_ms = script_data.get("gapMs", 400)
+    if fast_mode:
+        gap_ms = min(gap_ms, 180)
 
     all_audio = []
     timestamps = []
@@ -127,6 +129,9 @@ def generate(script_path, output_path, lang):
             # Process text with emotion annotations
             processed_text = process_text(text, direction)
 
+            if fast_mode and len(processed_text) > 280:
+                processed_text = processed_text[:280].rsplit(" ", 1)[0]
+
             if not processed_text.strip():
                 continue
 
@@ -135,7 +140,7 @@ def generate(script_path, output_path, lang):
 
             # Handle pause direction: add silence instead of generating
             if direction and direction.lower() in ("pauses", "pause"):
-                pause_duration = 0.5  # 500ms pause
+                pause_duration = 0.25 if fast_mode else 0.5  # shorter pauses in fast mode
                 pause_samples = int(sample_rate * pause_duration)
                 audio = np.zeros(pause_samples, dtype=np.float32)
                 # Still generate the text after the pause
@@ -214,6 +219,7 @@ if __name__ == "__main__":
     parser.add_argument("--script", required=True, help="Path to script JSON file")
     parser.add_argument("--output", required=True, help="Path for output WAV file")
     parser.add_argument("--lang", default="es", help="Language code (en/es)")
+    parser.add_argument("--fast-mode", action="store_true", help="Use faster, shorter generation mode")
     args = parser.parse_args()
 
-    generate(args.script, args.output, args.lang)
+    generate(args.script, args.output, args.lang, fast_mode=args.fast_mode)

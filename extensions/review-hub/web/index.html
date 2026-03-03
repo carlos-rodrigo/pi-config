@@ -24,13 +24,15 @@
   <div class="main-layout">
     <!-- Content Area -->
     <main class="content-area">
-      <!-- Podcast Player Zone -->
+      <section class="audio-state-banner is-neutral" id="audio-state-banner"></section>
+
+      <!-- Narration Player Zone -->
       <section class="player-zone" id="player-zone" style="display: none;">
         <div class="player-header">
           <span class="player-icon">🎙️</span>
           <span class="player-section-label" id="player-section-label">—</span>
           <label class="sync-toggle">
-            <input type="checkbox" id="sync-toggle"> Sync visual to audio
+            <input type="checkbox" id="sync-toggle" checked> Sync visual to audio
           </label>
         </div>
         <div id="waveform" class="waveform-container"></div>

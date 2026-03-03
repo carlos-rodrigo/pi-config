@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import type { ReviewManifest, ReviewComment } from "./manifest.js";
 import { saveManifest, loadManifest } from "./manifest.js";
 import { generateVisual, generateVisualStyles } from "./visual-generator.js";
+import { type ReviewRuntimeBridge, createNoOpBridge } from "./runtime-bridge.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,8 @@ export interface ReviewServer {
   start(manifest: ReviewManifest, reviewDir: string): Promise<{ port: number; url: string }>;
   stop(): Promise<void>;
   isRunning(): boolean;
+  /** The runtime bridge for privileged extension actions. */
+  bridge: ReviewRuntimeBridge;
 }
 
 interface ServerState {
@@ -207,7 +210,8 @@ function safeResolve(rootDir: string, requestPath: string): string | null {
 
 // ── Server Implementation ──────────────────────────────────────────────────
 
-export function createReviewServer(): ReviewServer {
+export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
+  const resolvedBridge: ReviewRuntimeBridge = bridge ?? createNoOpBridge();
   let state: ServerState | null = null;
 
   // Visual cache: HTML + CSS generated from source markdown
@@ -689,5 +693,5 @@ export function createReviewServer(): ReviewServer {
     res.end(JSON.stringify({ deleted: commentId }));
   }
 
-  return { start, stop, isRunning };
+  return { start, stop, isRunning, bridge: resolvedBridge };
 }

@@ -35,9 +35,9 @@ export function CommentComposer({
 }) {
   return (
     <form className="space-y-3" onSubmit={onSubmit}>
-      <label className="text-xs font-medium">Section</label>
+      <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Section</label>
       <select
-        className="w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+        className="w-full rounded-lg border bg-background/70 px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
         value={formState.sectionId}
         onChange={(event) => onFieldChange("sectionId", event.target.value)}
       >
@@ -51,9 +51,9 @@ export function CommentComposer({
 
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-1">
-          <label className="text-xs font-medium">Type</label>
+          <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Type</label>
           <select
-            className="w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+            className="w-full rounded-lg border bg-background/70 px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
             value={formState.type}
             onChange={(event) => onFieldChange("type", event.target.value as CommentType)}
           >
@@ -64,9 +64,9 @@ export function CommentComposer({
           </select>
         </div>
         <div className="space-y-1">
-          <label className="text-xs font-medium">Priority</label>
+          <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Priority</label>
           <select
-            className="w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+            className="w-full rounded-lg border bg-background/70 px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
             value={formState.priority}
             onChange={(event) => onFieldChange("priority", event.target.value as CommentPriority)}
           >
@@ -77,9 +77,9 @@ export function CommentComposer({
         </div>
       </div>
 
-      <label className="text-xs font-medium">Comment</label>
+      <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Comment</label>
       <textarea
-        className="min-h-24 w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+        className="min-h-24 w-full rounded-lg border bg-background/70 px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
         value={formState.text}
         onChange={(event) => onFieldChange("text", event.target.value)}
         placeholder="Write your feedback…"

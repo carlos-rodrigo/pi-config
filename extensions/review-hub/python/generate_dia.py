@@ -38,7 +38,10 @@ def generate(script_path, output_path):
         sys.exit(1)
 
     # Load model (auto-downloads on first use)
-    model = Dia("nari-labs/Dia-1.6B")
+    # Use float32 on Apple Silicon/MPS for stability (float16 causes NaN)
+    import platform
+    compute_dtype = "float32" if platform.machine() == "arm64" else "float16"
+    model = Dia.from_pretrained("nari-labs/Dia-1.6B-0626", compute_dtype=compute_dtype)
 
     # Read script
     with open(script_path, "r") as f:
@@ -65,7 +68,15 @@ def generate(script_path, output_path):
         try:
             # Generate audio for this dialogue chunk
             # Dia natively handles [S1]/[S2] tags
-            audio = model.generate(text)
+            # use_torch_compile=False is required on Mac (no Triton)
+            audio = model.generate(
+                text,
+                use_torch_compile=False,
+                verbose=False,
+                cfg_scale=3.0,
+                temperature=1.8,
+                top_p=0.90,
+            )
 
             if audio is not None and len(audio) > 0:
                 if isinstance(audio, list):

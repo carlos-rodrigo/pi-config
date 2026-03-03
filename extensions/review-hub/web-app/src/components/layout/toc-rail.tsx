@@ -20,9 +20,9 @@ export function TocRail({
   onSelect: (sectionId: string) => void;
 }) {
   return (
-    <aside className="flex h-full min-h-0 flex-col rounded-xl border">
-      <div className="border-b px-4 py-3">
-        <h2 className="text-sm font-semibold">Contents</h2>
+    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card/70 shadow-sm backdrop-blur">
+      <div className="border-b border-border/70 bg-muted/40 px-4 py-3">
+        <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Contents</h2>
       </div>
       <ScrollArea className="h-full p-2">
         <ul className="space-y-1">
@@ -36,12 +36,12 @@ export function TocRail({
                 <button
                   type="button"
                   className={cn(
-                    "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+                    "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors",
                     activeSectionId === section.id
-                      ? "bg-primary text-primary-foreground"
-                      : "hover:bg-muted text-muted-foreground",
+                      ? "bg-primary/95 text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted/80 hover:text-foreground",
                   )}
-                  style={{ paddingLeft: `${8 + depthPadding}px` }}
+                  style={{ paddingLeft: `${10 + depthPadding}px` }}
                   onClick={() => onSelect(section.id)}
                 >
                   <span className="truncate">{label}</span>

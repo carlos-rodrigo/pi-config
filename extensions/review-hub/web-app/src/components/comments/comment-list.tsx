@@ -58,7 +58,7 @@ export function CommentList({
                 <motion.li
                   key={comment.id}
                   layout
-                  className="space-y-2 rounded-lg border p-3"
+                  className="space-y-2 rounded-xl border border-border/80 bg-background/70 p-3 shadow-sm"
                   variants={fadeVariants(Boolean(prefersReducedMotion))}
                   initial="hidden"
                   animate="visible"
@@ -72,18 +72,18 @@ export function CommentList({
                       <Badge variant={status === "resolved" ? "default" : "outline"}>{status}</Badge>
                     </div>
                     <div className="flex gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => onToggleStatus(comment)}>
+                      <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => onToggleStatus(comment)}>
                         {status === "resolved" ? "Reopen" : "Resolve"}
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => onEdit(comment)}>
+                      <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => onEdit(comment)}>
                         Edit
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => onDelete(comment.id)}>
+                      <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => onDelete(comment.id)}>
                         Delete
                       </Button>
                     </div>
                   </div>
-                  <p className="text-sm">{comment.text}</p>
+                  <p className="text-sm leading-relaxed text-foreground/90">{comment.text}</p>
                   <button
                     type="button"
                     className="text-muted-foreground hover:text-foreground text-left text-xs underline-offset-4 hover:underline"

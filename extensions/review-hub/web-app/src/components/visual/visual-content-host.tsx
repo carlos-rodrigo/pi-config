@@ -2,7 +2,6 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -18,9 +17,20 @@ export const VisualContentHost = forwardRef<
   {
     className?: string;
     activeSectionId: string | null;
+    showEmbeddedProgressNav?: boolean;
     onActiveSectionChange: (sectionId: string) => void;
+    onSectionCommentRequest?: (sectionId: string) => void;
   }
->(function VisualContentHost({ className, activeSectionId, onActiveSectionChange }, ref) {
+>(function VisualContentHost(
+  {
+    className,
+    activeSectionId,
+    showEmbeddedProgressNav = true,
+    onActiveSectionChange,
+    onSectionCommentRequest,
+  },
+  ref,
+) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [visualHtml, setVisualHtml] = useState<string>("");
   const [isLoading, setIsLoading] = useState(true);
@@ -74,18 +84,47 @@ export const VisualContentHost = forwardRef<
     };
   }, []);
 
-  const sectionElements = useMemo(() => {
+  useEffect(() => {
     const root = containerRef.current;
-    if (!root) return [] as HTMLElement[];
+    if (!root || !onSectionCommentRequest) return;
 
-    return Array.from(root.querySelectorAll<HTMLElement>(".review-section[data-section-id]"));
-  }, [visualHtml]);
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const button = target?.closest<HTMLButtonElement>(".section-comment-btn[data-section-id]");
+      if (!button || !root.contains(button)) {
+        return;
+      }
+
+      event.preventDefault();
+      const sectionId = button.dataset.sectionId;
+      if (!sectionId) return;
+      onSectionCommentRequest(sectionId);
+    };
+
+    root.addEventListener("click", handleClick);
+    return () => root.removeEventListener("click", handleClick);
+  }, [visualHtml, onSectionCommentRequest]);
 
   useEffect(() => {
+    const root = containerRef.current;
+    if (!root) return;
+
+    const sectionElements = Array.from(
+      root.querySelectorAll<HTMLElement>(".review-section[data-section-id]"),
+    );
+
     if (sectionElements.length === 0) return;
+
+    sectionElements[0]?.classList.add("visible");
 
     const observer = new IntersectionObserver(
       (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            (entry.target as HTMLElement).classList.add("visible");
+          }
+        });
+
         const visible = entries
           .filter((entry) => entry.isIntersecting)
           .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
@@ -108,7 +147,7 @@ export const VisualContentHost = forwardRef<
     return () => {
       observer.disconnect();
     };
-  }, [sectionElements, onActiveSectionChange]);
+  }, [visualHtml, onActiveSectionChange]);
 
   useImperativeHandle(ref, () => ({
     scrollToSection(sectionId: string) {
@@ -147,7 +186,10 @@ export const VisualContentHost = forwardRef<
   }
 
   return (
-    <div className={cn("min-h-full", className)}>
+    <div
+      className={cn("review-hub-visual-host min-h-full", className)}
+      data-embedded-progress-nav={showEmbeddedProgressNav ? "shown" : "hidden"}
+    >
       <div ref={containerRef} dangerouslySetInnerHTML={{ __html: visualHtml }} />
     </div>
   );

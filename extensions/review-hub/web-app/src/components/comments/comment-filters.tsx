@@ -24,7 +24,7 @@ export function CommentFilters({
         <Badge variant="outline">{counts.all}</Badge>
       </div>
 
-      <div className="flex flex-wrap gap-1">
+      <div className="flex flex-wrap gap-1.5">
         {FILTERS.map((filter) => (
           <Button
             key={filter}
@@ -32,7 +32,7 @@ export function CommentFilters({
             size="sm"
             variant={activeFilter === filter ? "default" : "ghost"}
             onClick={() => onChange(filter)}
-            className="h-7"
+            className="h-7 rounded-md px-2.5"
           >
             <span className="capitalize">{filter}</span>
             <span className="text-xs opacity-70">{counts[filter]}</span>

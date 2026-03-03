@@ -95,7 +95,7 @@ export function NarrationPlayerBar({
 
 function PlayerShell({ children }: { children: ReactNode }) {
   return (
-    <div className="bg-background/95 fixed inset-x-0 bottom-0 z-50 border-t backdrop-blur">
+    <div className="fixed inset-x-0 bottom-0 z-50 border-t border-border/70 bg-background/92 backdrop-blur-xl">
       <div className="mx-auto flex min-h-16 w-full max-w-[1400px] items-center gap-2 overflow-x-auto px-4 py-2 lg:px-6">
         {children}
       </div>

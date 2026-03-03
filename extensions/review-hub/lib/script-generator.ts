@@ -24,6 +24,11 @@ export interface DialogueScript {
   rawScript: string;
 }
 
+export interface ScriptGenerationOptions {
+  /** Faster script mode with concise turns to reduce TTS time. */
+  fastMode?: boolean;
+}
+
 /** A single dialogue line within the script. */
 export interface ScriptSegment {
   /** Maps to ReviewSection.id */
@@ -50,19 +55,22 @@ export async function generateScript(
   sourceContent: string,
   language: "en" | "es",
   onProgress: (msg: string) => void,
+  options?: ScriptGenerationOptions,
 ): Promise<DialogueScript> {
   onProgress("Preparing document for script generation...");
 
   // Annotate source with section markers
   const annotatedSource = annotateWithSections(manifest, sourceContent);
 
+  const fastMode = options?.fastMode === true;
+
   // Build the system prompt
-  const systemPrompt = buildSystemPrompt(manifest, language);
+  const systemPrompt = buildSystemPrompt(manifest, language, fastMode);
 
   // Build the task prompt
-  const taskPrompt = buildTaskPrompt(annotatedSource, manifest, language);
+  const taskPrompt = buildTaskPrompt(annotatedSource, manifest, language, fastMode);
 
-  onProgress("Generating podcast script via sub-agent...");
+  onProgress("Generating narrated script via sub-agent...");
 
   // Run sub-agent
   let rawScript: string;
@@ -78,7 +86,13 @@ export async function generateScript(
   onProgress("Parsing script into segments...");
 
   // Parse the raw script
-  const segments = parseScript(rawScript, manifest);
+  let segments = parseScript(rawScript, manifest);
+
+  // Fast mode: compact dialogue to reduce downstream TTS time
+  if (fastMode) {
+    segments = compactSegmentsForFastMode(segments);
+    onProgress(`Fast mode enabled: compacted script to ${segments.length} dialogue lines`);
+  }
 
   // Validate coverage
   const coveredSections = new Set(segments.map((s) => s.sectionId));
@@ -125,57 +139,77 @@ function annotateWithSections(manifest: ReviewManifest, sourceContent: string): 
 
 // ── Prompts ────────────────────────────────────────────────────────────────
 
-function buildSystemPrompt(manifest: ReviewManifest, language: "en" | "es"): string {
+function buildSystemPrompt(
+  manifest: ReviewManifest,
+  language: "en" | "es",
+  fastMode: boolean,
+): string {
   const langName = language === "en" ? "English" : "Spanish";
   const docType = manifest.reviewType === "prd" ? "Product Requirements Document (PRD)" : "Technical Design Document";
 
-  return `You are a screenwriter who creates engaging podcast dialogue scripts.
+  return `You are an expert product storyteller creating a guided narrative audio review.
 
-Your task is to transform technical documents into natural, lively two-host conversations. The hosts are:
-- **[S1]** — The Lead Host. Explains concepts clearly, provides context, and drives the conversation forward. Enthusiastic but measured.
-- **[S2]** — The Analyst. Asks sharp questions, highlights trade-offs, plays devil's advocate, and brings practical perspective.
+Your task is to transform a technical document into a clear, engaging single-narrator script that sounds like a senior PM/engineer walking a team through the document.
+
+## Narrative style
+
+- Use one narrator voice with the speaker tag **[S1]**.
+- Tone: confident, practical, and vivid (never robotic, never fluffy).
+- Focus on clarity and decision-making impact.
+- Keep lines concise (1-3 sentences per line).
 
 ## Rules
 
-1. Generate dialogue in **${langName}** only.
+1. Generate text in **${langName}** only.
 2. Cover **every section** of the document. Each section is marked with \`<!-- SECTION: section-id -->\`. You MUST include these exact markers in your output.
-3. Keep each section's dialogue proportional to its content — short sections get brief coverage, detailed sections get thorough discussion.
-4. Use speaker tags \`[S1]\` and \`[S2]\` at the start of each dialogue line.
-5. Include natural conversational elements:
-   - Reactions: "Right, and that's the interesting part..."
-   - Questions: "But what about the edge case where...?"
-   - Emphasis: "(pauses) This is actually really clever."
-   - Laughter: "(laughs) Yeah, that's a bold choice."
-   - Transitions: "So moving on to the next section..."
-6. Open with a brief introduction of the document being reviewed.
-7. Close with a summary/recap of key takeaways.
-8. Make it sound like a real conversation — back and forth, not a lecture.
-9. S2 should genuinely challenge S1's explanations, not just agree.
-10. Keep each speaker's turn to 1-3 sentences. Avoid long monologues.
+3. Keep each section proportional to source depth.
+4. Use \`[S1]\` at the start of each line.
+5. For each section, explicitly include:
+   - what this section means in plain language,
+   - one concrete example or user scenario,
+   - how this would be tested/validated,
+   - why it matters (risk or user impact).
+6. Open with a short framing intro for the full ${docType}.
+7. Close with a concise recap of key priorities and execution risks.
+8. Avoid roleplay/dialogue, jokes, or multi-host banter.
+9. ${fastMode ? "FAST MODE ACTIVE: keep each section compact (1-3 lines), prioritize core meaning + one practical example." : "Use full depth where helpful."}
 
 ## Output Format
 
 \`\`\`
 <!-- SECTION: s-introduction -->
-[S1] Today we're looking at this ${docType}...
-[S2] Yeah, what caught my eye right away is...
+[S1] Today we're reviewing this ${docType}. Here's the big picture and why it matters.
 
 <!-- SECTION: s-goals -->
-[S1] So let's talk about what they're trying to achieve here.
-[S2] (pauses) There are some ambitious goals in this list.
+[S1] This goal means we optimize onboarding for first-time users.
+[S1] Example: a new user should complete setup in under 2 minutes without support.
+[S1] We test this with funnel analytics and drop-off checks at each step.
 \`\`\``;
 }
 
-function buildTaskPrompt(annotatedSource: string, manifest: ReviewManifest, language: "en" | "es"): string {
+function buildTaskPrompt(
+  annotatedSource: string,
+  manifest: ReviewManifest,
+  language: "en" | "es",
+  fastMode: boolean,
+): string {
   const langName = language === "en" ? "English" : "Spanish";
   const sectionIds = manifest.sections.map((s) => s.id).join(", ");
 
-  return `Generate a podcast dialogue script in ${langName} for the following document.
+  return `Generate a narrated review script in ${langName} for the following document.
 
 **IMPORTANT:** You must include ALL of these section markers in your output:
 ${sectionIds}
 
-Use the format: \`<!-- SECTION: section-id -->\` followed by \`[S1]\` and \`[S2]\` dialogue lines.
+Use the format: \`<!-- SECTION: section-id -->\` followed by \`[S1]\` narration lines only.
+
+For every section include:
+- plain-language explanation,
+- one concrete example/user behavior scenario,
+- one validation/testing note,
+- why this matters (risk, user impact, or delivery impact).
+
+${fastMode ? "FAST MODE: keep this compact (~3-6 minutes total). For each section use 1-3 concise lines." : ""}
 
 Here is the document:
 
@@ -185,19 +219,43 @@ ${annotatedSource}
 
 ---
 
-Generate the complete podcast script now. Start with the introduction and cover every section in order.`;
+Generate the complete narrated script now. Start with a framing introduction and cover every section in order.`;
 }
 
 function buildSimplifiedPrompt(annotatedSource: string, manifest: ReviewManifest, language: "en" | "es"): string {
   const langName = language === "en" ? "English" : "Spanish";
 
-  return `Generate a two-host podcast dialogue in ${langName} about this document. Use [S1] and [S2] speaker tags. Include <!-- SECTION: id --> markers for each section.
+  return `Generate a single-narrator script in ${langName} about this document. Use [S1] speaker tags only and include <!-- SECTION: id --> markers for each section.
+
+For each section, explain meaning, include one practical example, one testing/validation note, and why it matters.
 
 Document:
 
 ${annotatedSource}
 
 Generate the script:`;
+}
+
+function compactSegmentsForFastMode(segments: ScriptSegment[]): ScriptSegment[] {
+  const perSectionLimit = 4;
+  const maxTextLength = 220;
+
+  const counts = new Map<string, number>();
+  const result: ScriptSegment[] = [];
+
+  for (const seg of segments) {
+    const count = counts.get(seg.sectionId) ?? 0;
+    if (count >= perSectionLimit) continue;
+
+    const text = seg.text.length > maxTextLength
+      ? `${seg.text.slice(0, maxTextLength).replace(/\s+\S*$/, "")}...`
+      : seg.text;
+
+    result.push({ ...seg, text });
+    counts.set(seg.sectionId, count + 1);
+  }
+
+  return result;
 }
 
 // ── Sub-Agent Execution ────────────────────────────────────────────────────

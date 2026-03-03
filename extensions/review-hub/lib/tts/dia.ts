@@ -1,39 +1,376 @@
 /**
  * Dia TTS Provider — English dialogue synthesis via Nari Labs Dia model.
  *
- * Dia natively supports multi-speaker dialogue with [S1]/[S2] tags,
- * producing expressive, natural-sounding conversations.
+ * Performance enhancements:
+ * 1) Persistent worker process (model stays loaded across reviews)
+ * 2) Per-section audio cache (reuse unchanged section clips)
+ * 3) Fast mode support (shorter pauses + faster sampling params)
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as crypto from "node:crypto";
 
-import type { TTSProvider, TTSResult, SectionTimestamp } from "./provider.js";
+import type {
+  TTSProvider,
+  TTSResult,
+  SectionTimestamp,
+  TTSGenerationOptions,
+} from "./provider.js";
 import type { DialogueScript, ScriptSegment } from "../script-generator.js";
-import { getVenvPath, createVenv, installPackages, isVenvValid, convertToMp3 } from "./installer.js";
+import {
+  getVenvPath,
+  createVenv,
+  installPackages,
+  isVenvValid,
+  convertToMp3,
+} from "./installer.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const PROVIDER_NAME = "dia";
 const VENV_PATH = getVenvPath(PROVIDER_NAME);
-const PYTHON_SCRIPT = path.resolve(
+const DIA_GIT_URL = "git+https://github.com/nari-labs/dia.git";
+
+const DIA_WORKER_SCRIPT = path.resolve(
   path.dirname(import.meta.url.replace("file://", "")),
   "..",
   "..",
   "python",
-  "generate_dia.py",
+  "dia_worker.py",
 );
 
-const REQUIREMENTS: Record<string, string> = {
-  "dia-tts": "",       // Latest compatible version
-  torch: "",           // Will install appropriate version for platform
-  numpy: "",
-  soundfile: "",
-};
+const REVIEW_HUB_ROOT = path.join(os.homedir(), ".pi", "review-hub");
+const DEFAULT_CACHE_DIR = path.join(REVIEW_HUB_ROOT, "audio-cache", "dia");
+const WORKER_READY_TIMEOUT_MS = 25 * 60 * 1000; // first model download can legitimately take a while
 
-const SECTION_GAP_MS = 300; // Silence between sections in milliseconds
+const HF_MODEL_CACHE_DIR = path.join(
+  os.homedir(),
+  ".cache",
+  "huggingface",
+  "hub",
+  "models--nari-labs--Dia-1.6B-0626",
+);
+const HF_MODEL_LOCK_DIR = path.join(
+  os.homedir(),
+  ".cache",
+  "huggingface",
+  "hub",
+  ".locks",
+  "models--nari-labs--Dia-1.6B-0626",
+);
+const STALE_ARTIFACT_AGE_MS = 10 * 60 * 1000;
+
+const SECTION_GAP_MS = 300;
+const SECTION_GAP_MS_FAST = 140;
+
+// ── Logging ────────────────────────────────────────────────────────────────
+
+function appendDiaLog(message: string): void {
+  const logPath = process.env.REVIEW_HUB_LOG_FILE;
+  if (!logPath) return;
+
+  try {
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] [dia] ${message}\n`, "utf-8");
+  } catch {
+    // ignore logging failures
+  }
+}
+
+// ── Worker Protocol Types ─────────────────────────────────────────────────
+
+interface SectionChunk {
+  sectionId: string;
+  text: string;
+}
+
+interface WorkerProgressEvent {
+  type: "progress";
+  requestId: string;
+  phase: "loading" | "generating" | "saving";
+  sectionIndex?: number;
+  sectionId?: string;
+  totalSections?: number;
+  percent?: number;
+  cached?: boolean;
+  cacheHits?: number;
+}
+
+interface WorkerDoneEvent {
+  type: "done";
+  requestId: string;
+  outputPath: string;
+  timestampsPath: string;
+  durationSeconds: number;
+  cacheHits: number;
+  totalSections: number;
+}
+
+interface WorkerErrorEvent {
+  type: "error";
+  requestId?: string;
+  message: string;
+}
+
+interface WorkerReadyEvent {
+  type: "ready";
+  model: string;
+  computeDtype: string;
+}
+
+type WorkerEvent = WorkerProgressEvent | WorkerDoneEvent | WorkerErrorEvent | WorkerReadyEvent | { type: string; [k: string]: unknown };
+
+interface PendingRequest {
+  resolve: (event: WorkerDoneEvent) => void;
+  reject: (error: Error) => void;
+  onProgress?: (event: WorkerProgressEvent) => void;
+}
+
+class DiaWorkerClient {
+  private proc: ChildProcess;
+  private stdoutBuffer = "";
+  private pending = new Map<string, PendingRequest>();
+  private readyPromise: Promise<void>;
+  private resolveReady!: () => void;
+  private rejectReady!: (err: Error) => void;
+  private isReady = false;
+
+  constructor(private pythonPath: string) {
+    this.readyPromise = new Promise<void>((resolve, reject) => {
+      this.resolveReady = resolve;
+      this.rejectReady = reject;
+    });
+
+    this.proc = spawn(this.pythonPath, [DIA_WORKER_SCRIPT], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    this.proc.stdout?.on("data", (data) => this.handleStdout(data.toString()));
+
+    this.proc.stderr?.on("data", (data) => {
+      const text = data.toString().trim();
+      if (text) appendDiaLog(`worker stderr: ${text}`);
+    });
+
+    this.proc.on("close", (code) => {
+      appendDiaLog(`worker exited (code ${code ?? "null"})`);
+      const err = new Error(`Dia worker exited unexpectedly (code ${code ?? "null"})`);
+
+      if (!this.isReady) {
+        this.rejectReady(err);
+      }
+
+      for (const [id, req] of this.pending.entries()) {
+        req.reject(err);
+        this.pending.delete(id);
+      }
+
+      if (sharedWorker === this) {
+        sharedWorker = null;
+      }
+    });
+
+    this.proc.on("error", (err) => {
+      appendDiaLog(`worker process error: ${err.message}`);
+      if (!this.isReady) {
+        this.rejectReady(err);
+      }
+    });
+  }
+
+  async waitReady(): Promise<void> {
+    return this.readyPromise;
+  }
+
+  async generateReview(
+    requestId: string,
+    chunks: SectionChunk[],
+    outputPath: string,
+    timestampsPath: string,
+    options: { cacheDir: string; gapMs: number; fastMode: boolean },
+    onProgress?: (event: WorkerProgressEvent) => void,
+  ): Promise<WorkerDoneEvent> {
+    await this.waitReady();
+
+    return new Promise<WorkerDoneEvent>((resolve, reject) => {
+      this.pending.set(requestId, { resolve, reject, onProgress });
+
+      this.sendCommand({
+        type: "generate_review",
+        requestId,
+        chunks,
+        outputPath,
+        timestampsPath,
+        cacheDir: options.cacheDir,
+        gapMs: options.gapMs,
+        fastMode: options.fastMode,
+      });
+    });
+  }
+
+  cancel(requestId: string): void {
+    this.sendCommand({ type: "cancel", requestId });
+  }
+
+  async shutdown(): Promise<void> {
+    try {
+      this.sendCommand({ type: "shutdown" });
+    } catch {
+      // ignore
+    }
+
+    // Give it a chance to exit gracefully
+    await new Promise<void>((resolve) => setTimeout(resolve, 300));
+
+    if (!this.proc.killed) {
+      this.proc.kill("SIGTERM");
+    }
+  }
+
+  private sendCommand(command: Record<string, unknown>): void {
+    const payload = JSON.stringify(command) + "\n";
+    this.proc.stdin?.write(payload);
+  }
+
+  private handleStdout(chunk: string): void {
+    this.stdoutBuffer += chunk;
+    const lines = this.stdoutBuffer.split("\n");
+    this.stdoutBuffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      appendDiaLog(`worker stdout: ${line}`);
+
+      let event: WorkerEvent;
+      try {
+        event = JSON.parse(line) as WorkerEvent;
+      } catch {
+        continue;
+      }
+
+      if (event.type === "ready") {
+        this.isReady = true;
+        this.resolveReady();
+        continue;
+      }
+
+      if (event.type === "progress") {
+        const progressEvt = event as WorkerProgressEvent;
+        if (typeof progressEvt.requestId !== "string") {
+          appendDiaLog("worker progress event missing requestId");
+          continue;
+        }
+        const req = this.pending.get(progressEvt.requestId);
+        req?.onProgress?.(progressEvt);
+        continue;
+      }
+
+      if (event.type === "done") {
+        const done = event as WorkerDoneEvent;
+        const req = this.pending.get(done.requestId);
+        if (req) {
+          this.pending.delete(done.requestId);
+          req.resolve(done);
+        }
+        continue;
+      }
+
+      if (event.type === "error") {
+        const errEvt = event as WorkerErrorEvent;
+        const err = new Error(`Dia worker error: ${errEvt.message}`);
+        if (errEvt.requestId) {
+          const req = this.pending.get(errEvt.requestId);
+          if (req) {
+            this.pending.delete(errEvt.requestId);
+            req.reject(err);
+          }
+        } else {
+          // Global worker error
+          for (const [id, req] of this.pending.entries()) {
+            req.reject(err);
+            this.pending.delete(id);
+          }
+        }
+      }
+    }
+  }
+}
+
+let sharedWorker: DiaWorkerClient | null = null;
+
+function cleanupStaleHfArtifacts(): void {
+  const now = Date.now();
+
+  const cleanupOldFiles = (dir: string, suffix: string, label: string) => {
+    if (!fs.existsSync(dir)) return;
+
+    let removed = 0;
+    for (const entry of fs.readdirSync(dir)) {
+      if (!entry.endsWith(suffix)) continue;
+      const full = path.join(dir, entry);
+      try {
+        const stat = fs.statSync(full);
+        if (now - stat.mtimeMs > STALE_ARTIFACT_AGE_MS) {
+          fs.rmSync(full, { force: true });
+          removed++;
+        }
+      } catch {
+        // ignore single-file cleanup errors
+      }
+    }
+
+    if (removed > 0) {
+      appendDiaLog(`cleaned ${removed} stale ${label} file(s) from ${dir}`);
+    }
+  };
+
+  cleanupOldFiles(HF_MODEL_CACHE_DIR + "/blobs", ".incomplete", "huggingface incomplete");
+  cleanupOldFiles(HF_MODEL_LOCK_DIR, ".lock", "huggingface lock");
+}
+
+async function getOrCreateWorker(pythonPath: string): Promise<DiaWorkerClient> {
+  if (sharedWorker) {
+    return sharedWorker;
+  }
+
+  cleanupStaleHfArtifacts();
+
+  appendDiaLog(`starting persistent Dia worker: ${DIA_WORKER_SCRIPT}`);
+  const worker = new DiaWorkerClient(pythonPath);
+
+  try {
+    await Promise.race([
+      worker.waitReady(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(
+            "Dia worker startup timed out after 8 minutes. " +
+            "Likely causes: first model download is very slow/stalled, or a partial HuggingFace cache download. " +
+            "Try setting HF_TOKEN and deleting stale *.incomplete files in ~/.cache/huggingface/hub/models--nari-labs--Dia-1.6B-0626/blobs/."
+          ));
+        }, WORKER_READY_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (err) {
+    appendDiaLog(`worker failed to become ready: ${(err as Error).message}`);
+    await worker.shutdown();
+    throw err;
+  }
+
+  sharedWorker = worker;
+  appendDiaLog("Dia worker ready");
+  return worker;
+}
+
+export async function shutdownDiaWorker(): Promise<void> {
+  if (!sharedWorker) return;
+  const worker = sharedWorker;
+  sharedWorker = null;
+  await worker.shutdown();
+}
 
 // ── Provider ───────────────────────────────────────────────────────────────
 
@@ -56,13 +393,13 @@ export function createDiaProvider(): TTSProvider {
 
     async install(
       onProgress: (msg: string) => void,
-      onConfirm: (msg: string) => Promise<boolean>,
+      _onConfirm: (msg: string) => Promise<boolean>,
     ): Promise<void> {
       onProgress("Creating Python virtual environment...");
       await createVenv(VENV_PATH);
 
-      onProgress("Installing Dia TTS and dependencies...");
-      await installPackages(VENV_PATH, REQUIREMENTS, onProgress);
+      onProgress("Installing Dia TTS from GitHub (this may take a few minutes)...");
+      await installPackages(VENV_PATH, { [DIA_GIT_URL]: "" }, onProgress);
 
       // Verify
       onProgress("Verifying installation...");
@@ -83,60 +420,75 @@ export function createDiaProvider(): TTSProvider {
       script: DialogueScript,
       onProgress: (phase: string, progress: number) => void,
       signal?: AbortSignal,
+      options?: TTSGenerationOptions,
     ): Promise<TTSResult> {
       const pythonPath = path.join(VENV_PATH, "bin", "python");
-
-      // Group segments by section for chunk processing
       const chunks = groupBySection(script.segments);
       const totalSections = chunks.length;
 
-      // Write script to temp file
+      if (totalSections === 0) {
+        throw new Error("No dialogue chunks available for Dia generation");
+      }
+
+      const fastMode = options?.fastMode === true;
+      const gapMs = fastMode ? SECTION_GAP_MS_FAST : SECTION_GAP_MS;
+      const cacheDir = options?.cacheDir ?? DEFAULT_CACHE_DIR;
+      fs.mkdirSync(cacheDir, { recursive: true });
+
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "review-hub-dia-"));
-      const scriptPath = path.join(tmpDir, "script.json");
       const outputPath = path.join(tmpDir, "output.wav");
       const timestampsPath = path.join(tmpDir, "timestamps.json");
 
-      fs.writeFileSync(scriptPath, JSON.stringify({
-        segments: script.segments,
-        chunks,
-        gapMs: SECTION_GAP_MS,
-      }), "utf-8");
+      const requestId = crypto.randomUUID();
 
       try {
-        onProgress("Loading Dia model...", 0);
+        onProgress(
+          fastMode ? "Preparing Dia worker (fast mode)..." : "Preparing Dia worker...",
+          0,
+        );
 
-        // Spawn Python process
-        const proc = spawn(pythonPath, [
-          PYTHON_SCRIPT,
-          "--script", scriptPath,
-          "--output", outputPath,
-        ], {
-          stdio: ["pipe", "pipe", "pipe"],
-        });
+        const worker = await getOrCreateWorker(pythonPath);
 
-        // Handle abort
         if (signal) {
-          signal.addEventListener("abort", () => {
-            proc.kill("SIGTERM");
-          }, { once: true });
+          signal.addEventListener(
+            "abort",
+            () => worker.cancel(requestId),
+            { once: true },
+          );
         }
 
-        // Read progress from stdout
-        await processOutput(proc, (progress) => {
-          if (progress.phase === "loading") {
-            onProgress("Loading Dia model...", 0.05);
-          } else if (progress.phase === "generating") {
-            const pct = (progress.sectionIndex! + 1) / totalSections;
-            onProgress(
-              `Generating audio: section ${progress.sectionIndex! + 1}/${totalSections}`,
-              0.1 + pct * 0.8,
-            );
-          } else if (progress.phase === "saving") {
-            onProgress("Saving audio file...", 0.95);
-          }
-        });
+        let cacheHits = 0;
+        await worker.generateReview(
+          requestId,
+          chunks,
+          outputPath,
+          timestampsPath,
+          { cacheDir, gapMs, fastMode },
+          (evt) => {
+            if (evt.phase === "loading") {
+              onProgress("Loading Dia model...", 0.05);
+              return;
+            }
 
-        // Read output
+            if (evt.phase === "saving") {
+              onProgress("Saving generated audio...", 0.95);
+              return;
+            }
+
+            if (evt.phase === "generating") {
+              const idx = (evt.sectionIndex ?? 0) + 1;
+              const pct = evt.percent ?? idx / totalSections;
+              cacheHits = evt.cacheHits ?? cacheHits;
+              const cacheInfo = cacheHits > 0 ? `, cache hits: ${cacheHits}` : "";
+              const cachedFlag = evt.cached ? " (cached)" : "";
+              onProgress(
+                `Generating audio: section ${idx}/${totalSections}${cachedFlag}${cacheInfo}`,
+                0.08 + pct * 0.84,
+              );
+            }
+          },
+        );
+
         if (!fs.existsSync(outputPath)) {
           throw new Error("Dia generation produced no output file");
         }
@@ -160,7 +512,6 @@ export function createDiaProvider(): TTSProvider {
 
         return { audioBuffer, format, sectionTimestamps };
       } finally {
-        // Cleanup temp dir
         try {
           fs.rmSync(tmpDir, { recursive: true });
         } catch {
@@ -172,11 +523,6 @@ export function createDiaProvider(): TTSProvider {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-interface SectionChunk {
-  sectionId: string;
-  text: string; // Combined dialogue with [S1]/[S2] tags
-}
 
 function groupBySection(segments: ScriptSegment[]): SectionChunk[] {
   const chunks: SectionChunk[] = [];
@@ -205,54 +551,6 @@ function groupBySection(segments: ScriptSegment[]): SectionChunk[] {
   }
 
   return chunks;
-}
-
-interface ProgressEvent {
-  phase: "loading" | "generating" | "saving" | "done";
-  sectionIndex?: number;
-  sectionId?: string;
-}
-
-function processOutput(
-  proc: ChildProcess,
-  onProgress: (event: ProgressEvent) => void,
-): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    let stdout = "";
-    let stderr = "";
-
-    proc.stdout?.on("data", (data) => {
-      stdout += data.toString();
-      const lines = stdout.split("\n");
-      stdout = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line) as ProgressEvent;
-          onProgress(event);
-        } catch {
-          // Not JSON — might be regular output
-        }
-      }
-    });
-
-    proc.stderr?.on("data", (data) => {
-      stderr += data.toString();
-    });
-
-    proc.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`Dia generation failed (exit ${code}): ${stderr.slice(0, 500)}`));
-      }
-    });
-
-    proc.on("error", (err) => {
-      reject(new Error(`Failed to spawn Dia: ${err.message}`));
-    });
-  });
 }
 
 function runPythonCheck(pythonPath: string, code: string): Promise<string> {

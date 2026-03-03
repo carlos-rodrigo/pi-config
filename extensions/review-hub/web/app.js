@@ -23,6 +23,29 @@ const TYPE_LABELS = {
   concern: "Concern",
 };
 
+const AUDIO_STATE_META = {
+  generating: {
+    badge: "⏳ Generating audio",
+    hint: "Narration is still processing. Keep this tab open and refresh in a bit.",
+    tone: "is-generating",
+  },
+  ready: {
+    badge: "✅ Audio ready",
+    hint: "Narration is available. You can listen while scrolling sections.",
+    tone: "is-ready",
+  },
+  failed: {
+    badge: "⚠️ Audio failed",
+    hint: "Audio generation failed for this review.",
+    tone: "is-failed",
+  },
+  "not-requested": {
+    badge: "🎬 Visual-only",
+    hint: "Audio was not requested for this run.",
+    tone: "is-neutral",
+  },
+};
+
 // ── Utility ────────────────────────────────────────────────────────────────
 
 function relativeTime(isoString) {
@@ -51,6 +74,28 @@ function formatAudioTimestamp(seconds) {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function renderAudioStateBanner(manifest) {
+  const banner = document.getElementById("audio-state-banner");
+  if (!banner) return;
+
+  const state = manifest.audioState || (manifest.audio ? "ready" : "not-requested");
+  const meta = AUDIO_STATE_META[state] || AUDIO_STATE_META["not-requested"];
+  const reason = manifest.audioFailureReason ? String(manifest.audioFailureReason) : "";
+
+  banner.className = `audio-state-banner ${meta.tone}`;
+  banner.innerHTML = `
+    <div class="audio-state-main">
+      <span class="audio-state-badge">${meta.badge}</span>
+      <span class="audio-state-hint">${meta.hint}</span>
+    </div>
+    ${state === "failed" ? `
+      <div class="audio-state-next-action">
+        <strong>Next step:</strong> Re-run <code>/review ${escapeHtml(manifest.source)} --with-audio</code> after checking the review log${reason ? ` · ${escapeHtml(reason)}` : ""}
+      </div>
+    ` : ""}
+  `;
 }
 
 // ── API Client ─────────────────────────────────────────────────────────────
@@ -548,12 +593,12 @@ const VisualPresenter = {
 
 const AudioPlayer = {
   ws: null,
-  syncEnabled: false,
+  syncEnabled: true,
 
   async init() {
     const manifest = ReviewApp.state.manifest;
     if (!manifest?.audio) {
-      // No audio — hide player zone
+      // No audio requested/generated for this review
       const zone = document.getElementById("player-zone");
       if (zone) zone.style.display = "none";
       return;
@@ -650,7 +695,12 @@ const AudioPlayer = {
 
   setupSyncToggle() {
     const toggle = document.getElementById("sync-toggle");
-    toggle?.addEventListener("change", (e) => {
+    if (!toggle) return;
+
+    // Initialize from DOM state (checkbox is checked by default)
+    this.syncEnabled = Boolean(toggle.checked);
+
+    toggle.addEventListener("change", (e) => {
       this.syncEnabled = e.target.checked;
     });
   },
@@ -771,6 +821,7 @@ const ReviewApp = {
 
       // Render layout
       this.renderHeader(manifest);
+      renderAudioStateBanner(manifest);
       CommentPanel.init();
       CommentPanel.populateSectionDropdown(manifest.sections);
       CommentPanel.render();
@@ -797,7 +848,10 @@ const ReviewApp = {
   renderHeader(manifest) {
     // Document name
     const docName = document.getElementById("document-name");
-    docName.textContent = manifest.source;
+    const sourceParts = String(manifest.source || "").split("/");
+    const shortName = sourceParts[sourceParts.length - 1] || manifest.source;
+    docName.textContent = shortName;
+    docName.title = manifest.source;
 
     // Language badge
     const langBadge = document.getElementById("lang-badge");

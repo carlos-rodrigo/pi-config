@@ -11,7 +11,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-import type { TTSProvider, TTSResult, SectionTimestamp } from "./provider.js";
+import type {
+  TTSProvider,
+  TTSResult,
+  SectionTimestamp,
+  TTSGenerationOptions,
+} from "./provider.js";
 import type { DialogueScript, ScriptSegment } from "../script-generator.js";
 import { getVenvPath, createVenv, installPackages, isVenvValid, convertToMp3 } from "./installer.js";
 
@@ -94,11 +99,14 @@ export function createBarkProvider(): TTSProvider {
       script: DialogueScript,
       onProgress: (phase: string, progress: number) => void,
       signal?: AbortSignal,
+      options?: TTSGenerationOptions,
     ): Promise<TTSResult> {
       const pythonPath = path.join(VENV_PATH, "bin", "python");
 
       // Prepare segments with speaker presets
       const totalSegments = script.segments.length;
+      const fastMode = options?.fastMode === true;
+      const gapMs = fastMode ? 180 : SECTION_GAP_MS;
 
       // Write script to temp file
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "review-hub-bark-"));
@@ -115,12 +123,18 @@ export function createBarkProvider(): TTSProvider {
           speakerPreset: SPEAKER_PRESETS[lang]?.[seg.speaker.toLowerCase() as "s1" | "s2"]
             ?? SPEAKER_PRESETS.es![seg.speaker.toLowerCase() as "s1" | "s2"],
         })),
-        gapMs: SECTION_GAP_MS,
+        gapMs,
         language: lang,
+        fastMode,
       }), "utf-8");
 
       try {
-        onProgress("Loading Bark model (this may take a minute)...", 0);
+        onProgress(
+          fastMode
+            ? "Loading Bark model (fast mode)..."
+            : "Loading Bark model (this may take a minute)...",
+          0,
+        );
 
         // Spawn Python process
         const proc = spawn(pythonPath, [
@@ -128,6 +142,7 @@ export function createBarkProvider(): TTSProvider {
           "--script", scriptPath,
           "--output", outputPath,
           "--lang", lang,
+          ...(fastMode ? ["--fast-mode"] : []),
         ], {
           stdio: ["pipe", "pipe", "pipe"],
         });
@@ -206,6 +221,17 @@ interface ProgressEvent {
   estRemainingSeconds?: number;
 }
 
+function appendBarkLog(message: string): void {
+  const logPath = process.env.REVIEW_HUB_LOG_FILE;
+  if (!logPath) return;
+
+  try {
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] [bark] ${message}\n`, "utf-8");
+  } catch {
+    // ignore logging failures
+  }
+}
+
 function processOutput(
   proc: ChildProcess,
   totalSegments: number,
@@ -222,6 +248,7 @@ function processOutput(
 
       for (const line of lines) {
         if (!line.trim()) continue;
+        appendBarkLog(`stdout: ${line}`);
         try {
           const event = JSON.parse(line) as ProgressEvent;
           onProgress(event);
@@ -232,18 +259,23 @@ function processOutput(
     });
 
     proc.stderr?.on("data", (data) => {
-      stderr += data.toString();
+      const text = data.toString();
+      stderr += text;
+      appendBarkLog(`stderr: ${text.trim()}`);
     });
 
     proc.on("close", (code) => {
       if (code === 0) {
+        appendBarkLog("generation completed successfully");
         resolve();
       } else {
+        appendBarkLog(`generation failed (exit ${code})`);
         reject(new Error(`Bark generation failed (exit ${code}): ${stderr.slice(0, 500)}`));
       }
     });
 
     proc.on("error", (err) => {
+      appendBarkLog(`failed to spawn process: ${err.message}`);
       reject(new Error(`Failed to spawn Bark: ${err.message}`));
     });
   });

@@ -30,13 +30,23 @@ export interface TTSProvider {
    * @param script - The structured dialogue script
    * @param onProgress - Progress callback with phase name and 0-1 progress
    * @param signal - Optional abort signal
+   * @param options - Optional generation controls (fast mode, cache)
    * @returns Audio buffer with format and section timestamps
    */
   generateAudio(
     script: DialogueScript,
     onProgress: (phase: string, progress: number) => void,
     signal?: AbortSignal,
+    options?: TTSGenerationOptions,
   ): Promise<TTSResult>;
+}
+
+/** Optional controls for audio generation. */
+export interface TTSGenerationOptions {
+  /** Faster generation with reduced quality and shorter pacing. */
+  fastMode?: boolean;
+  /** Optional cache directory for reusable per-section audio clips. */
+  cacheDir?: string;
 }
 
 /** Result of audio generation. */
