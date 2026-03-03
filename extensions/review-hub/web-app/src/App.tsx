@@ -1,4 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ListTree, MessageSquare, PanelLeftOpen, PanelRightOpen } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +13,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { fadeVariants, motionTransition, panelVariants } from "@/lib/motion";
 import { shouldHandleNextUnresolvedShortcut } from "@/lib/unresolved-shortcut";
 import type { ReviewComment, SaveCommentInput } from "@/lib/api";
 import { useReviewBootstrap } from "@/hooks/use-review-bootstrap";
@@ -49,6 +51,7 @@ export default function App() {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const visualHostRef = useRef<VisualContentHostHandle | null>(null);
+  const prefersReducedMotion = useReducedMotion();
 
   const sectionOptions = manifest?.sections ?? [];
   const { unresolvedCount, unresolvedCountsBySection, goToNextUnresolved } =
@@ -315,18 +318,33 @@ export default function App() {
               : "lg:grid-cols-[minmax(0,1fr)]",
           )}
         >
-          {mode === "review" ? (
-            <div className="hidden lg:block">
-              <TocRail
-                sections={manifest.sections}
-                activeSectionId={activeSectionId}
-                unresolvedCountsBySection={unresolvedCountsBySection}
-                onSelect={handleTocSelect}
-              />
-            </div>
-          ) : null}
+          <AnimatePresence initial={false}>
+            {mode === "review" ? (
+              <motion.div
+                key="toc-rail"
+                className="hidden lg:block"
+                variants={panelVariants(Boolean(prefersReducedMotion), "left")}
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                transition={motionTransition(Boolean(prefersReducedMotion))}
+              >
+                <TocRail
+                  sections={manifest.sections}
+                  activeSectionId={activeSectionId}
+                  unresolvedCountsBySection={unresolvedCountsBySection}
+                  onSelect={handleTocSelect}
+                />
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
 
-          <main className={cn("min-w-0 rounded-xl border p-4 sm:p-5", mode === "read" && "lg:px-10 lg:py-8")}
+          <motion.main
+            variants={fadeVariants(Boolean(prefersReducedMotion))}
+            initial="hidden"
+            animate="visible"
+            transition={motionTransition(Boolean(prefersReducedMotion), 0.2)}
+            className={cn("min-w-0 rounded-xl border p-4 sm:p-5", mode === "read" && "lg:px-10 lg:py-8")}
           >
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold">Visual review content</h2>
@@ -340,31 +358,53 @@ export default function App() {
               onActiveSectionChange={setActiveSectionId}
             />
 
-            {activeSection ? (
-              <p className="text-muted-foreground mt-4 text-xs">Active section: {activeSection.id}</p>
-            ) : null}
-          </main>
+            <AnimatePresence initial={false}>
+              {activeSection ? (
+                <motion.p
+                  key={activeSection.id}
+                  className="text-muted-foreground mt-4 text-xs"
+                  variants={fadeVariants(Boolean(prefersReducedMotion))}
+                  initial="hidden"
+                  animate="visible"
+                  exit="exit"
+                  transition={motionTransition(Boolean(prefersReducedMotion), 0.16)}
+                >
+                  Active section: {activeSection.id}
+                </motion.p>
+              ) : null}
+            </AnimatePresence>
+          </motion.main>
 
-          {mode === "review" ? (
-            <div className="hidden lg:block">
-              <CommentRail
-                comments={comments}
-                sections={sectionOptions}
-                formState={formState}
-                canSubmit={canSubmit}
-                isSaving={isSaving}
-                unresolvedCount={unresolvedCount}
-                onNextUnresolved={handleNextUnresolved}
-                onSubmit={handleSubmit}
-                onFieldChange={(key, value) => setFormState((prev) => ({ ...prev, [key]: value }))}
-                onReset={() => setFormState({ ...EMPTY_FORM, sectionId: formState.sectionId })}
-                onEdit={(comment) => handleEdit(comment.id)}
-                onDelete={handleDelete}
-                onToggleStatus={handleToggleStatus}
-                onJumpToSection={handleTocSelect}
-              />
-            </div>
-          ) : null}
+          <AnimatePresence initial={false}>
+            {mode === "review" ? (
+              <motion.div
+                key="comment-rail"
+                className="hidden lg:block"
+                variants={panelVariants(Boolean(prefersReducedMotion), "right")}
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                transition={motionTransition(Boolean(prefersReducedMotion))}
+              >
+                <CommentRail
+                  comments={comments}
+                  sections={sectionOptions}
+                  formState={formState}
+                  canSubmit={canSubmit}
+                  isSaving={isSaving}
+                  unresolvedCount={unresolvedCount}
+                  onNextUnresolved={handleNextUnresolved}
+                  onSubmit={handleSubmit}
+                  onFieldChange={(key, value) => setFormState((prev) => ({ ...prev, [key]: value }))}
+                  onReset={() => setFormState({ ...EMPTY_FORM, sectionId: formState.sectionId })}
+                  onEdit={(comment) => handleEdit(comment.id)}
+                  onDelete={handleDelete}
+                  onToggleStatus={handleToggleStatus}
+                  onJumpToSection={handleTocSelect}
+                />
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
         </div>
 
         {completedAt ? (

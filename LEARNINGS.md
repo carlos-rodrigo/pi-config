@@ -34,3 +34,10 @@
 **Context:** Task 010 removed emoji-based controls from the visual generator.
 **Learning:** For server-rendered controls, inline SVG icons provide consistent styling, accessibility labeling, and easier compliance checks than Unicode emoji glyphs.
 **Applies to:** Any generated HTML UI affordance outside the React component tree.
+
+## Review Hub: Centralize motion variants with reduced-motion fallbacks
+
+**Date:** 2026-03-02
+**Context:** Task 011 introduced Framer Motion transitions across shell panels and comment cards.
+**Learning:** Shared motion utilities should return both animated and static (reduced-motion) variants so components can opt in consistently without duplicating accessibility logic.
+**Applies to:** Any feature adding multi-component animation systems in React.

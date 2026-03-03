@@ -17,6 +17,7 @@
     "@radix-ui/react-tooltip": "*",
     "class-variance-authority": "*",
     "clsx": "*",
+    "framer-motion": "*",
     "lucide-react": "*",
     "react": "*",
     "react-dom": "*",

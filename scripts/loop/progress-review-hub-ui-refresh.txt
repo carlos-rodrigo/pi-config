@@ -16,6 +16,7 @@ Feature: review-hub-ui-refresh
 - Keep unresolved workflow logic in pure utilities (`web-app/src/lib/unresolved-navigation.ts`, `web-app/src/lib/unresolved-shortcut.ts`) and let hooks/components compose them for easier testing.
 - Audio UX should be split into pure helpers (`web-app/src/lib/audio-player.ts`) plus a runtime hook (`hooks/useAudioSync.ts`) so state messaging and timestamp mapping stay testable.
 - For server-rendered visual controls, prefer inline SVG markup over emoji glyphs so iconography stays consistent and grep-able for migration checks.
+- Motion should be driven by shared variants/transitions in `web-app/src/lib/motion.ts`, with reduced-motion switching animations to static states.
 
 ---
 
@@ -166,5 +167,20 @@ Task ID: 010
 - **Learnings for future iterations:**
   - Keep icon output in generated HTML as explicit SVG so visual affordances match React icon system quality.
   - Using HTML entities (instead of literal glyphs) avoids accidental emoji-regex hits in source while preserving semantics.
+
+---
+
+## 2026-03-02 - Add Framer Motion system with reduced-motion behavior
+
+Task ID: 011
+
+- Added shared motion tokens/variants in `web-app/src/lib/motion.ts` and integrated Framer Motion transitions across shell panels, content fades, and comment cards.
+- Added reduced-motion handling via Framer Motion’s `useReducedMotion`, switching panel/content transitions to static states when requested.
+- Added motion utility tests to lock transition/variant behavior.
+- Kept interaction flows intact while adding non-blocking panel and list animations.
+
+- **Learnings for future iterations:**
+  - Drive animation through shared variants/transitions instead of ad-hoc component values to keep motion behavior coherent.
+  - Reduced-motion support is easiest to enforce when motion utilities own both animated and static variant definitions.
 
 ---
