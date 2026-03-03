@@ -17,7 +17,9 @@ Design: `.features/review-hub-rebuild/design.md`
 - [x] 009 - Compact export endpoint (`/export-feedback`) with hash
 - [x] 010 - Finish flow UX (copy/close/auto-paste + fallback)
 - [x] 011 - Audio status + regenerate flow integration
-- [ ] 012 - Security hardening + migration/regression tests
+- [x] 012 - Security hardening + migration/regression tests
+
+## ✅ ALL TASKS COMPLETE
 
 ## Dependency Notes
 

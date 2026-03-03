@@ -38,6 +38,9 @@ Feature: review-hub-rebuild
 - `AudioActionService.getStatus()` derives state from `manifest.audioState`, `manifest.audio`, and `manifest.status`.
 - `useAudioStatus({ token, initialState })` polls `/audio/status` when generating. Guards re-entry on regenerate.
 - NarrationPlayerBar accepts `audioState`, `isRegenerating`, `regenError`, `onRegenerate` from parent.
+- Token cleanup: `useSessionToken` removes `?token=` from URL via `history.replaceState` after capture.
+- Security headers: `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`.
+- All mutation endpoints (POST/DELETE) are token-gated via `handleMutation` → 401 without valid token.
 
 ---
 
@@ -251,3 +254,33 @@ Task ID: 011
 - Regenerate needs re-entry guard since button disable alone doesn't prevent programmatic calls.
 
 ---
+
+## 2026-02-27 - Security hardening + migration/regression tests
+
+Task ID: 012 (FINAL)
+
+- Added token cleanup from URL after bootstrap (`history.replaceState`).
+- Added security response headers: Referrer-Policy, X-Content-Type-Options, X-Frame-Options.
+- 10 new tests:
+  - Token validation on 6 mutation endpoints (401 without/with wrong token)
+  - Security response headers verification
+  - Hash mismatch negative path on /finish
+  - Token hygiene (readSessionTokenFromSearch edge cases)
+  - Full lifecycle regression (comment with anchor → export → finish → idempotent replay)
+- Total: 107 tests passing.
+
+**Learnings for future iterations:**
+- Token cleanup via history.replaceState is best-effort — guard with try/catch.
+- Localhost-only servers still benefit from Referrer-Policy + X-Frame-Options.
+- Full lifecycle regression test is the highest-value test for multi-endpoint features.
+
+---
+
+## 🎉 LOOP COMPLETE
+
+All 12 tasks implemented for review-hub-rebuild:
+- 107 tests passing
+- Typecheck clean
+- Build clean
+- Branch: feat/review-hub
+- Pushed to origin
