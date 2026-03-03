@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import type { ReviewManifest, ReviewComment } from "./manifest.js";
 import { saveManifest, loadManifest } from "./manifest.js";
 import { generateVisual, generateVisualStyles } from "./visual-generator.js";
+import { ExportService } from "./services/export-service.js";
 import { type ReviewRuntimeBridge, createNoOpBridge } from "./runtime-bridge.js";
 import { buildVisualModel } from "./visual-model.js";
 
@@ -194,6 +195,7 @@ function isReservedApiPath(pathname: string): boolean {
     pathname === "/visual-styles" ||
     pathname === "/visual-model" ||
     pathname === "/complete" ||
+    pathname === "/export-feedback" ||
     pathname.startsWith("/comments")
   );
 }
@@ -570,6 +572,8 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
       try {
         if (req.method === "POST" && pathname === "/comments") {
           await handleUpsertComment(body, res, reviewDir);
+        } else if (req.method === "POST" && pathname === "/export-feedback") {
+          handleExportFeedback(body, res);
         } else if (req.method === "POST" && pathname === "/complete") {
           await handleComplete(res, reviewDir);
         } else if (req.method === "DELETE" && pathname.startsWith("/comments/")) {
@@ -686,6 +690,31 @@ export function createReviewServer(bridge?: ReviewRuntimeBridge): ReviewServer {
 
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(comment));
+  }
+
+  function handleExportFeedback(body: string, res: http.ServerResponse): void {
+    if (!state) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Server not ready" }));
+      return;
+    }
+
+    let options: { scope?: "open" | "all" } = {};
+    try {
+      if (body.trim()) {
+        options = JSON.parse(body);
+      }
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid JSON" }));
+      return;
+    }
+
+    const exportService = new ExportService();
+    const result = exportService.export(state.manifest, { scope: options.scope });
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result));
   }
 
   async function handleComplete(
