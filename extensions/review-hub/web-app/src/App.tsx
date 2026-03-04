@@ -261,34 +261,11 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [handleNextUnresolved, mode, unresolvedCount]);
 
-  // ── Loading / error states ────────────────────────────────────────────
-
-  if (tokenError) {
-    return <ErrorState title="Session token missing" message={tokenError} />;
-  }
-
-  if (isLoading) {
-    return (
-      <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center justify-center px-6 py-12">
-        <p className="text-sm text-muted-foreground">Loading review manifest…</p>
-      </main>
-    );
-  }
-
-  if (!manifest) {
-    return (
-      <ErrorState
-        title="Unable to load review"
-        message={error ?? "Review manifest is unavailable. Try re-opening the URL from pi."}
-      />
-    );
-  }
-
   // ── Render ────────────────────────────────────────────────────────────
 
   const tocRailContent = useMemo(() => (
     <TocRail
-      sections={manifest.sections}
+      sections={manifest?.sections ?? []}
       activeSectionId={activeSectionId}
       unresolvedCountsBySection={unresolvedCountsBySection}
       onSelect={handleTocSelect}
@@ -316,6 +293,29 @@ export default function App() {
     />
   ), [comments, sectionOptions, formState, canSubmit, isSaving, unresolvedCount,
       anchorDraft, handleNextUnresolved, handleTocSelect]);
+
+  // ── Loading / error states ────────────────────────────────────────────
+
+  if (tokenError) {
+    return <ErrorState title="Session token missing" message={tokenError} />;
+  }
+
+  if (isLoading) {
+    return (
+      <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center justify-center px-6 py-12">
+        <p className="text-sm text-muted-foreground">Loading review manifest…</p>
+      </main>
+    );
+  }
+
+  if (!manifest) {
+    return (
+      <ErrorState
+        title="Unable to load review"
+        message={error ?? "Review manifest is unavailable. Try re-opening the URL from pi."}
+      />
+    );
+  }
 
   return (
     <ReviewShell
