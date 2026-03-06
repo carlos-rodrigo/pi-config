@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>Document Reviewer</title>
+	<link rel="stylesheet" href="__REVIEW_ASSET_BASE_PATH__/styles.css" />
+</head>
+<body>
+	<div class="reviewer-shell" id="reviewer-shell">
+		<header class="status-strip" aria-label="Review status">
+			<div class="status-strip__left">
+				<span class="mode-badge" id="mode-badge" data-mode="NORMAL">NORMAL</span>
+				<div class="document-meta">
+					<p class="document-title" id="document-title">Loading document…</p>
+					<p class="document-path" id="document-path"></p>
+				</div>
+			</div>
+			<p class="review-state" id="review-state">Connecting to local review session…</p>
+		</header>
+
+		<main class="reviewer-layout" id="reviewer-layout">
+			<section class="document-pane" aria-label="Document viewport">
+				<div class="pane-header">
+					<h1>Document</h1>
+					<p id="document-summary">Markdown renderer initialized</p>
+				</div>
+				<article class="document-content" id="document-content">
+					<div class="empty-state">Loading markdown content…</div>
+				</article>
+			</section>
+
+			<aside class="threads-pane" aria-label="Comment threads panel">
+				<div class="pane-header">
+					<h2>Threads</h2>
+					<p id="threads-summary">0 threads</p>
+				</div>
+				<section class="thread-composer" aria-label="New thread composer">
+					<p class="thread-composer__context" id="thread-composer-context">Select text in Visual mode to create a thread.</p>
+					<form class="thread-composer__form" id="new-thread-form" novalidate>
+						<label for="new-thread-input">New comment</label>
+						<textarea id="new-thread-input" rows="3" maxlength="4000" placeholder="Write review comment"></textarea>
+						<p class="thread-composer__error" id="new-thread-error" hidden></p>
+						<button type="submit" id="new-thread-submit">Add thread</button>
+					</form>
+				</section>
+				<div class="threads-list" id="threads-list">
+					<p class="threads-empty">No comment threads yet. Select text in Visual mode, press <kbd>c</kbd>, and add your first comment.</p>
+				</div>
+				<section class="end-review" aria-label="End review export">
+					<button type="button" class="end-review__button" id="end-review-button">End Review · Copy comments</button>
+					<p class="end-review__status" id="end-review-status">No export run yet.</p>
+					<div class="end-review__fallback" id="end-review-fallback" hidden>
+						<p>Clipboard unavailable. Copy manually:</p>
+						<textarea id="end-review-fallback-text" rows="7" readonly></textarea>
+					</div>
+				</section>
+			</aside>
+		</main>
+
+		<footer class="key-legend" aria-label="Keyboard legend">
+			<span><kbd>j</kbd>/<kbd>k</kbd> move</span>
+			<span><kbd>h</kbd>/<kbd>l</kbd> horizontal</span>
+			<span><kbd>Ctrl+d</kbd>/<kbd>Ctrl+u</kbd> page</span>
+			<span><kbd>v</kbd> visual toggle</span>
+			<span><kbd>c</kbd> comment mode</span>
+			<span><kbd>e</kbd> end review</span>
+			<span><kbd>Esc</kbd> normal mode</span>
+		</footer>
+	</div>
+
+	<script type="application/json" id="review-bootstrap">__REVIEW_BOOTSTRAP__</script>
+	<script type="module" src="__REVIEW_ASSET_BASE_PATH__/app.js"></script>
+</body>
+</html>

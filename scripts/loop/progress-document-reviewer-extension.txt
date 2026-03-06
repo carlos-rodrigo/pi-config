@@ -1,0 +1,226 @@
+# Loop Progress Log
+Started: Thu Mar  5 19:56:50 -03 2026
+Feature: document-reviewer-extension
+
+## Codebase Patterns
+
+- Render Mermaid fences in a second pass after markdown HTML insertion, keep source in a single hidden node, and sanitize parsed SVG before DOM insertion so fallback remains local and safe.
+- Keep extension command validation non-blocking and race-safe with `fs.promises.lstat(...)` + explicit `ENOENT` messaging.
+- Use a shared launcher helper in `extensions/lib/` and surface a fallback command in the editor when browser launch fails.
+- For local review APIs, enforce `127.0.0.1` binding plus workspace-root containment using realpath checks to block symlink escape paths.
+- Serve reviewer UI via tokenized HTML template (`__REVIEW_BOOTSTRAP__`, `__REVIEW_ASSET_BASE_PATH__`) and inject session bootstrap JSON server-side.
+- For reviewer keyboard UX, keep a single `keydown` dispatcher and ignore events from editable targets to avoid future comment-input conflicts.
+- Split input handling into a pure keymap resolver plus a DOM selection controller; this keeps keyboard behavior unit-testable while reducing noisy UI state updates.
+- For threaded-review panels rendered with `innerHTML`, persist per-thread reply drafts/errors in keyed maps so rerenders do not wipe in-progress reviewer input.
+- For local review comment APIs, validate request shape early (`payload` must be JSON object + content-type JSON) and reject unsupported classification fields consistently for both thread creation and replies.
+- Persist comments via a dedicated sidecar repository keyed by a stable path hash (`.review/<docHash>.comments.json`) and normalize legacy anchors (`quote` -> `exact`) before running deterministic re-anchor + stale detection.
+- For End Review UX, keep clipboard/export behavior in a dedicated controller that emits explicit states (`copied`, `manual-copy`, `empty`, `error`) so app-level status updates stay simple and fallback text handling remains deterministic.
+- Protect session-scoped local APIs with an ephemeral per-session token (`x-review-session-token`) and require the frontend bootstrap payload to include the token for every fetch helper call.
+- Keep browser-launch failure recovery text in a dedicated helper so remote/headless guidance (manual URL + SSH tunnel hint) stays consistent and testable.
+- In SVG sanitizers, always lower-case both the inspected tag name and denylist entries (`foreignobject`) to avoid case-mismatch bypasses.
+
+---
+
+## 2026-03-05 - Scaffold `/review` command and launcher
+
+Task ID: 001
+
+- Implemented new `/review` extension command with help text, path resolution (quoted and relative paths), markdown type checks, symlink rejection, and status notifications.
+- Added cross-platform browser launcher helper with platform-specific attempts (`open`, `xdg-open`, `start`/`explorer`), retry-on-failure behavior, and cached successful launcher.
+- Updated extension documentation with a new `document-reviewer` section and command usage/validation behavior.
+- Files changed:
+  - `extensions/document-reviewer.ts`
+  - `extensions/lib/open-external.ts`
+  - `extensions/README.md`
+  - `.features/document-reviewer-extension/tasks/001-scaffold-review-command-and-launcher.md`
+  - `.features/document-reviewer-extension/tasks/_active.md`
+- **Learnings for future iterations:**
+  - Keep launcher logic isolated in `extensions/lib/` so session-service tasks can reuse it without touching command handler code.
+  - Without a TypeScript test harness in this repo, capture manual verification steps directly in task execution notes to keep exceptions auditable.
+
+---
+
+## 2026-03-05 - Build local review session service (session/document/health)
+
+Task ID: 002
+
+- Implemented localhost-only `DocumentReviewService` with ephemeral port binding, startup safety checks, and command wiring so `/review` now creates server-backed sessions before browser launch.
+- Added session/document/health endpoints and a placeholder `/review/:id` page, with input validation and JSON error responses for invalid session requests.
+- Added in-memory `SessionStore` lifecycle tracking with TTL touch behavior, periodic cleanup hooks, and max-session eviction to prevent unbounded growth.
+- Hardened file loading with workspace-root containment, symlink escape protection via `realpath`, and max markdown size guardrails.
+- Files changed:
+  - `extensions/document-reviewer.ts`
+  - `extensions/document-reviewer/server.ts`
+  - `extensions/document-reviewer/session-store.ts`
+  - `extensions/README.md`
+- **Learnings for future iterations:**
+  - Keep service-side path checks independent from command checks so direct API calls cannot bypass workspace safety constraints.
+  - Use temporary transformed copies of TypeScript modules with Node's transform-types runtime to validate endpoints even when the repo has no dedicated TS test harness.
+
+---
+
+## 2026-03-06 - Add Mermaid static rendering with graceful fallback
+
+Task ID: 004
+
+- Added Mermaid fence detection in the markdown pipeline and inserted dedicated Mermaid placeholder blocks instead of generic code fences.
+- Implemented `ui/mermaid-block.js` to render static diagrams, retry renderer load safely, sanitize SVG output before insertion, and degrade per-block to source fallback when rendering fails.
+- Extended reviewer styling with calm Mermaid panel visuals, responsive SVG sizing, and clear fallback affordances that stay readable on long documents.
+- Wired server asset delivery for the new Mermaid UI module.
+- Files changed:
+  - `extensions/document-reviewer/server.ts`
+  - `extensions/document-reviewer/ui/app.js`
+  - `extensions/document-reviewer/ui/mermaid-block.js`
+  - `extensions/document-reviewer/ui/styles.css`
+  - `.features/document-reviewer-extension/tasks/004-add-mermaid-static-rendering.md`
+  - `.features/document-reviewer-extension/tasks/_active.md`
+  - `scripts/loop/progress-document-reviewer-extension.txt`
+- **Learnings for future iterations:**
+  - Keep rich renderer integrations in isolated UI modules and return structured `{ total, rendered, fallback }` metrics so status-strip copy can stay truthful without coupling app state to render internals.
+  - Preserve exactly one canonical copy of anchor/source text in the DOM and materialize fallback UI only when needed to avoid long-document memory inflation.
+
+---
+
+## 2026-03-06 - Implement Vim-style navigation and visual selection mode
+
+Task ID: 005
+
+- Added a dedicated keymap module for deterministic NORMAL/VISUAL/COMMENT mode transitions and keyboard motion actions (`j/k/h/l`, `Ctrl+u/d`, `v`, `c`, `Esc`).
+- Added a selection controller module to manage visual-mode lifecycle, selection highlighting classes, and DOM selection extension behavior.
+- Refactored reviewer app key handling to use a single dispatcher + action executor, added teardown for key listeners, and synchronized mode-strip messaging with visual-selection state.
+- Styled visual mode + active range highlighting to keep selected context visible without overpowering markdown readability.
+- Extended review service asset whitelist to serve `keymap.js` and `selection.js`.
+- Added unit tests for keymap action mapping and selection-controller behavior.
+- Files changed:
+  - `extensions/document-reviewer/server.ts`
+  - `extensions/document-reviewer/ui/app.js`
+  - `extensions/document-reviewer/ui/index.html`
+  - `extensions/document-reviewer/ui/styles.css`
+  - `extensions/document-reviewer/ui/keymap.js`
+  - `extensions/document-reviewer/ui/selection.js`
+  - `extensions/document-reviewer/ui/keymap.test.js`
+  - `extensions/document-reviewer/ui/selection.test.js`
+  - `.features/document-reviewer-extension/tasks/005-implement-vim-navigation-and-visual-mode.md`
+  - `.features/document-reviewer-extension/tasks/_active.md`
+  - `scripts/loop/progress-document-reviewer-extension.txt`
+- **Learnings for future iterations:**
+  - Keep key semantics as pure action-mapping functions so reviewer controls can be unit-tested without a DOM harness.
+  - For visual selection UX, only react when selection state flips to avoid costly `selectionchange` churn during drag/keyboard repeats.
+
+---
+
+## 2026-03-06 - Implement threaded comments API + UI (plain comments only)
+
+Task ID: 006
+
+- Added threaded comment APIs to the local review service: list threads, create thread from selection anchor, and append replies.
+- Built reviewer comment composer + threads panel modules with plain-text-only comment UX, empty-comment validation, and per-thread reply drafting.
+- Wired UI selection anchors to thread creation and thread-focus sync via inline document anchor markers.
+- Added server integration tests for comment/reply flows and validation edge cases, plus UI tests for composer/thread rendering behavior.
+- Files changed:
+  - `extensions/document-reviewer/server.ts`
+  - `extensions/document-reviewer/server.comments.test.ts`
+  - `extensions/document-reviewer/ui/app.js`
+  - `extensions/document-reviewer/ui/index.html`
+  - `extensions/document-reviewer/ui/styles.css`
+  - `extensions/document-reviewer/ui/comment-composer.js`
+  - `extensions/document-reviewer/ui/comment-composer.test.js`
+  - `extensions/document-reviewer/ui/threads-panel.js`
+  - `extensions/document-reviewer/ui/threads-panel.test.js`
+  - `.features/document-reviewer-extension/tasks/006-threaded-comments-plain-text-only.md`
+  - `.features/document-reviewer-extension/tasks/_active.md`
+  - `scripts/loop/progress-document-reviewer-extension.txt`
+- **Learnings for future iterations:**
+  - Keep thread-focus synchronization lightweight by toggling existing marker classes on active-thread changes instead of rebuilding all markers for every click.
+  - Treat review-panel summary metadata (e.g., health suffix) as panel state so local rerenders from validation/pending states don’t silently discard contextual status.
+
+---
+
+## 2026-03-06 - Add sidecar persistence + anchor re-matching/stale handling
+
+Task ID: 007
+
+- Implemented a sidecar comment repository (`.review/<docHash>.comments.json`) with atomic writes, schema metadata, and tolerant parsing that ignores unknown legacy fields.
+- Added anchor normalization/re-anchoring utilities (`exact` + optional context/offsets) and wired session startup to re-anchor persisted threads, marking unmatched anchors as `stale: true`.
+- Updated comments/replies APIs to persist after writes and to reject unmappable selection anchors.
+- Updated reviewer UI anchor payloads to use `exact`, surfaced stale-thread badges, and skipped marker rendering for stale or invalid offsets.
+- Expanded server and UI tests to cover persistence across sessions, stale detection after doc edits, legacy metadata compatibility, strict JSON request validation, and stale-thread panel rendering.
+- Files changed:
+  - `extensions/document-reviewer/anchors.ts`
+  - `extensions/document-reviewer/repository.ts`
+  - `extensions/document-reviewer/server.ts`
+  - `extensions/document-reviewer/server.comments.test.ts`
+  - `extensions/document-reviewer/ui/app.js`
+  - `extensions/document-reviewer/ui/threads-panel.js`
+  - `extensions/document-reviewer/ui/threads-panel.test.js`
+  - `extensions/document-reviewer/ui/styles.css`
+  - `.features/document-reviewer-extension/tasks/007-sidecar-persistence-and-stale-anchor-handling.md`
+  - `.features/document-reviewer-extension/tasks/_active.md`
+  - `scripts/loop/progress-document-reviewer-extension.txt`
+- **Learnings for future iterations:**
+  - Keep anchor handling in a dedicated module so server validation and session re-anchoring share identical semantics.
+  - Treat stale anchors as first-class state in both persistence and UI instead of dropping unresolved threads.
+
+---
+## 2026-03-06 - Implement End Review export and clipboard flow
+
+Task ID: 008
+
+- Added plain-text export compilation in `extensions/document-reviewer/export.ts`, including per-comment bullet formatting with anchor context labels and stale-anchor marking.
+- Added `/api/review/session/:id/export` endpoint in `extensions/document-reviewer/server.ts` with strict JSON/object validation and plain-format enforcement.
+- Added frontend End Review controller (`extensions/document-reviewer/ui/end-review.js`) and wired it into `ui/app.js` for export request, clipboard copy success feedback, and manual-copy fallback rendering.
+- Updated reviewer shell UI (`ui/index.html`, `ui/styles.css`) with an End Review action area, status messaging, and fallback textarea.
+- Expanded coverage with new tests for formatter logic, export endpoint behavior, and clipboard/fallback controller states.
+- Files changed:
+  - `extensions/document-reviewer/export.ts`
+  - `extensions/document-reviewer/export.test.ts`
+  - `extensions/document-reviewer/server.ts`
+  - `extensions/document-reviewer/server.comments.test.ts`
+  - `extensions/document-reviewer/ui/end-review.js`
+  - `extensions/document-reviewer/ui/end-review.test.js`
+  - `extensions/document-reviewer/ui/app.js`
+  - `extensions/document-reviewer/ui/index.html`
+  - `extensions/document-reviewer/ui/styles.css`
+  - `.features/document-reviewer-extension/tasks/008-end-review-export-and-clipboard.md`
+  - `.features/document-reviewer-extension/tasks/_active.md`
+  - `scripts/loop/progress-document-reviewer-extension.txt`
+- **Learnings for future iterations:**
+  - Preserve existing manual-copy fallback text when a new export attempt fails, so reviewers never lose recoverable output during transient errors.
+  - Validate export payload shape separately from format parsing; otherwise non-object JSON payloads can accidentally pass as default format requests.
+
+---
+
+## 2026-03-06 - Harden security, reliability, and final QA for reviewer extension
+
+Task ID: 009
+
+- Added session-scoped API token hardening for document reviewer routes and enforced `x-review-session-token` validation on document/comments/replies/export/health endpoints.
+- Updated reviewer bootstrap + frontend fetch flow so every session API request carries the ephemeral token, unauthorized requests are rejected with HTTP 401, and tokens cannot be overridden by caller-provided headers.
+- Added robust browser-launch fallback guidance with remote/headless troubleshooting (`launch-help.ts`) and wired fallback text into `/review` command failure handling.
+- Added keyboard shortcut `e` to trigger End Review directly for faster keyboard-only flow and updated key legend/docs.
+- Hardened Mermaid SVG sanitization by normalizing unsafe tag matching (`foreignObject` case-insensitive block) with unit coverage.
+- Expanded extension docs with keybindings, limitations, export behavior, token troubleshooting, and headless recovery guidance.
+- Validation run:
+  - `bun test extensions/document-reviewer/server.comments.test.ts extensions/document-reviewer/export.test.ts extensions/document-reviewer/launch-help.test.ts extensions/document-reviewer/ui/comment-composer.test.js extensions/document-reviewer/ui/end-review.test.js extensions/document-reviewer/ui/keymap.test.js extensions/document-reviewer/ui/mermaid-block.test.js extensions/document-reviewer/ui/selection.test.js extensions/document-reviewer/ui/threads-panel.test.js`
+- Files changed:
+  - `extensions/document-reviewer.ts`
+  - `extensions/document-reviewer/server.ts`
+  - `extensions/document-reviewer/launch-help.ts`
+  - `extensions/document-reviewer/launch-help.test.ts`
+  - `extensions/document-reviewer/server.comments.test.ts`
+  - `extensions/document-reviewer/ui/app.js`
+  - `extensions/document-reviewer/ui/keymap.js`
+  - `extensions/document-reviewer/ui/keymap.test.js`
+  - `extensions/document-reviewer/ui/mermaid-block.js`
+  - `extensions/document-reviewer/ui/mermaid-block.test.js`
+  - `extensions/document-reviewer/ui/index.html`
+  - `extensions/README.md`
+  - `LEARNINGS.md`
+  - `.features/document-reviewer-extension/tasks/009-harden-security-reliability-and-qa.md`
+  - `.features/document-reviewer-extension/tasks/_active.md`
+  - `scripts/loop/progress-document-reviewer-extension.txt`
+- **Learnings for future iterations:**
+  - Session tokens for localhost tooling are practical when injected through server-rendered bootstrap JSON plus a centralized frontend fetch helper.
+  - Separate launch-fallback copy into a pure helper so environment-specific troubleshooting can be tested without extension API mocks.
+
+---

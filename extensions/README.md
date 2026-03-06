@@ -94,6 +94,72 @@ The viewer tracks the original content of each file when first opened in a sessi
 
 ---
 
+## document-reviewer
+
+Provides a `/review` command for markdown review sessions backed by a localhost service and browser UI.
+
+### What it adds
+
+| Feature | Description |
+|---------|-------------|
+| `/review <path>` command | Validates a markdown path, creates a local review session, and opens the review URL |
+| Local review service (`127.0.0.1`) | Session/document/comments/export APIs bound to loopback only |
+| Ephemeral session token guard | Frontend API calls require `x-review-session-token`; missing/invalid tokens are rejected |
+| Keyboard-first reviewer UI | Vim-style navigation, visual selection, comment threads, and End Review export |
+| Cross-platform launcher | Opens target URL via `open` (macOS), `xdg-open` (Linux), or `start` (Windows) with manual fallback instructions |
+
+### Usage
+
+```text
+/review .features/document-reviewer-extension/prd.md
+/review "docs/Design Notes.md"
+/review help
+```
+
+### Keybindings inside reviewer UI
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Vertical move |
+| `h` / `l` | Horizontal move |
+| `Ctrl+d` / `Ctrl+u` | Page down/up |
+| `v` | Toggle visual mode |
+| `c` | Enter comment drafting mode |
+| `e` | End Review (copy export) |
+| `Esc` | Return to normal mode |
+
+### Validation behavior
+
+- Missing path shows usage help.
+- Non-existent path returns actionable file-not-found guidance.
+- Directories are rejected (must be a file).
+- Symlinks are rejected for workspace safety.
+- Non-markdown files are rejected (`.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx`).
+
+### Export behavior
+
+- End Review exports comments as plain-text bullets.
+- Clipboard success/failure is shown inline.
+- If clipboard write fails, manual-copy fallback text remains visible.
+
+### Limitations
+
+- Review service is local to the machine running Pi (`127.0.0.1` only).
+- One browser tab maps to one review session.
+- Markdown is read-only in reviewer mode (review, not editing workflow).
+
+### Troubleshooting
+
+- **Browser did not open automatically**
+  - The session still runs locally; copy the URL from editor output and open it manually.
+  - In SSH/headless environments, use the suggested `ssh -L` tunnel command from the fallback output.
+- **401 from review APIs**
+  - Reload the `/review` URL to refresh bootstrap token for that session.
+- **No comments to export**
+  - Create at least one thread/reply first, then trigger End Review again.
+
+---
+
 ## worktree-manager
 
 Manage feature workspaces with native Git worktrees.
