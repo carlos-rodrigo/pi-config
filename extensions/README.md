@@ -103,9 +103,9 @@ Provides a `/review` command for markdown review sessions backed by a localhost 
 | Feature | Description |
 |---------|-------------|
 | `/review <path>` command | Validates a markdown path, creates a local review session, and opens the review URL |
-| Local review service (`127.0.0.1`) | Session/document/comments/export APIs bound to loopback only |
+| Local review service (`127.0.0.1`) | Session/document APIs bound to loopback only |
 | Ephemeral session token guard | Frontend API calls require `x-review-session-token`; missing/invalid tokens are rejected |
-| Keyboard-first reviewer UI | Vim-style navigation, visual selection, comment threads, and End Review export |
+| Keyboard-first visualizer UI | Vim-style navigation with visual selection for focused markdown review |
 | Cross-platform launcher | Opens target URL via `open` (macOS), `xdg-open` (Linux), or `start` (Windows) with manual fallback instructions |
 
 ### Usage
@@ -124,8 +124,6 @@ Provides a `/review` command for markdown review sessions backed by a localhost 
 | `h` / `l` | Horizontal move |
 | `Ctrl+d` / `Ctrl+u` | Page down/up |
 | `v` | Toggle visual mode |
-| `c` | Enter comment drafting mode |
-| `e` | End Review (copy export) |
 | `Esc` | Return to normal mode |
 
 ### Validation behavior
@@ -135,12 +133,6 @@ Provides a `/review` command for markdown review sessions backed by a localhost 
 - Directories are rejected (must be a file).
 - Symlinks are rejected for workspace safety.
 - Non-markdown files are rejected (`.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx`).
-
-### Export behavior
-
-- End Review exports comments as plain-text bullets.
-- Clipboard success/failure is shown inline.
-- If clipboard write fails, manual-copy fallback text remains visible.
 
 ### Limitations
 
@@ -155,8 +147,6 @@ Provides a `/review` command for markdown review sessions backed by a localhost 
   - In SSH/headless environments, use the suggested `ssh -L` tunnel command from the fallback output.
 - **401 from review APIs**
   - Reload the `/review` URL to refresh bootstrap token for that session.
-- **No comments to export**
-  - Create at least one thread/reply first, then trigger End Review again.
 
 ---
 

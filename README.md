@@ -37,6 +37,8 @@ To update, just `git pull` — symlinks pick up changes automatically.
 Sub-agent definitions used by the subagent extension:
 
 - **oracle** — Deep reasoning second opinion (gpt-5.3-codex). For complex debugging, architecture decisions, and thorough code analysis. Read-only.
+- **crafter** — Implementation specialist (openai-codex/gpt-5.4). Executes coding tasks and `.features/*/tasks/*` with Context → Code → Review → Compound workflow.
+- **artist** — Frontend UI/UX specialist (claude-opus-4-6). Produces distinctive, production-grade interfaces with built-in design principles and AI Slop Test.
 - **librarian** — Code research across GitHub (Sonnet). Searches repos, reads library source code, traces implementations. Uses `gh` CLI.
 - **researcher** — Internet research (Sonnet). Investigates technologies, compares approaches, checks state of the art. Uses `curl`/`gh`.
 - **scout** — Fast codebase recon (Haiku). Quick investigation that returns compressed context for handoff to other agents.
@@ -46,6 +48,8 @@ Sub-agent definitions used by the subagent extension:
 Workflow prompt templates:
 
 - `/ask-oracle <question>` — Ask the oracle for a second opinion
+- `/ask-crafter <task>` — Delegate an implementation task to the crafter
+- `/ask-artist <task>` — Delegate a frontend UI/UX task to the artist
 - `/ask-librarian <question>` — Research codebases and library source code
 - `/research <topic>` — Investigate a technology or approach
 - `/deep-review <area>` — Scout the code, then have the oracle review it
@@ -60,9 +64,12 @@ Workflow prompt templates:
 ```
 # Direct — the main agent decides when to use sub-agents
 Use the oracle to review the auth logic in src/auth/. I want to make sure there are no edge cases.
+Use the crafter to implement .features/auth/tasks/003-session-timeout.md and report plan, changes, and verification.
 
 # Via prompt templates
 /ask-oracle Is there a better way to handle the state machine in src/parser.ts?
+/ask-crafter Implement .features/payments/tasks/005-webhook-retry-policy.md
+/ask-artist Build a settings page for user profile with avatar upload, theme picker, and notification preferences
 /ask-librarian How does Next.js App Router handle parallel routes? Show me the source code.
 /research What's the current best approach for real-time sync in web apps? Compare options.
 /research-and-plan Add end-to-end encryption to our messaging feature
