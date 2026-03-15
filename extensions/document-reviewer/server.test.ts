@@ -73,6 +73,52 @@ test("document sessions still expose markdown and finish by writing inline comme
 	assert.match(fs.readFileSync(fixture.filePath, "utf-8"), /Hello <!-- REVIEW: Clarify greeting --> world/);
 });
 
+test("rejects invalid comment metadata without storing the draft", async (t) => {
+	const fixture = makeTempMarkdown("# Title\n\nHello world\n");
+	const service = new DocumentReviewService();
+	await service.start();
+	t.after(async () => {
+		await service.stop();
+		fixture.cleanup();
+	});
+
+	const session = await service.createSession(fixture.filePath);
+	const apiBase = `${new URL(session.documentUrl).origin}/api/${session.sessionId}`;
+
+	const createCommentResponse = await postJson(`${apiBase}/comments`, {
+		selectedText: "Hello",
+		comment: "Clarify greeting",
+		offsetStart: -1,
+		offsetEnd: 99,
+	});
+	assert.equal(createCommentResponse.status, 400);
+	assert.deepEqual(await createCommentResponse.json(), {
+		error: "Comment offsets must be finite integers within the source markdown bounds.",
+	});
+
+	const commentsResponse = await fetch(`${apiBase}/comments`);
+	assert.equal(commentsResponse.status, 200);
+	assert.deepEqual(await commentsResponse.json(), { comments: [] });
+});
+
+test("rejects cross-origin requests outside the local review origin", async (t) => {
+	const fixture = makeTempMarkdown("# Title\n\nHello world\n");
+	const service = new DocumentReviewService();
+	await service.start();
+	t.after(async () => {
+		await service.stop();
+		fixture.cleanup();
+	});
+
+	const session = await service.createSession(fixture.filePath);
+	const response = await fetch(session.documentUrl, {
+		headers: { Origin: "https://evil.example" },
+	});
+
+	assert.equal(response.status, 403);
+	assert.deepEqual(await response.json(), { error: "Origin not allowed" });
+});
+
 test("pull request sessions expose PR metadata, store line hints, and finish via PR hook", async (t) => {
 	const fixture = makeTempMarkdown("# Title\n\nHello world\n");
 	const service = new DocumentReviewService();

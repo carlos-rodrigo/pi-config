@@ -83,6 +83,16 @@ interface PullRequestActiveSession extends BaseActiveSession {
 
 type ActiveSession = DocumentActiveSession | PullRequestActiveSession;
 
+class RequestError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+	) {
+		super(message);
+		this.name = "RequestError";
+	}
+}
+
 let service: DocumentReviewService | undefined;
 
 export async function getDocumentReviewService(): Promise<DocumentReviewService> {
@@ -211,10 +221,10 @@ export class DocumentReviewService {
 		const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
 		const pathname = url.pathname;
 
-		// CORS headers for local development
-		res.setHeader("Access-Control-Allow-Origin", "*");
-		res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-		res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+		if (!this.applyLocalOriginHeaders(req, res)) {
+			this.sendJson(res, 403, { error: "Origin not allowed" });
+			return;
+		}
 
 		if (req.method === "OPTIONS") {
 			res.writeHead(204);
@@ -287,17 +297,7 @@ export class DocumentReviewService {
 				}
 				const body = await this.readBody(req);
 				const data = JSON.parse(body) as Record<string, unknown>;
-				const comment: ReviewComment = {
-					id: crypto.randomBytes(4).toString("hex"),
-					selectedText: typeof data.selectedText === "string" ? data.selectedText : "",
-					comment: typeof data.comment === "string" ? data.comment : "",
-					offsetStart: typeof data.offsetStart === "number" ? data.offsetStart : 0,
-					offsetEnd: typeof data.offsetEnd === "number" ? data.offsetEnd : 0,
-					lineStart: typeof data.lineStart === "number" ? data.lineStart : undefined,
-					lineEnd: typeof data.lineEnd === "number" ? data.lineEnd : undefined,
-					inlineEligible: typeof data.inlineEligible === "boolean" ? data.inlineEligible : undefined,
-					fallbackReason: typeof data.fallbackReason === "string" ? data.fallbackReason : undefined,
-				};
+				const comment = this.createComment(session, data);
 				session.comments.push(comment);
 				this.sendJson(res, 201, { comment });
 				return;
@@ -343,6 +343,10 @@ export class DocumentReviewService {
 
 			this.sendJson(res, 404, { error: "Not found" });
 		} catch (error) {
+			if (error instanceof RequestError) {
+				this.sendJson(res, error.status, { error: error.message });
+				return;
+			}
 			const message = error instanceof Error ? error.message : String(error);
 			this.sendJson(res, 500, { error: message });
 		}
@@ -385,6 +389,89 @@ export class DocumentReviewService {
 		};
 	}
 
+	private applyLocalOriginHeaders(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+		const origin = req.headers.origin;
+		if (!origin) return true;
+		if (!this.isAllowedOrigin(origin)) return false;
+
+		res.setHeader("Access-Control-Allow-Origin", origin);
+		res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+		res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+		res.setHeader("Vary", "Origin");
+		return true;
+	}
+
+	private isAllowedOrigin(origin: string): boolean {
+		return origin === `http://127.0.0.1:${this.port}` || origin === `http://localhost:${this.port}`;
+	}
+
+	private createComment(session: ActiveSession, data: Record<string, unknown>): ReviewComment {
+		const selectedText = typeof data.selectedText === "string" ? data.selectedText : "";
+		const commentText = typeof data.comment === "string" ? data.comment : "";
+		const rawOffsetStart = data.offsetStart;
+		const rawOffsetEnd = data.offsetEnd;
+		const rawLineStart = data.lineStart;
+		const rawLineEnd = data.lineEnd;
+
+		if (!selectedText) {
+			throw new RequestError("Selected text is required to create a review comment.", 400);
+		}
+		if (!commentText.trim()) {
+			throw new RequestError("Comment text is required to create a review comment.", 400);
+		}
+		if (
+			typeof rawOffsetStart !== "number" ||
+			!Number.isInteger(rawOffsetStart) ||
+			typeof rawOffsetEnd !== "number" ||
+			!Number.isInteger(rawOffsetEnd) ||
+			rawOffsetStart < 0 ||
+			rawOffsetEnd < rawOffsetStart ||
+			rawOffsetEnd > session.markdown.length
+		) {
+			throw new RequestError("Comment offsets must be finite integers within the source markdown bounds.", 400);
+		}
+
+		const offsetStart = Number(rawOffsetStart);
+		const offsetEnd = Number(rawOffsetEnd);
+		if (session.markdown.slice(offsetStart, offsetEnd) !== selectedText) {
+			throw new RequestError("Comment selection no longer matches the source markdown at the provided offsets.", 400);
+		}
+		if (rawLineStart !== undefined || rawLineEnd !== undefined) {
+			if (
+				typeof rawLineStart !== "number" ||
+				!Number.isInteger(rawLineStart) ||
+				typeof rawLineEnd !== "number" ||
+				!Number.isInteger(rawLineEnd) ||
+				rawLineStart <= 0 ||
+				rawLineEnd <= 0 ||
+				rawLineEnd < rawLineStart
+			) {
+				throw new RequestError("Comment line metadata must be positive integers with lineEnd >= lineStart.", 400);
+			}
+		}
+
+		const normalizedLineStart = Number.isInteger(rawLineStart) ? Number(rawLineStart) : undefined;
+		const normalizedLineEnd = Number.isInteger(rawLineEnd) ? Number(rawLineEnd) : undefined;
+		const inlineEligible =
+			normalizedLineStart !== undefined && normalizedLineEnd !== undefined ? normalizedLineStart === normalizedLineEnd : undefined;
+		const fallbackReason =
+			normalizedLineStart !== undefined && normalizedLineEnd !== undefined && normalizedLineStart !== normalizedLineEnd
+				? "multi_line_selection"
+				: undefined;
+
+		return {
+			id: crypto.randomBytes(4).toString("hex"),
+			selectedText,
+			comment: commentText,
+			offsetStart,
+			offsetEnd,
+			lineStart: normalizedLineStart,
+			lineEnd: normalizedLineEnd,
+			inlineEligible,
+			fallbackReason,
+		};
+	}
+
 	/**
 	 * Insert review comments inline into the markdown, right after the selected text.
 	 * Comments are inserted from last to first (by offset) to preserve earlier offsets.
@@ -392,17 +479,18 @@ export class DocumentReviewService {
 	private insertCommentsIntoMarkdown(markdown: string, comments: ReviewComment[]): string {
 		if (comments.length === 0) return markdown;
 
-		// Sort by offsetEnd descending so inserting doesn't shift earlier offsets
-		const sorted = [...comments].sort((a, b) => b.offsetEnd - a.offsetEnd);
+		const sorted = [...comments].sort((a, b) => a.offsetEnd - b.offsetEnd);
+		const parts: string[] = [];
+		let cursor = 0;
 
-		let result = markdown;
 		for (const comment of sorted) {
-			const annotation = ` <!-- REVIEW: ${comment.comment.replace(/-->/g, "~~>")} -->`;
-			// Insert right after the selected text ends
-			result = result.slice(0, comment.offsetEnd) + annotation + result.slice(comment.offsetEnd);
+			parts.push(markdown.slice(cursor, comment.offsetEnd));
+			parts.push(` <!-- REVIEW: ${comment.comment.replace(/-->/g, "~~>")} -->`);
+			cursor = comment.offsetEnd;
 		}
+		parts.push(markdown.slice(cursor));
 
-		return result;
+		return parts.join("");
 	}
 
 	private sendJson(res: http.ServerResponse, status: number, data: unknown): void {
