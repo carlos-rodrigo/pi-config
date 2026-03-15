@@ -135,13 +135,11 @@ function extractGitHubRepoFullName(remoteUrl: string): string | null {
 	return `${parts[0]}/${parts[1]}`;
 }
 
-function createReviewPayloadTempFile(payload: Record<string, unknown>): string {
-	const tempFile = path.join(
-		os.tmpdir(),
-		`pi-pr-review-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
-	);
-	fs.writeFileSync(tempFile, JSON.stringify(payload), "utf-8");
-	return tempFile;
+function createReviewPayloadTempFile(payload: Record<string, unknown>): { tempDir: string; tempFile: string } {
+	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-pr-review-"));
+	const tempFile = path.join(tempDir, "review.json");
+	fs.writeFileSync(tempFile, JSON.stringify(payload), { encoding: "utf-8", mode: 0o600 });
+	return { tempDir, tempFile };
 }
 
 function parseJson<T>(raw: string, context: string): T {
@@ -168,6 +166,19 @@ function assertNonEmptyString(value: unknown, field: string, context: string): s
 	return value;
 }
 
+function hasInlineReviewComments(payload: Record<string, unknown> | undefined): boolean {
+	const comments = payload?.comments;
+	return Array.isArray(comments) && comments.length > 0;
+}
+
+function isInlineValidationFailureMessage(message: string): boolean {
+	return (
+		/422/.test(message) &&
+		/validation/i.test(message) &&
+		/(comments?\..*(line|side|start_line|start_side)|review comment|diff hunk|position)/i.test(message)
+	);
+}
+
 function handleGitHubApiFailure(action: string, result: ExecResult, details?: Record<string, unknown>): never {
 	const message = normalizeErrorText(result.stderr, result.stdout);
 	if (/auth/i.test(message) || /login/i.test(message) || /401/.test(message)) {
@@ -190,7 +201,8 @@ function handleGitHubApiFailure(action: string, result: ExecResult, details?: Re
 
 function handleReviewSubmitFailure(result: ExecResult, details?: Record<string, unknown>): never {
 	const message = normalizeErrorText(result.stderr, result.stdout);
-	if (/422/.test(message) && /validation/i.test(message)) {
+	const payload = details?.payload as Record<string, unknown> | undefined;
+	if (hasInlineReviewComments(payload) && isInlineValidationFailureMessage(message)) {
 		throw new GitHubPullRequestError(
 			"GitHub rejected one or more inline PR review comments. Retrying without inline comments may preserve the feedback.",
 			{
@@ -319,11 +331,11 @@ export async function submitPullRequestReview(
 	if (typeof input.body === "string" && input.body.trim().length > 0) {
 		payload.body = input.body;
 	}
-	if (Array.isArray(input.comments)) {
+	if (Array.isArray(input.comments) && input.comments.length > 0) {
 		payload.comments = input.comments;
 	}
 
-	const tempFile = createReviewPayloadTempFile(payload);
+	const { tempDir, tempFile } = createReviewPayloadTempFile(payload);
 	try {
 		const result = await exec(
 			"gh",
@@ -341,7 +353,7 @@ export async function submitPullRequestReview(
 			htmlUrl: typeof data.html_url === "string" ? data.html_url : undefined,
 		};
 	} finally {
-		fs.rmSync(tempFile, { force: true });
+		fs.rmSync(tempDir, { recursive: true, force: true });
 	}
 }
 

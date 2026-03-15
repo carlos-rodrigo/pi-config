@@ -315,10 +315,13 @@ test("fetchPullRequestFiles maps auth failures to login guidance", async () => {
 test("submitPullRequestReview posts one grouped GitHub review payload", async () => {
 	let seenArgs: string[] = [];
 	let seenPayload: unknown;
+	let inputPath = "";
+	let inputMode = 0;
 	const exec = createExec((_command, args) => {
 		seenArgs = args;
-		const inputPath = args[args.indexOf("--input") + 1];
-		seenPayload = JSON.parse(fs.readFileSync(inputPath!, "utf-8"));
+		inputPath = args[args.indexOf("--input") + 1] ?? "";
+		seenPayload = JSON.parse(fs.readFileSync(inputPath, "utf-8"));
+		inputMode = fs.statSync(inputPath).mode & 0o777;
 		return {
 			code: 0,
 			stdout: JSON.stringify({ id: 99, html_url: "https://github.com/acme/widgets/pull/42#pullrequestreview-99" }),
@@ -350,6 +353,8 @@ test("submitPullRequestReview posts one grouped GitHub review payload", async ()
 		body: "### Fallback comments\n\n- Example",
 		comments: [{ path: "docs/README.md", body: "Looks good", line: 12, side: "RIGHT" }],
 	});
+	assert.equal(inputMode, 0o600);
+	assert.equal(fs.existsSync(inputPath), false);
 });
 
 test("submitPullRequestReview marks 422 inline validation failures for fallback retry handling", async () => {
@@ -370,5 +375,25 @@ test("submitPullRequestReview marks 422 inline validation failures for fallback 
 			error.message ===
 				"GitHub rejected one or more inline PR review comments. Retrying without inline comments may preserve the feedback." &&
 			isPullRequestReviewInlineValidationFailure(error),
+	);
+});
+
+test("submitPullRequestReview leaves unrelated 422 validation failures as hard errors", async () => {
+	const exec = createExec(() => ({
+		code: 1,
+		stdout: "",
+		stderr: "gh: HTTP 422 Validation Failed ({\"message\":\"Validation Failed\",\"errors\":[{\"field\":\"body\"}]})",
+	}));
+
+	await assert.rejects(
+		() =>
+			submitPullRequestReview(exec, sampleReference, {
+				commitId: "abc123",
+				body: "### Fallback comments\n\n- Example",
+			}),
+		(error) =>
+			error instanceof GitHubPullRequestError &&
+			error.code === "GITHUB_API_FAILED" &&
+			!isPullRequestReviewInlineValidationFailure(error),
 	);
 });

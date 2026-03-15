@@ -180,32 +180,21 @@ export async function publishPullRequestReview(
 		const files = await dependencies.refreshFiles();
 		const diffMap = buildPullRequestDiffMap(files);
 		const headShaChanged = metadata.headSha !== input.pullRequest.headSha;
-		const inlineComments = headShaChanged
-			? []
-			: input.comments.flatMap((comment) => {
-				const target = getRightSideInlineCommentTarget(
+		const commentTargets = headShaChanged
+			? input.comments.map((comment) => ({ comment, target: null }))
+			: input.comments.map((comment) => ({
+				comment,
+				target: getRightSideInlineCommentTarget(
 					{
 						filePath: input.pullRequest.filePath,
 						lineStart: comment.lineStart,
 						lineEnd: comment.lineEnd,
 					},
 					diffMap,
-				);
-				return target ? [{ ...target, body: comment.comment }] : [];
-			});
-		const fallbackComments =
-			headShaChanged || inlineComments.length === 0
-				? [...input.comments]
-				: input.comments.filter((comment) =>
-					getRightSideInlineCommentTarget(
-						{
-							filePath: input.pullRequest.filePath,
-							lineStart: comment.lineStart,
-							lineEnd: comment.lineEnd,
-						},
-						diffMap,
-					) === null,
-				);
+				),
+			}));
+		const inlineComments = commentTargets.flatMap(({ comment, target }) => (target ? [{ ...target, body: comment.comment }] : []));
+		const fallbackComments = commentTargets.filter(({ target }) => target === null).map(({ comment }) => comment);
 
 		const submitRequest = {
 			commitId: metadata.headSha,
