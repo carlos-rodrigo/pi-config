@@ -134,6 +134,17 @@ export interface ReviewSelectionMetadata {
 	fallbackReason?: string;
 }
 
+export interface ReviewSelectionDraft extends ReviewSelectionMetadata {
+	selectedText: string;
+}
+
+export interface PullRequestSessionDisplayContext {
+	owner: string;
+	repo: string;
+	number: number;
+	filePath?: string;
+}
+
 export function computeSelectionMetadata(markdown: string, selectedText: string): ReviewSelectionMetadata {
 	const exactMatchIndex = markdown.indexOf(selectedText);
 	const trimmedSelection = selectedText.trim();
@@ -162,6 +173,40 @@ export function computeSelectionMetadata(markdown: string, selectedText: string)
 		inlineEligible,
 		fallbackReason: inlineEligible ? undefined : "multi_line_selection",
 	};
+}
+
+export function buildCommentDraftPayload(sessionMode: "document" | "pull_request", selection: ReviewSelectionDraft, comment: string) {
+	const payload: Record<string, unknown> = {
+		selectedText: selection.selectedText,
+		comment,
+		offsetStart: selection.offsetStart,
+		offsetEnd: selection.offsetEnd,
+	};
+
+	if (sessionMode === "pull_request" && selection.lineStart !== undefined && selection.lineEnd !== undefined) {
+		payload.lineStart = selection.lineStart;
+		payload.lineEnd = selection.lineEnd;
+	}
+
+	return payload;
+}
+
+export function formatPullRequestSessionContext(
+	pullRequest: PullRequestSessionDisplayContext | null,
+	sessionFilePath = "",
+): string {
+	if (!pullRequest) return "";
+	const prLabel = `${pullRequest.owner}/${pullRequest.repo}#${pullRequest.number}`;
+	const fileLabel = pullRequest.filePath || sessionFilePath;
+	return prLabel + (fileLabel ? ` · ${fileLabel}` : "");
+}
+
+export function buildFinishDescription(sessionMode: "document" | "pull_request", commentCount: number): string {
+	if (sessionMode === "pull_request") {
+		return `This will submit <strong id="finish-count">${commentCount}</strong> comment(s) to the GitHub pull request review. Single-line selections stay inline when possible; multi-line selections are grouped under <code>Fallback comments</code>.`;
+	}
+
+	return `This will insert <strong id="finish-count">${commentCount}</strong> comment(s) as <code>&lt;!-- REVIEW: ... --&gt;</code> annotations into the original markdown file.`;
 }
 
 function escapeHtml(text: string): string {
@@ -811,6 +856,9 @@ function getScript(sessionId: string): string {
   const PAGE_STEP_FACTOR = 0.5;
   const CARET_VIEWPORT_PADDING = 28;
   const computeSelectionMetadata = ${computeSelectionMetadata.toString()};
+  const buildCommentDraftPayload = ${buildCommentDraftPayload.toString()};
+  const formatPullRequestSessionContext = ${formatPullRequestSessionContext.toString()};
+  const buildFinishDescription = ${buildFinishDescription.toString()};
 
   let comments = [];
   let pendingSelection = null;
@@ -840,7 +888,6 @@ function getScript(sessionId: string): string {
   const popupSelectedText = document.getElementById('popup-selected-text');
   const popupModeHint = document.getElementById('popup-mode-hint');
   const finishModal = document.getElementById('finish-modal');
-  const finishCountEl = document.getElementById('finish-count');
   const finishDescriptionEl = document.getElementById('finish-description');
   const finishButton = document.getElementById('finish-btn');
   const finishConfirmButton = document.getElementById('finish-confirm');
@@ -958,32 +1005,26 @@ function getScript(sessionId: string): string {
   }
 
   function renderSessionContext() {
-    if (!isPullRequestMode()) {
+    const contextText = isPullRequestMode()
+      ? formatPullRequestSessionContext(pullRequestContext, sessionFilePath)
+      : '';
+
+    if (!contextText) {
       sessionContextEl.classList.add('hidden');
       sessionContextEl.textContent = '';
       sessionContextEl.removeAttribute('title');
       return;
     }
 
-    const prLabel = pullRequestContext.owner + '/' + pullRequestContext.repo + '#' + pullRequestContext.number;
-    const fileLabel = pullRequestContext.filePath || sessionFilePath;
-    const contextText = prLabel + (fileLabel ? ' · ' + fileLabel : '');
     sessionContextEl.textContent = contextText;
     sessionContextEl.title = contextText;
     sessionContextEl.classList.remove('hidden');
   }
 
   function renderFinishCopy() {
-    if (isPullRequestMode()) {
-      finishDescriptionEl.innerHTML = 'This will submit <strong id="finish-count">' + comments.length + '</strong> comment(s) to the GitHub pull request review. Single-line selections stay inline when possible; multi-line selections are grouped under <code>Fallback comments</code>.';
-      finishConfirmButton.textContent = 'Finish & Submit';
-      finishButton.title = 'Finish review and submit PR comments';
-      return;
-    }
-
-    finishDescriptionEl.innerHTML = 'This will insert <strong id="finish-count">' + comments.length + '</strong> comment(s) as <code>&lt;!-- REVIEW: ... --&gt;</code> annotations into the original markdown file.';
-    finishConfirmButton.textContent = 'Finish & Save';
-    finishButton.title = 'Finish review and write comments to file';
+    finishDescriptionEl.innerHTML = buildFinishDescription(isPullRequestMode() ? 'pull_request' : 'document', comments.length);
+    finishConfirmButton.textContent = isPullRequestMode() ? 'Finish & Submit' : 'Finish & Save';
+    finishButton.title = isPullRequestMode() ? 'Finish review and submit PR comments' : 'Finish review and write comments to file';
   }
 
   function getLineLabel(lineStart, lineEnd) {
@@ -1276,18 +1317,7 @@ function getScript(sessionId: string): string {
 
   // ─── Comments ───
   async function addComment(selection, commentText) {
-    const body = {
-      selectedText: selection.selectedText,
-      comment: commentText,
-      offsetStart: selection.offsetStart,
-      offsetEnd: selection.offsetEnd,
-      ...(isPullRequestMode() && selection.lineStart !== undefined && selection.lineEnd !== undefined
-        ? {
-            lineStart: selection.lineStart,
-            lineEnd: selection.lineEnd,
-          }
-        : {}),
-    };
+    const body = buildCommentDraftPayload(isPullRequestMode() ? 'pull_request' : 'document', selection, commentText);
 
     const res = await fetch(API_BASE + '/comments', {
       method: 'POST',
