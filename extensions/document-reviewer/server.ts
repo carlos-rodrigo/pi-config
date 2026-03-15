@@ -4,6 +4,8 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { buildReviewPage } from "./review-page.js";
 
+export type ReviewSessionMode = "document" | "pull_request";
+
 export interface ReviewSession {
 	sessionId: string;
 	title: string;
@@ -21,16 +23,65 @@ export interface ReviewComment {
 	offsetStart: number;
 	/** Character offset in the original markdown where the selected text ends */
 	offsetEnd: number;
+	lineStart?: number;
+	lineEnd?: number;
+	inlineEligible?: boolean;
+	fallbackReason?: string;
 }
 
-interface ActiveSession {
+export interface PullRequestReviewContext {
+	owner: string;
+	repo: string;
+	number: number;
+	headSha: string;
+	baseSha: string;
+	filePath: string;
+	worktreePath: string;
+	title?: string;
+	url?: string;
+}
+
+export interface PullRequestFinishInput {
+	comments: ReviewComment[];
+	pullRequest: PullRequestReviewContext;
+	filePath: string;
+	markdown: string;
+	title: string;
+}
+
+export interface PullRequestFinishResult {
+	status: string;
+	inlineComments: number;
+	fallbackComments: number;
+}
+
+export interface CreatePullRequestSessionOptions {
+	filePath: string;
+	pullRequest: PullRequestReviewContext;
+	onPublishReview?: (input: PullRequestFinishInput) => Promise<PullRequestFinishResult>;
+}
+
+interface BaseActiveSession {
 	sessionId: string;
 	filePath: string;
 	title: string;
 	markdown: string;
 	comments: ReviewComment[];
 	onFinish?: (comments: ReviewComment[]) => void;
+	mode: ReviewSessionMode;
 }
+
+interface DocumentActiveSession extends BaseActiveSession {
+	mode: "document";
+}
+
+interface PullRequestActiveSession extends BaseActiveSession {
+	mode: "pull_request";
+	pullRequest: PullRequestReviewContext;
+	onPublishReview?: (input: PullRequestFinishInput) => Promise<PullRequestFinishResult>;
+}
+
+type ActiveSession = DocumentActiveSession | PullRequestActiveSession;
 
 let service: DocumentReviewService | undefined;
 
@@ -48,6 +99,8 @@ export class DocumentReviewService {
 	private sessions = new Map<string, ActiveSession>();
 
 	async start(): Promise<void> {
+		if (this.server) return;
+
 		return new Promise((resolve, reject) => {
 			this.server = http.createServer((req, res) => this.handleRequest(req, res));
 
@@ -62,30 +115,39 @@ export class DocumentReviewService {
 		});
 	}
 
+	async stop(): Promise<void> {
+		if (!this.server) return;
+
+		const server = this.server;
+		this.server = undefined;
+		this.port = 0;
+		this.sessions.clear();
+		if (service === this) {
+			service = undefined;
+		}
+
+		await new Promise<void>((resolve, reject) => {
+			server.close((error) => {
+				if (error) {
+					reject(error);
+					return;
+				}
+				resolve();
+			});
+		});
+	}
+
 	async createSession(filePath: string): Promise<ReviewSession> {
-		const markdown = await fs.promises.readFile(filePath, "utf-8");
-		const sessionId = crypto.randomBytes(8).toString("hex");
-		const title = path.basename(filePath);
+		return this.createStoredSession({ mode: "document", filePath });
+	}
 
-		const session: ActiveSession = {
-			sessionId,
-			filePath,
-			title,
-			markdown,
-			comments: [],
-		};
-
-		this.sessions.set(sessionId, session);
-
-		const base = `http://127.0.0.1:${this.port}`;
-		return {
-			sessionId,
-			title,
-			filePath,
-			reviewUrl: `${base}/review/${sessionId}`,
-			healthUrl: `${base}/health`,
-			documentUrl: `${base}/api/${sessionId}/document`,
-		};
+	async createPullRequestSession(options: CreatePullRequestSessionOptions): Promise<ReviewSession> {
+		return this.createStoredSession({
+			mode: "pull_request",
+			filePath: options.filePath,
+			pullRequest: options.pullRequest,
+			onPublishReview: options.onPublishReview,
+		});
 	}
 
 	waitForFinish(sessionId: string): Promise<ReviewComment[]> {
@@ -97,6 +159,52 @@ export class DocumentReviewService {
 			}
 			session.onFinish = resolve;
 		});
+	}
+
+	private async createStoredSession(
+		options:
+			| { mode: "document"; filePath: string }
+			| { mode: "pull_request"; filePath: string; pullRequest: PullRequestReviewContext; onPublishReview?: CreatePullRequestSessionOptions["onPublishReview"] },
+	): Promise<ReviewSession> {
+		const markdown = await fs.promises.readFile(options.filePath, "utf-8");
+		const sessionId = crypto.randomBytes(8).toString("hex");
+		const title = path.basename(options.filePath);
+
+		const session: ActiveSession =
+			options.mode === "pull_request"
+				? {
+					sessionId,
+					filePath: options.filePath,
+					title,
+					markdown,
+					comments: [],
+					mode: "pull_request",
+					pullRequest: options.pullRequest,
+					onPublishReview: options.onPublishReview,
+				}
+				: {
+					sessionId,
+					filePath: options.filePath,
+					title,
+					markdown,
+					comments: [],
+					mode: "document",
+				};
+
+		this.sessions.set(sessionId, session);
+		return this.buildSessionResponse(session);
+	}
+
+	private buildSessionResponse(session: ActiveSession): ReviewSession {
+		const base = `http://127.0.0.1:${this.port}`;
+		return {
+			sessionId: session.sessionId,
+			title: session.title,
+			filePath: session.filePath,
+			reviewUrl: `${base}/review/${session.sessionId}`,
+			healthUrl: `${base}/health`,
+			documentUrl: `${base}/api/${session.sessionId}/document`,
+		};
 	}
 
 	private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -148,9 +256,11 @@ export class DocumentReviewService {
 					return;
 				}
 				this.sendJson(res, 200, {
+					mode: session.mode,
 					title: session.title,
 					markdown: session.markdown,
 					filePath: session.filePath,
+					pullRequest: session.mode === "pull_request" ? session.pullRequest : null,
 				});
 				return;
 			}
@@ -176,13 +286,17 @@ export class DocumentReviewService {
 					return;
 				}
 				const body = await this.readBody(req);
-				const data = JSON.parse(body);
+				const data = JSON.parse(body) as Record<string, unknown>;
 				const comment: ReviewComment = {
 					id: crypto.randomBytes(4).toString("hex"),
-					selectedText: data.selectedText ?? "",
-					comment: data.comment ?? "",
-					offsetStart: data.offsetStart ?? 0,
-					offsetEnd: data.offsetEnd ?? 0,
+					selectedText: typeof data.selectedText === "string" ? data.selectedText : "",
+					comment: typeof data.comment === "string" ? data.comment : "",
+					offsetStart: typeof data.offsetStart === "number" ? data.offsetStart : 0,
+					offsetEnd: typeof data.offsetEnd === "number" ? data.offsetEnd : 0,
+					lineStart: typeof data.lineStart === "number" ? data.lineStart : undefined,
+					lineEnd: typeof data.lineEnd === "number" ? data.lineEnd : undefined,
+					inlineEligible: typeof data.inlineEligible === "boolean" ? data.inlineEligible : undefined,
+					fallbackReason: typeof data.fallbackReason === "string" ? data.fallbackReason : undefined,
 				};
 				session.comments.push(comment);
 				this.sendJson(res, 201, { comment });
@@ -203,7 +317,7 @@ export class DocumentReviewService {
 				return;
 			}
 
-			// POST /api/:sessionId/finish — finish the review, write comments to file
+			// POST /api/:sessionId/finish — finish the review and branch by session mode
 			const finishMatch = pathname.match(/^\/api\/([a-f0-9]+)\/finish$/);
 			if (finishMatch && req.method === "POST") {
 				const session = this.sessions.get(finishMatch[1]!);
@@ -212,25 +326,18 @@ export class DocumentReviewService {
 					return;
 				}
 
-				// Write comments inline into the markdown file
-				const annotated = this.insertCommentsIntoMarkdown(session.markdown, session.comments);
-				await fs.promises.writeFile(session.filePath, annotated, "utf-8");
-
 				const comments = [...session.comments];
+				const responsePayload =
+					session.mode === "pull_request"
+						? await this.finishPullRequestSession(session, comments)
+						: await this.finishDocumentSession(session, comments);
 
-				// Trigger the onFinish callback
 				if (session.onFinish) {
 					session.onFinish(comments);
 				}
 
-				// Clean up session
 				this.sessions.delete(finishMatch[1]!);
-
-				this.sendJson(res, 200, {
-					status: "finished",
-					commentsWritten: comments.length,
-					filePath: session.filePath,
-				});
+				this.sendJson(res, 200, responsePayload);
 				return;
 			}
 
@@ -239,6 +346,43 @@ export class DocumentReviewService {
 			const message = error instanceof Error ? error.message : String(error);
 			this.sendJson(res, 500, { error: message });
 		}
+	}
+
+	private async finishDocumentSession(session: DocumentActiveSession, comments: ReviewComment[]) {
+		const annotated = this.insertCommentsIntoMarkdown(session.markdown, comments);
+		await fs.promises.writeFile(session.filePath, annotated, "utf-8");
+		return {
+			status: "finished",
+			mode: session.mode,
+			commentsWritten: comments.length,
+			filePath: session.filePath,
+		};
+	}
+
+	private async finishPullRequestSession(session: PullRequestActiveSession, comments: ReviewComment[]) {
+		const publishResult = session.onPublishReview
+			? await session.onPublishReview({
+				comments,
+				pullRequest: session.pullRequest,
+				filePath: session.filePath,
+				markdown: session.markdown,
+				title: session.title,
+			})
+			: {
+				status: "submitted",
+				inlineComments: 0,
+				fallbackComments: comments.length,
+			};
+
+		return {
+			status: "finished",
+			mode: session.mode,
+			commentsSubmitted: comments.length,
+			inlineComments: publishResult.inlineComments,
+			fallbackComments: publishResult.fallbackComments,
+			filePath: session.filePath,
+			pullRequest: session.pullRequest,
+		};
 	}
 
 	/**
