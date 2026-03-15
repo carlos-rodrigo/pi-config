@@ -2,6 +2,8 @@ import * as http from "node:http";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
+import type { SubmitPullRequestReviewInput } from "./github-pr.js";
+import { buildPullRequestDiffMap, getRightSideInlineCommentTarget } from "./pr-diff-map.js";
 import { buildReviewPage } from "./review-page.js";
 
 export type ReviewSessionMode = "document" | "pull_request";
@@ -53,6 +55,22 @@ export interface PullRequestFinishResult {
 	status: string;
 	inlineComments: number;
 	fallbackComments: number;
+	errorComments: number;
+	cleanupAttempted: boolean;
+	cleanupError?: string;
+}
+
+export interface PullRequestCleanupResult {
+	ok: boolean;
+	error?: string;
+}
+
+export interface PullRequestPublishDependencies {
+	refreshMetadata: () => Promise<{ headSha: string }>;
+	refreshFiles: () => Promise<readonly { filename: string; patch?: string | null }[]>;
+	submitReview: (input: SubmitPullRequestReviewInput) => Promise<unknown>;
+	cleanupWorktree?: () => Promise<PullRequestCleanupResult>;
+	isInlineValidationFailure?: (error: unknown) => boolean;
 }
 
 export interface CreatePullRequestSessionOptions {
@@ -101,6 +119,140 @@ export async function getDocumentReviewService(): Promise<DocumentReviewService>
 		await service.start();
 	}
 	return service;
+}
+
+const FALLBACK_SNIPPET_LIMIT = 180;
+
+function normalizeFallbackText(text: string): string {
+	return text.replace(/\r\n?/g, "\n").trim();
+}
+
+function escapeFallbackMarkdown(text: string): string {
+	return text
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/\\/g, "\\\\")
+		.replace(/([`*_#[\]|])/g, "\\$1");
+}
+
+function truncateFallbackSnippet(text: string): string {
+	if (text.length <= FALLBACK_SNIPPET_LIMIT) return text;
+	return `${text.slice(0, FALLBACK_SNIPPET_LIMIT - 1).trimEnd()}…`;
+}
+
+export function buildFallbackReviewBody(filePath: string, comments: readonly ReviewComment[]): string | undefined {
+	if (comments.length === 0) return undefined;
+
+	const entries = comments.map((comment) => {
+		const location = comment.lineStart ? `${filePath}:${comment.lineStart}` : filePath;
+		const snippet = truncateFallbackSnippet(normalizeFallbackText(comment.selectedText).replace(/\s+/g, " "));
+		const note = normalizeFallbackText(comment.comment);
+		return [
+			`- \`${escapeFallbackMarkdown(location)}\``,
+			`  - Snippet: ${escapeFallbackMarkdown(snippet || "(empty selection)")}`,
+			`  - Note: ${escapeFallbackMarkdown(note || "(empty note)")}`,
+		].join("\n");
+	});
+
+	return ["### Fallback comments", "", ...entries].join("\n\n");
+}
+
+export async function publishPullRequestReview(
+	input: PullRequestFinishInput,
+	dependencies: PullRequestPublishDependencies,
+): Promise<PullRequestFinishResult> {
+	const result: PullRequestFinishResult = {
+		status: "no_comments",
+		inlineComments: 0,
+		fallbackComments: 0,
+		errorComments: 0,
+		cleanupAttempted: false,
+	};
+
+	let pendingError: unknown;
+	try {
+		if (input.comments.length === 0) {
+			return result;
+		}
+
+		const metadata = await dependencies.refreshMetadata();
+		const files = await dependencies.refreshFiles();
+		const diffMap = buildPullRequestDiffMap(files);
+		const headShaChanged = metadata.headSha !== input.pullRequest.headSha;
+		const inlineComments = headShaChanged
+			? []
+			: input.comments.flatMap((comment) => {
+				const target = getRightSideInlineCommentTarget(
+					{
+						filePath: input.pullRequest.filePath,
+						lineStart: comment.lineStart,
+						lineEnd: comment.lineEnd,
+					},
+					diffMap,
+				);
+				return target ? [{ ...target, body: comment.comment }] : [];
+			});
+		const fallbackComments =
+			headShaChanged || inlineComments.length === 0
+				? [...input.comments]
+				: input.comments.filter((comment) =>
+					getRightSideInlineCommentTarget(
+						{
+							filePath: input.pullRequest.filePath,
+							lineStart: comment.lineStart,
+							lineEnd: comment.lineEnd,
+						},
+						diffMap,
+					) === null,
+				);
+
+		const submitRequest = {
+			commitId: metadata.headSha,
+			comments: inlineComments,
+			body: buildFallbackReviewBody(input.pullRequest.filePath, fallbackComments),
+		};
+
+		try {
+			await dependencies.submitReview(submitRequest);
+			result.status = "submitted";
+			result.inlineComments = inlineComments.length;
+			result.fallbackComments = fallbackComments.length;
+			return result;
+		} catch (error) {
+			if (inlineComments.length > 0 && dependencies.isInlineValidationFailure?.(error)) {
+				await dependencies.submitReview({
+					commitId: metadata.headSha,
+					comments: [],
+					body: buildFallbackReviewBody(input.pullRequest.filePath, input.comments),
+				});
+				result.status = "submitted_with_fallback_retry";
+				result.inlineComments = 0;
+				result.fallbackComments = input.comments.length;
+				return result;
+			}
+			throw error;
+		}
+	} catch (error) {
+		pendingError = error;
+	} finally {
+		if (dependencies.cleanupWorktree) {
+			result.cleanupAttempted = true;
+			try {
+				const cleanupResult = await dependencies.cleanupWorktree();
+				if (!cleanupResult.ok && cleanupResult.error) {
+					result.cleanupError = cleanupResult.error;
+				}
+			} catch (error) {
+				result.cleanupError = error instanceof Error ? error.message : String(error);
+			}
+		}
+	}
+
+	if (pendingError) {
+		throw pendingError;
+	}
+	return result;
 }
 
 export class DocumentReviewService {
@@ -376,6 +528,8 @@ export class DocumentReviewService {
 				status: "submitted",
 				inlineComments: 0,
 				fallbackComments: comments.length,
+				errorComments: 0,
+				cleanupAttempted: false,
 			};
 
 		return {
@@ -384,6 +538,9 @@ export class DocumentReviewService {
 			commentsSubmitted: comments.length,
 			inlineComments: publishResult.inlineComments,
 			fallbackComments: publishResult.fallbackComments,
+			errorComments: publishResult.errorComments,
+			cleanupAttempted: publishResult.cleanupAttempted,
+			cleanupError: publishResult.cleanupError,
 			filePath: session.filePath,
 			pullRequest: session.pullRequest,
 		};

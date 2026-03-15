@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
 import {
 	GitHubPullRequestError,
 	ensureGitHubAuth,
@@ -8,7 +9,9 @@ import {
 	fetchPullRequestMetadata,
 	filterMarkdownPullRequestFiles,
 	getLocalOriginRepoFullName,
+	isPullRequestReviewInlineValidationFailure,
 	parsePullRequestUrl,
+	submitPullRequestReview,
 	validatePullRequestForReview,
 	type ExecResult,
 	type GitHubCliExecutor,
@@ -306,5 +309,66 @@ test("fetchPullRequestFiles maps auth failures to login guidance", async () => {
 				error,
 				"GitHub CLI authentication is required. Run `gh auth login` and retry /review-pr <url>.",
 			),
+	);
+});
+
+test("submitPullRequestReview posts one grouped GitHub review payload", async () => {
+	let seenArgs: string[] = [];
+	let seenPayload: unknown;
+	const exec = createExec((_command, args) => {
+		seenArgs = args;
+		const inputPath = args[args.indexOf("--input") + 1];
+		seenPayload = JSON.parse(fs.readFileSync(inputPath!, "utf-8"));
+		return {
+			code: 0,
+			stdout: JSON.stringify({ id: 99, html_url: "https://github.com/acme/widgets/pull/42#pullrequestreview-99" }),
+			stderr: "",
+		};
+	});
+
+	assert.deepEqual(
+		await submitPullRequestReview(
+			exec,
+			sampleReference,
+			{
+				commitId: "abc123",
+				body: "### Fallback comments\n\n- Example",
+				comments: [{ path: "docs/README.md", body: "Looks good", line: 12, side: "RIGHT" }],
+			},
+			"/repo",
+		),
+		{ id: 99, htmlUrl: "https://github.com/acme/widgets/pull/42#pullrequestreview-99" },
+	);
+	assert.equal(seenArgs[0], "api");
+	assert.ok(seenArgs.includes("--method"));
+	assert.ok(seenArgs.includes("POST"));
+	assert.ok(seenArgs.includes("--input"));
+	assert.ok(seenArgs.includes("/repos/acme/widgets/pulls/42/reviews"));
+	assert.deepEqual(seenPayload, {
+		commit_id: "abc123",
+		event: "COMMENT",
+		body: "### Fallback comments\n\n- Example",
+		comments: [{ path: "docs/README.md", body: "Looks good", line: 12, side: "RIGHT" }],
+	});
+});
+
+test("submitPullRequestReview marks 422 inline validation failures for fallback retry handling", async () => {
+	const exec = createExec(() => ({
+		code: 1,
+		stdout: "",
+		stderr: "gh: HTTP 422 Validation Failed ({\"message\":\"Validation Failed\",\"errors\":[{\"field\":\"comments.line\"}]})",
+	}));
+
+	await assert.rejects(
+		() =>
+			submitPullRequestReview(exec, sampleReference, {
+				commitId: "abc123",
+				comments: [{ path: "docs/README.md", body: "Looks good", line: 12, side: "RIGHT" }],
+			}),
+		(error) =>
+			error instanceof GitHubPullRequestError &&
+			error.message ===
+				"GitHub rejected one or more inline PR review comments. Retrying without inline comments may preserve the feedback." &&
+			isPullRequestReviewInlineValidationFailure(error),
 	);
 });

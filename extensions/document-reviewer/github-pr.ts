@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 const GITHUB_HOSTS = new Set(["github.com", "www.github.com"]);
@@ -34,6 +36,29 @@ export interface PullRequestFile {
 	status?: string;
 	patch?: string;
 	previous_filename?: string;
+}
+
+export interface PullRequestReviewComment {
+	path: string;
+	body: string;
+	line: number;
+	side: "RIGHT";
+}
+
+export interface SubmitPullRequestReviewInput {
+	commitId: string;
+	body?: string;
+	comments?: PullRequestReviewComment[];
+}
+
+export interface SubmitPullRequestReviewResult {
+	id?: number;
+	htmlUrl?: string;
+}
+
+interface PullRequestReviewApiResponse {
+	id?: number;
+	html_url?: string;
 }
 
 interface PullRequestApiResponse {
@@ -110,6 +135,15 @@ function extractGitHubRepoFullName(remoteUrl: string): string | null {
 	return `${parts[0]}/${parts[1]}`;
 }
 
+function createReviewPayloadTempFile(payload: Record<string, unknown>): string {
+	const tempFile = path.join(
+		os.tmpdir(),
+		`pi-pr-review-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
+	);
+	fs.writeFileSync(tempFile, JSON.stringify(payload), "utf-8");
+	return tempFile;
+}
+
 function parseJson<T>(raw: string, context: string): T {
 	try {
 		return JSON.parse(raw) as T;
@@ -152,6 +186,24 @@ function handleGitHubApiFailure(action: string, result: ExecResult, details?: Re
 		code: "GITHUB_API_FAILED",
 		details,
 	});
+}
+
+function handleReviewSubmitFailure(result: ExecResult, details?: Record<string, unknown>): never {
+	const message = normalizeErrorText(result.stderr, result.stdout);
+	if (/422/.test(message) && /validation/i.test(message)) {
+		throw new GitHubPullRequestError(
+			"GitHub rejected one or more inline PR review comments. Retrying without inline comments may preserve the feedback.",
+			{
+				code: "GITHUB_REVIEW_INLINE_VALIDATION_FAILED",
+				details: { ...details, stderr: result.stderr.trim(), stdout: result.stdout.trim() },
+			},
+		);
+	}
+	handleGitHubApiFailure("submitting the pull request review", result, details);
+}
+
+export function isPullRequestReviewInlineValidationFailure(error: unknown): boolean {
+	return error instanceof GitHubPullRequestError && error.code === "GITHUB_REVIEW_INLINE_VALIDATION_FAILED";
 }
 
 export function parsePullRequestUrl(input: string): PullRequestReference {
@@ -252,6 +304,45 @@ export async function fetchPullRequestFiles(
 
 	const pages = data.every(Array.isArray) ? (data as PullRequestFile[][]) : [data as PullRequestFile[]];
 	return pages.flat().filter((item): item is PullRequestFile => typeof item?.filename === "string" && item.filename.length > 0);
+}
+
+export async function submitPullRequestReview(
+	exec: GitHubCliExecutor,
+	pr: PullRequestReference,
+	input: SubmitPullRequestReviewInput,
+	cwd?: string,
+): Promise<SubmitPullRequestReviewResult> {
+	const payload: Record<string, unknown> = {
+		commit_id: assertNonEmptyString(input.commitId, "commitId", "submitting the pull request review"),
+		event: "COMMENT",
+	};
+	if (typeof input.body === "string" && input.body.trim().length > 0) {
+		payload.body = input.body;
+	}
+	if (Array.isArray(input.comments)) {
+		payload.comments = input.comments;
+	}
+
+	const tempFile = createReviewPayloadTempFile(payload);
+	try {
+		const result = await exec(
+			"gh",
+			["api", "--method", "POST", "--input", tempFile, `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}/reviews`],
+			cwd,
+		);
+		if (result.code !== 0) {
+			handleReviewSubmitFailure(result, { pr, payload });
+		}
+
+		if (!result.stdout.trim()) return {};
+		const data = parseJson<PullRequestReviewApiResponse>(result.stdout, `submitting PR ${pr.owner}/${pr.repo}#${pr.number} review`);
+		return {
+			id: typeof data.id === "number" ? data.id : undefined,
+			htmlUrl: typeof data.html_url === "string" ? data.html_url : undefined,
+		};
+	} finally {
+		fs.rmSync(tempFile, { force: true });
+	}
 }
 
 export function filterMarkdownPullRequestFiles<T extends { filename: string }>(files: readonly T[]): T[] {

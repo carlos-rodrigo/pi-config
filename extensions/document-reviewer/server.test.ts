@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { SubmitPullRequestReviewInput } from "./github-pr.js";
 import {
 	DocumentReviewService,
+	buildFallbackReviewBody,
+	publishPullRequestReview,
 	type PullRequestReviewContext,
 } from "./server.js";
 
@@ -148,6 +151,8 @@ test("pull request sessions expose PR metadata, store line hints, and finish via
 				status: "submitted",
 				inlineComments: 1,
 				fallbackComments: 0,
+				errorComments: 0,
+				cleanupAttempted: true,
 			};
 		},
 	});
@@ -200,6 +205,8 @@ test("pull request sessions expose PR metadata, store line hints, and finish via
 		commentsSubmitted: 1,
 		inlineComments: 1,
 		fallbackComments: 0,
+		errorComments: 0,
+		cleanupAttempted: true,
 		filePath: fixture.filePath,
 		pullRequest,
 	});
@@ -207,4 +214,295 @@ test("pull request sessions expose PR metadata, store line hints, and finish via
 	assert.deepEqual(published, [{ commentsCount: 1, pullRequest }]);
 	assert.equal(fs.readFileSync(fixture.filePath, "utf-8"), "# Title\n\nHello world\n");
 	assert.equal((await finishPromise).length, 1);
+});
+
+test("buildFallbackReviewBody escapes markdown-sensitive content and truncates long snippets", () => {
+	const body = buildFallbackReviewBody("docs/README.md", [
+		{
+			id: "a1",
+			selectedText: `${"Long <snippet> with `code` and markdown _markers_ ".repeat(6)}tail`,
+			comment: "Need `<fix>` and `review`",
+			offsetStart: 0,
+			offsetEnd: 5,
+			lineStart: 12,
+			lineEnd: 12,
+		},
+	]);
+
+	assert.match(body ?? "", /### Fallback comments/);
+	assert.match(body ?? "", /docs\/README\.md:12/);
+	assert.match(body ?? "", /&lt;snippet&gt;/);
+	assert.match(body ?? "", /Need \\`&lt;fix&gt;\\` and \\`review\\`/);
+	assert.match(body ?? "", /…/);
+});
+
+test("publishPullRequestReview submits inline and fallback comments together when mappings are valid", async () => {
+	const pullRequest: PullRequestReviewContext = {
+		owner: "acme",
+		repo: "widgets",
+		number: 42,
+		headSha: "abc123",
+		baseSha: "def456",
+		filePath: "docs/README.md",
+		worktreePath: "/tmp/pr-42",
+	};
+	const submitCalls: SubmitPullRequestReviewInput[] = [];
+	let cleanupCalls = 0;
+
+	const result = await publishPullRequestReview(
+		{
+			comments: [
+				{
+					id: "inline",
+					selectedText: "Hello",
+					comment: "Inline note",
+					offsetStart: 0,
+					offsetEnd: 5,
+					lineStart: 3,
+					lineEnd: 3,
+				},
+				{
+					id: "fallback",
+					selectedText: "Title\n\nHello",
+					comment: "Range note",
+					offsetStart: 0,
+					offsetEnd: 13,
+					lineStart: 1,
+					lineEnd: 3,
+				},
+			],
+			pullRequest,
+			filePath: "/tmp/pr-42/docs/README.md",
+			markdown: "# Title\n\nHello world\n",
+			title: "README.md",
+		},
+		{
+			refreshMetadata: async () => ({ headSha: "abc123" }),
+			refreshFiles: async () => [
+				{
+					filename: "docs/README.md",
+					patch: ["@@ -1,3 +1,3 @@", " # Title", " ", "-Hello world", "+Hello world"].join("\n"),
+				},
+			],
+			submitReview: async (request) => {
+				submitCalls.push(request);
+			},
+			cleanupWorktree: async () => {
+				cleanupCalls += 1;
+				return { ok: true };
+			},
+		},
+	);
+
+	assert.deepEqual(result, {
+		status: "submitted",
+		inlineComments: 1,
+		fallbackComments: 1,
+		errorComments: 0,
+		cleanupAttempted: true,
+	});
+	assert.equal(cleanupCalls, 1);
+	assert.equal(submitCalls.length, 1);
+	assert.deepEqual(submitCalls[0], {
+		commitId: "abc123",
+		comments: [{ path: "docs/README.md", body: "Inline note", line: 3, side: "RIGHT" }],
+		body: buildFallbackReviewBody("docs/README.md", [
+			{
+				id: "fallback",
+				selectedText: "Title\n\nHello",
+				comment: "Range note",
+				offsetStart: 0,
+				offsetEnd: 13,
+				lineStart: 1,
+				lineEnd: 3,
+			},
+		]),
+	});
+});
+
+test("publishPullRequestReview downgrades all drafts to fallback when the PR head sha changes", async () => {
+	const pullRequest: PullRequestReviewContext = {
+		owner: "acme",
+		repo: "widgets",
+		number: 42,
+		headSha: "abc123",
+		baseSha: "def456",
+		filePath: "docs/README.md",
+		worktreePath: "/tmp/pr-42",
+	};
+	const submitCalls: SubmitPullRequestReviewInput[] = [];
+
+	const result = await publishPullRequestReview(
+		{
+			comments: [
+				{
+					id: "inline",
+					selectedText: "Hello",
+					comment: "Inline note",
+					offsetStart: 0,
+					offsetEnd: 5,
+					lineStart: 3,
+					lineEnd: 3,
+				},
+			],
+			pullRequest,
+			filePath: "/tmp/pr-42/docs/README.md",
+			markdown: "# Title\n\nHello world\n",
+			title: "README.md",
+		},
+		{
+			refreshMetadata: async () => ({ headSha: "new-sha" }),
+			refreshFiles: async () => [],
+			submitReview: async (request) => {
+				submitCalls.push(request);
+			},
+		},
+	);
+
+	assert.deepEqual(result, {
+		status: "submitted",
+		inlineComments: 0,
+		fallbackComments: 1,
+		errorComments: 0,
+		cleanupAttempted: false,
+	});
+	assert.deepEqual(submitCalls, [
+		{
+			commitId: "new-sha",
+			comments: [],
+			body: buildFallbackReviewBody("docs/README.md", [
+				{
+					id: "inline",
+					selectedText: "Hello",
+					comment: "Inline note",
+					offsetStart: 0,
+					offsetEnd: 5,
+					lineStart: 3,
+					lineEnd: 3,
+				},
+			]),
+		},
+	]);
+});
+
+test("publishPullRequestReview retries once as fallback-only after inline validation failures", async () => {
+	const pullRequest: PullRequestReviewContext = {
+		owner: "acme",
+		repo: "widgets",
+		number: 42,
+		headSha: "abc123",
+		baseSha: "def456",
+		filePath: "docs/README.md",
+		worktreePath: "/tmp/pr-42",
+	};
+	const submitCalls: SubmitPullRequestReviewInput[] = [];
+	const validationError = new Error("inline validation failed");
+
+	const result = await publishPullRequestReview(
+		{
+			comments: [
+				{
+					id: "inline",
+					selectedText: "Hello",
+					comment: "Inline note",
+					offsetStart: 0,
+					offsetEnd: 5,
+					lineStart: 3,
+					lineEnd: 3,
+				},
+			],
+			pullRequest,
+			filePath: "/tmp/pr-42/docs/README.md",
+			markdown: "# Title\n\nHello world\n",
+			title: "README.md",
+		},
+		{
+			refreshMetadata: async () => ({ headSha: "abc123" }),
+			refreshFiles: async () => [
+				{
+					filename: "docs/README.md",
+					patch: ["@@ -1,3 +1,3 @@", " # Title", " ", "-Hello world", "+Hello world"].join("\n"),
+				},
+			],
+			submitReview: async (request) => {
+				submitCalls.push(request);
+				if (submitCalls.length === 1) throw validationError;
+			},
+			isInlineValidationFailure: (error) => error === validationError,
+		},
+	);
+
+	assert.deepEqual(result, {
+		status: "submitted_with_fallback_retry",
+		inlineComments: 0,
+		fallbackComments: 1,
+		errorComments: 0,
+		cleanupAttempted: false,
+	});
+	assert.equal(submitCalls.length, 2);
+	assert.deepEqual(submitCalls[0], {
+		commitId: "abc123",
+		comments: [{ path: "docs/README.md", body: "Inline note", line: 3, side: "RIGHT" }],
+		body: undefined,
+	});
+	assert.deepEqual(submitCalls[1], {
+		commitId: "abc123",
+		comments: [],
+		body: buildFallbackReviewBody("docs/README.md", [
+			{
+				id: "inline",
+				selectedText: "Hello",
+				comment: "Inline note",
+				offsetStart: 0,
+				offsetEnd: 5,
+				lineStart: 3,
+				lineEnd: 3,
+			},
+		]),
+	});
+});
+
+test("publishPullRequestReview skips GitHub submission when there are no comments but still cleans up", async () => {
+	const pullRequest: PullRequestReviewContext = {
+		owner: "acme",
+		repo: "widgets",
+		number: 42,
+		headSha: "abc123",
+		baseSha: "def456",
+		filePath: "docs/README.md",
+		worktreePath: "/tmp/pr-42",
+	};
+	let submitCalls = 0;
+	let cleanupCalls = 0;
+
+	const result = await publishPullRequestReview(
+		{
+			comments: [],
+			pullRequest,
+			filePath: "/tmp/pr-42/docs/README.md",
+			markdown: "# Title\n\nHello world\n",
+			title: "README.md",
+		},
+		{
+			refreshMetadata: async () => ({ headSha: "abc123" }),
+			refreshFiles: async () => [],
+			submitReview: async () => {
+				submitCalls += 1;
+			},
+			cleanupWorktree: async () => {
+				cleanupCalls += 1;
+				return { ok: true };
+			},
+		},
+	);
+
+	assert.deepEqual(result, {
+		status: "no_comments",
+		inlineComments: 0,
+		fallbackComments: 0,
+		errorComments: 0,
+		cleanupAttempted: true,
+	});
+	assert.equal(submitCalls, 0);
+	assert.equal(cleanupCalls, 1);
 });
