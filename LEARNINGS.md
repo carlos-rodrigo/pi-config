@@ -60,3 +60,17 @@
 **Context:** Improving `/review` behavior when automatic browser launch fails in SSH/headless environments.
 **Learning:** Generate fallback guidance in a dedicated pure helper so command handlers can show consistent manual-open + SSH tunnel instructions, and tests can validate copy quality without mocking extension runtime internals.
 **Applies to:** Commands that spawn external apps (browser/editor) where launch can fail by environment.
+
+## Extension Testing: Compile ESM TypeScript tests to a temp dir when runtime imports use `.js`
+
+**Date:** 2026-03-15
+**Context:** Adding coverage for new `document-reviewer` GitHub adapter helpers in a repo without an existing TS test runner.
+**Learning:** For extension modules that use bundler-style `.js` imports in source, run focused tests by compiling the `.test.ts` entrypoint to a temp directory with `tsc --outDir` and then executing the emitted JS with `node --test`.
+**Applies to:** Future targeted tests for extension modules in this repo before a dedicated test harness exists.
+
+## Worktree Safety: Reserve a dedicated namespace for automation-owned checkouts
+
+**Date:** 2026-03-15
+**Context:** Implementing deterministic PR review worktrees for `/review-pr`.
+**Learning:** Automation-owned worktrees should live under a dedicated reserved root (for example `<repo>-pr-review-worktrees/pr-<n>`) and cleanup should derive that path from validated metadata, not trust arbitrary caller-provided paths. This prevents collisions with user-created worktrees and reduces accidental deletion risk.
+**Applies to:** Future git worktree automation, cleanup helpers, and any feature that recreates deterministic workspace paths.
