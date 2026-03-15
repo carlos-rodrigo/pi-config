@@ -4,6 +4,7 @@ Feature: pr-review-comments
 
 ## Codebase Patterns
 
+- For GitHub PR review submission, write the `gh api --input` payload to a dedicated temp file with `0600` permissions and only trigger fallback-only retry for `422` errors that explicitly point at inline-comment fields (`comments.line`, `side`, `start_line`, etc.).
 - For inline HTML/JS extension pages, move mode-specific payload builders and copy into exported pure helpers, then compile targeted `.test.ts` files to a temp dir and run the emitted JS with `node --test`.
 - Validate browser-authored review drafts on the server (`selectedText`, offsets, line ranges) and treat inline/fallback flags as recomputable hints instead of trusted input.
 - PR review worktrees live under `<repo>-pr-review-worktrees/pr-<number>`; cleanup derives the path from `prNumber` instead of trusting arbitrary caller-provided worktree paths.
@@ -64,5 +65,29 @@ Task ID: 004
 - **Learnings for future iterations:**
   - Pull PR/document mode copy and payload rules into pure helpers before inlining them into browser-page scripts; it keeps mode splits testable without a DOM harness.
   - The reviewer still relies on string-based selection offset matching, so downstream inline-diff work should treat duplicate-selection ambiguity as a known limitation until selection anchoring is upgraded.
+
+---
+
+## 2026-03-15 - Implement PR submit pipeline (mapping, fallback, retry, cleanup)
+
+Task ID: 005
+
+- Added `extensions/document-reviewer/pr-diff-map.ts` to parse changed RIGHT-side diff lines and validate single-line inline PR comment targets.
+- Extended `extensions/document-reviewer/server.ts` with fallback-body formatting plus `publishPullRequestReview(...)` to refresh PR state, partition inline vs fallback comments, downgrade on stale head SHA, retry once as fallback-only after inline-validation failures, and always attempt cleanup hooks.
+- Extended `extensions/document-reviewer/github-pr.ts` to submit grouped GitHub reviews through `gh api`, secure the temp payload file, and classify retryable inline-validation failures narrowly.
+- Added focused coverage in `extensions/document-reviewer/pr-diff-map.test.ts`, `extensions/document-reviewer/github-pr.test.ts`, and `extensions/document-reviewer/server.test.ts` for diff parsing, grouped submit payloads, temp-file cleanup, fallback rendering, stale-SHA downgrade, retry behavior, and no-comment cleanup.
+- Files changed:
+  - `extensions/document-reviewer/pr-diff-map.ts`
+  - `extensions/document-reviewer/pr-diff-map.test.ts`
+  - `extensions/document-reviewer/github-pr.ts`
+  - `extensions/document-reviewer/github-pr.test.ts`
+  - `extensions/document-reviewer/server.ts`
+  - `extensions/document-reviewer/server.test.ts`
+  - `.features/pr-review-comments/tasks/005-submit-pipeline-mapping-fallback-retry-cleanup.md`
+  - `.features/pr-review-comments/tasks/_active.md`
+  - `scripts/loop/progress-pr-review-comments.txt`
+- **Learnings for future iterations:**
+  - Recompute inline eligibility from refreshed patch data once, then reuse that partition for counts, retry behavior, and fallback-body generation so finish summaries stay deterministic.
+  - Treat `422` submit failures as retryable only when GitHub points at inline-comment positioning fields; body-only validation errors should still fail loudly.
 
 ---
