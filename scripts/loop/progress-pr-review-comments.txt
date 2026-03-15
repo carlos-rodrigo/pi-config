@@ -1,0 +1,48 @@
+# Loop Progress Log
+Started: Sun Mar 15 13:23:53 -03 2026
+Feature: pr-review-comments
+
+## Codebase Patterns
+
+- Validate browser-authored review drafts on the server (`selectedText`, offsets, line ranges) and treat inline/fallback flags as recomputable hints instead of trusted input.
+- PR review worktrees live under `<repo>-pr-review-worktrees/pr-<number>`; cleanup derives the path from `prNumber` instead of trusting arbitrary caller-provided worktree paths.
+
+---
+
+## 2026-03-15 - PR worktree lifecycle
+
+Task ID: 002
+
+- Implemented `extensions/document-reviewer/pr-worktree.ts` with deterministic PR-review path building, stale-worktree recovery, detached checkout creation, and best-effort cleanup reporting.
+- Added focused coverage in `extensions/document-reviewer/pr-worktree.test.ts` for reuse, dirty-worktree protection, stale recovery, and unregistered-path guards.
+- Files changed:
+  - `extensions/document-reviewer/pr-worktree.ts`
+  - `extensions/document-reviewer/pr-worktree.test.ts`
+  - `LEARNINGS.md`
+  - `.features/pr-review-comments/tasks/002-pr-worktree-lifecycle.md`
+  - `.features/pr-review-comments/tasks/_active.md`
+  - `scripts/loop/progress-pr-review-comments.txt`
+- **Learnings for future iterations:**
+  - Reserve a dedicated namespace for automation-owned worktrees to avoid collisions with user-created feature worktrees.
+  - Derive cleanup targets from validated PR metadata instead of trusting stored/free-form paths.
+
+---
+
+## 2026-03-15 - PR session mode in review server
+
+Task ID: 003
+
+- Extended `extensions/document-reviewer/server.ts` with mode-aware sessions, PR context payloads, a `createPullRequestSession(...)` API, and `/finish` branching between document and PR flows.
+- Added `extensions/document-reviewer/server.test.ts` coverage for legacy document mode, PR-mode metadata/finish hooks, invalid draft rejection, and local-origin-only request handling.
+- Files changed:
+  - `extensions/document-reviewer/server.ts`
+  - `extensions/document-reviewer/server.test.ts`
+  - `LEARNINGS.md`
+  - `.features/pr-review-comments/tasks/003-pr-session-mode-in-review-server.md`
+  - `.features/pr-review-comments/tasks/_active.md`
+  - `scripts/loop/progress-pr-review-comments.txt`
+- **Learnings for future iterations:**
+  - Keep PR publish-specific logic behind a session hook so later submit-pipeline work can plug in without regressing document mode.
+  - Validate browser-authored selection metadata against the source markdown before storing drafts; downstream PR mapping should treat client hints as advisory only.
+
+---

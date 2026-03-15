@@ -74,3 +74,10 @@
 **Context:** Implementing deterministic PR review worktrees for `/review-pr`.
 **Learning:** Automation-owned worktrees should live under a dedicated reserved root (for example `<repo>-pr-review-worktrees/pr-<n>`) and cleanup should derive that path from validated metadata, not trust arbitrary caller-provided paths. This prevents collisions with user-created worktrees and reduces accidental deletion risk.
 **Applies to:** Future git worktree automation, cleanup helpers, and any feature that recreates deterministic workspace paths.
+
+## Local Review Server Safety: Recompute trust boundaries on the server
+
+**Date:** 2026-03-15
+**Context:** Adding PR-session support to the document review server while keeping browser comments and finish flows local.
+**Learning:** Even localhost review UIs should validate selection offsets against the source document and scope cross-origin access to the server’s own origin. Browser-provided line/inline hints are useful as UX metadata, but publish logic should treat them as recomputable hints rather than trusted truth.
+**Applies to:** Future localhost tools that accept browser-authored payloads, especially review/comment workflows and local companion servers.
