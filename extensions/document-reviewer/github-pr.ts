@@ -75,6 +75,10 @@ function trimTrailingGit(url: string): string {
 	return url.replace(/\.git$/i, "");
 }
 
+function normalizeRepoFullName(fullName: string): string {
+	return fullName.trim().toLowerCase();
+}
+
 function normalizePullRequestUrl(owner: string, repo: string, number: number): string {
 	return `https://github.com/${owner}/${repo}/pull/${number}`;
 }
@@ -185,6 +189,16 @@ export function parsePullRequestUrl(input: string): PullRequestReference {
 export async function ensureGitHubAuth(exec: GitHubCliExecutor, cwd?: string): Promise<void> {
 	const result = await exec("gh", ["auth", "status"], cwd);
 	if (result.code === 0) return;
+
+	const message = normalizeErrorText(result.stderr, result.stdout);
+	if (/enoent/i.test(message) || /command not found/i.test(message) || /not recognized/i.test(message)) {
+		throw new GitHubPullRequestError("GitHub CLI (`gh`) is required for /review-pr. Install it, run `gh auth login`, and retry.", {
+			code: "GITHUB_CLI_MISSING",
+			hint: "gh auth login",
+			details: { stderr: result.stderr.trim(), stdout: result.stdout.trim() },
+		});
+	}
+
 	throw new GitHubPullRequestError("GitHub CLI authentication is required. Run `gh auth login` and retry /review-pr <url>.", {
 		code: "GITHUB_AUTH_REQUIRED",
 		hint: "gh auth login",
@@ -252,7 +266,7 @@ export function validatePullRequestForReview(pr: PullRequestMetadata): void {
 		);
 	}
 
-	if (pr.headRepoFullName !== pr.baseRepoFullName) {
+	if (normalizeRepoFullName(pr.headRepoFullName) !== normalizeRepoFullName(pr.baseRepoFullName)) {
 		throw new GitHubPullRequestError(
 			"Fork pull requests are not supported for /review-pr yet. Open the PR from its base repository checkout and try again once fork support lands.",
 			{ code: "FORK_PULL_REQUEST_UNSUPPORTED" },
@@ -289,7 +303,7 @@ export async function ensureLocalRepoMatchesPullRequestBase(
 	pr: Pick<PullRequestMetadata, "baseRepoFullName">,
 ): Promise<void> {
 	const localRepoFullName = await getLocalOriginRepoFullName(exec, cwd);
-	if (localRepoFullName === pr.baseRepoFullName) return;
+	if (normalizeRepoFullName(localRepoFullName) === normalizeRepoFullName(pr.baseRepoFullName)) return;
 	throw new GitHubPullRequestError(
 		`This checkout points at GitHub repo ${localRepoFullName}, but the PR targets ${pr.baseRepoFullName}. Open the matching base repository checkout and retry /review-pr.`,
 		{
