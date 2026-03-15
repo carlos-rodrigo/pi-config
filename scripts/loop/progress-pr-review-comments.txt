@@ -4,6 +4,7 @@ Feature: pr-review-comments
 
 ## Codebase Patterns
 
+- For inline HTML/JS extension pages, move mode-specific payload builders and copy into exported pure helpers, then compile targeted `.test.ts` files to a temp dir and run the emitted JS with `node --test`.
 - Validate browser-authored review drafts on the server (`selectedText`, offsets, line ranges) and treat inline/fallback flags as recomputable hints instead of trusted input.
 - PR review worktrees live under `<repo>-pr-review-worktrees/pr-<number>`; cleanup derives the path from `prNumber` instead of trusting arbitrary caller-provided worktree paths.
 
@@ -44,5 +45,24 @@ Task ID: 003
 - **Learnings for future iterations:**
   - Keep PR publish-specific logic behind a session hook so later submit-pipeline work can plug in without regressing document mode.
   - Validate browser-authored selection metadata against the source markdown before storing drafts; downstream PR mapping should treat client hints as advisory only.
+
+---
+
+## 2026-03-15 - Review UI PR mode + line metadata capture
+
+Task ID: 004
+
+- Updated `extensions/document-reviewer/review-page.ts` so PR sessions render repo/PR/file context in the header, send `lineStart`/`lineEnd` with draft comments, and surface multi-line selections as fallback-only in the popup/sidebar/finish copy.
+- Added focused coverage in `extensions/document-reviewer/review-page.test.ts` for selection metadata, PR-only payload building, session context formatting, and finish-copy helpers using the repo’s compile-to-temp test flow.
+- Files changed:
+  - `extensions/document-reviewer/review-page.ts`
+  - `extensions/document-reviewer/review-page.test.ts`
+  - `LEARNINGS.md`
+  - `.features/pr-review-comments/tasks/004-review-ui-pr-mode-line-metadata.md`
+  - `.features/pr-review-comments/tasks/_active.md`
+  - `scripts/loop/progress-pr-review-comments.txt`
+- **Learnings for future iterations:**
+  - Pull PR/document mode copy and payload rules into pure helpers before inlining them into browser-page scripts; it keeps mode splits testable without a DOM harness.
+  - The reviewer still relies on string-based selection offset matching, so downstream inline-diff work should treat duplicate-selection ambiguity as a known limitation until selection anchoring is upgraded.
 
 ---

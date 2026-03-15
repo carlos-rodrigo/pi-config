@@ -81,3 +81,10 @@
 **Context:** Adding PR-session support to the document review server while keeping browser comments and finish flows local.
 **Learning:** Even localhost review UIs should validate selection offsets against the source document and scope cross-origin access to the server’s own origin. Browser-provided line/inline hints are useful as UX metadata, but publish logic should treat them as recomputable hints rather than trusted truth.
 **Applies to:** Future localhost tools that accept browser-authored payloads, especially review/comment workflows and local companion servers.
+
+## Reviewer UI Testing: Extract privileged-page behavior into pure helpers
+
+**Date:** 2026-03-15
+**Context:** Adding PR-mode metadata and line capture to the document-reviewer browser page without a DOM test harness.
+**Learning:** When an extension UI is rendered as one inline HTML/JS string, lift payload builders and mode-specific copy into exported pure helpers. That keeps the browser script small, makes compile-first `tsc -> node --test` coverage practical, and lets tests validate PR/document divergences without spinning up a real DOM.
+**Applies to:** Future inlined extension pages, browser-review flows, and other features that need targeted tests before a richer frontend harness exists.

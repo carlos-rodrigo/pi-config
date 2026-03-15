@@ -8,7 +8,7 @@ Feature: `.features/pr-review-comments`
 - [x] 001 - GitHub PR adapter + validation
 - [x] 002 - PR worktree lifecycle
 - [x] 003 - PR session mode in review server
-- [ ] 004 - Review UI PR mode + line metadata capture
+- [x] 004 - Review UI PR mode + line metadata capture
 - [ ] 005 - Submit pipeline (mapping, fallback, retry, cleanup)
 - [ ] 006 - Wire `/review-pr` command + `review_pr` tool + docs
 
