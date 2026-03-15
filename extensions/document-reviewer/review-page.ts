@@ -28,6 +28,7 @@ ${getStyles()}
   <header id="header">
     <div class="header-left">
       <span class="header-title">${escapeHtml(title)}</span>
+      <span class="header-context hidden" id="session-context"></span>
       <span class="header-badge" id="comment-count">0 comments</span>
       <span class="vim-mode" id="vim-mode">NORMAL</span>
     </div>
@@ -59,6 +60,7 @@ ${getStyles()}
   <div id="comment-popup" class="hidden">
     <div class="popup-header">Add Comment</div>
     <div class="popup-selected-text" id="popup-selected-text"></div>
+    <div class="popup-mode-hint hidden" id="popup-mode-hint"></div>
     <textarea id="comment-input" placeholder="Type your comment..." rows="3"></textarea>
     <div class="popup-actions">
       <button id="popup-cancel" class="btn btn-ghost btn-sm">Cancel <kbd>Esc</kbd></button>
@@ -71,7 +73,7 @@ ${getStyles()}
     <div class="modal-backdrop"></div>
     <div class="modal-content">
       <h3>Finish Review?</h3>
-      <p>This will insert <strong id="finish-count">0</strong> comment(s) as <code>&lt;!-- REVIEW: ... --&gt;</code> annotations into the original markdown file.</p>
+      <p id="finish-description">This will insert <strong id="finish-count">0</strong> comment(s) as <code>&lt;!-- REVIEW: ... --&gt;</code> annotations into the original markdown file.</p>
       <div class="modal-actions">
         <button id="finish-cancel" class="btn btn-ghost">Cancel</button>
         <button id="finish-confirm" class="btn btn-finish">Finish &amp; Save</button>
@@ -123,6 +125,45 @@ ${getScript(sessionId)}
 </html>`;
 }
 
+export interface ReviewSelectionMetadata {
+	offsetStart: number;
+	offsetEnd: number;
+	lineStart?: number;
+	lineEnd?: number;
+	inlineEligible?: boolean;
+	fallbackReason?: string;
+}
+
+export function computeSelectionMetadata(markdown: string, selectedText: string): ReviewSelectionMetadata {
+	const exactMatchIndex = markdown.indexOf(selectedText);
+	const trimmedSelection = selectedText.trim();
+	const trimmedMatchIndex = exactMatchIndex === -1 && trimmedSelection ? markdown.indexOf(trimmedSelection) : -1;
+	const offsetStart = exactMatchIndex !== -1 ? exactMatchIndex : trimmedMatchIndex;
+	const matchedText =
+		exactMatchIndex !== -1 ? selectedText : trimmedMatchIndex !== -1 ? trimmedSelection : "";
+	const offsetEnd = offsetStart === -1 ? -1 : offsetStart + matchedText.length;
+
+	if (offsetStart === -1 || offsetEnd === -1 || matchedText.length === 0) {
+		return {
+			offsetStart,
+			offsetEnd,
+		};
+	}
+
+	const lineStart = markdown.slice(0, offsetStart).split("\n").length;
+	const lineEnd = markdown.slice(0, Math.max(offsetStart, offsetEnd - 1) + 1).split("\n").length;
+	const inlineEligible = lineStart === lineEnd;
+
+	return {
+		offsetStart,
+		offsetEnd,
+		lineStart,
+		lineEnd,
+		inlineEligible,
+		fallbackReason: inlineEligible ? undefined : "multi_line_selection",
+	};
+}
+
 function escapeHtml(text: string): string {
 	return text
 		.replace(/&/g, "&amp;")
@@ -153,6 +194,8 @@ function getStyles(): string {
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
+
+.hidden { display: none !important; }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
@@ -188,6 +231,19 @@ body {
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+}
+
+.header-context {
+  font-size: 12px;
+  color: var(--accent);
+  background: rgba(31, 111, 235, 0.12);
+  border: 1px solid rgba(88, 166, 255, 0.25);
+  border-radius: 999px;
+  padding: 2px 8px;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .header-badge {
@@ -350,6 +406,32 @@ kbd {
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.comment-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.comment-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.comment-badge-inline {
+  color: var(--success);
+  border-color: rgba(63, 185, 80, 0.35);
+}
+
+.comment-badge-fallback {
+  color: var(--warning);
+  border-color: rgba(210, 153, 34, 0.35);
 }
 
 .comment-actions {
@@ -537,6 +619,17 @@ kbd {
   word-break: break-word;
 }
 
+.popup-mode-hint {
+  font-size: 12px;
+  color: var(--warning);
+  background: rgba(210, 153, 34, 0.12);
+  border: 1px solid rgba(210, 153, 34, 0.35);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
 #comment-input {
   width: 100%;
   background: var(--bg);
@@ -717,6 +810,7 @@ function getScript(sessionId: string): string {
   const API_BASE = window.location.origin + '/api/' + SESSION_ID;
   const PAGE_STEP_FACTOR = 0.5;
   const CARET_VIEWPORT_PADDING = 28;
+  const computeSelectionMetadata = ${computeSelectionMetadata.toString()};
 
   let comments = [];
   let pendingSelection = null;
@@ -730,6 +824,9 @@ function getScript(sessionId: string): string {
   let lastKey = '';
   let originalMarkdown = '';
   let lastCaretRange = null;
+  let sessionMode = 'document';
+  let sessionFilePath = '';
+  let pullRequestContext = null;
 
   // ─── Elements ───
   const contentEl = document.getElementById('content');
@@ -737,11 +834,16 @@ function getScript(sessionId: string): string {
   const sidebar = document.getElementById('sidebar');
   const commentsList = document.getElementById('comments-list');
   const commentCount = document.getElementById('comment-count');
+  const sessionContextEl = document.getElementById('session-context');
   const commentPopup = document.getElementById('comment-popup');
   const commentInput = document.getElementById('comment-input');
   const popupSelectedText = document.getElementById('popup-selected-text');
+  const popupModeHint = document.getElementById('popup-mode-hint');
   const finishModal = document.getElementById('finish-modal');
   const finishCountEl = document.getElementById('finish-count');
+  const finishDescriptionEl = document.getElementById('finish-description');
+  const finishButton = document.getElementById('finish-btn');
+  const finishConfirmButton = document.getElementById('finish-confirm');
   const helpOverlay = document.getElementById('help-overlay');
   const vimModeEl = document.getElementById('vim-mode');
 
@@ -750,6 +852,12 @@ function getScript(sessionId: string): string {
     const res = await fetch(API_BASE + '/document');
     const data = await res.json();
     originalMarkdown = data.markdown;
+    sessionMode = data.mode || 'document';
+    sessionFilePath = data.filePath || '';
+    pullRequestContext = data.pullRequest || null;
+
+    renderSessionContext();
+    renderFinishCopy();
 
     // Configure marked with mermaid support and syntax highlighting
     // (highlighting is handled in the custom code renderer below)
@@ -845,6 +953,62 @@ function getScript(sessionId: string): string {
     return div.innerHTML;
   }
 
+  function isPullRequestMode() {
+    return sessionMode === 'pull_request' && !!pullRequestContext;
+  }
+
+  function renderSessionContext() {
+    if (!isPullRequestMode()) {
+      sessionContextEl.classList.add('hidden');
+      sessionContextEl.textContent = '';
+      sessionContextEl.removeAttribute('title');
+      return;
+    }
+
+    const prLabel = pullRequestContext.owner + '/' + pullRequestContext.repo + '#' + pullRequestContext.number;
+    const fileLabel = pullRequestContext.filePath || sessionFilePath;
+    const contextText = prLabel + (fileLabel ? ' · ' + fileLabel : '');
+    sessionContextEl.textContent = contextText;
+    sessionContextEl.title = contextText;
+    sessionContextEl.classList.remove('hidden');
+  }
+
+  function renderFinishCopy() {
+    if (isPullRequestMode()) {
+      finishDescriptionEl.innerHTML = 'This will submit <strong id="finish-count">' + comments.length + '</strong> comment(s) to the GitHub pull request review. Single-line selections stay inline when possible; multi-line selections are grouped under <code>Fallback comments</code>.';
+      finishConfirmButton.textContent = 'Finish & Submit';
+      finishButton.title = 'Finish review and submit PR comments';
+      return;
+    }
+
+    finishDescriptionEl.innerHTML = 'This will insert <strong id="finish-count">' + comments.length + '</strong> comment(s) as <code>&lt;!-- REVIEW: ... --&gt;</code> annotations into the original markdown file.';
+    finishConfirmButton.textContent = 'Finish & Save';
+    finishButton.title = 'Finish review and write comments to file';
+  }
+
+  function getLineLabel(lineStart, lineEnd) {
+    if (!Number.isInteger(lineStart) || !Number.isInteger(lineEnd)) return '';
+    return lineStart === lineEnd ? 'Line ' + lineStart : 'Lines ' + lineStart + '–' + lineEnd;
+  }
+
+  function buildCommentMetaHtml(comment) {
+    if (!isPullRequestMode()) return '';
+
+    const badges = [];
+    if (comment.fallbackReason === 'multi_line_selection') {
+      badges.push('<span class="comment-badge comment-badge-fallback">Fallback only</span>');
+    } else if (comment.inlineEligible) {
+      badges.push('<span class="comment-badge comment-badge-inline">Inline candidate</span>');
+    }
+
+    const lineLabel = getLineLabel(comment.lineStart, comment.lineEnd);
+    if (lineLabel) {
+      badges.push('<span class="comment-badge">' + escapeHtml(lineLabel) + '</span>');
+    }
+
+    return badges.length > 0 ? '<div class="comment-meta-row">' + badges.join('') + '</div>' : '';
+  }
+
   // ─── Offset tracking ───
   // Walk the rendered DOM and compute character offsets back to the original markdown
   // We use a simplified approach: store the text content and use string matching
@@ -853,20 +1017,17 @@ function getScript(sessionId: string): string {
     markdownBody.dataset.originalMarkdown = originalMarkdown;
   }
 
-  function findOffsetInMarkdown(selectedText) {
-    // Find the selected text in the original markdown
-    const idx = originalMarkdown.indexOf(selectedText);
-    if (idx !== -1) {
-      return { start: idx, end: idx + selectedText.length };
-    }
-    // Fuzzy: try trimmed
-    const trimmed = selectedText.trim();
-    const idx2 = originalMarkdown.indexOf(trimmed);
-    if (idx2 !== -1) {
-      return { start: idx2, end: idx2 + trimmed.length };
-    }
-    // Fallback: return -1
-    return { start: -1, end: -1 };
+  function buildPendingSelection(selectedText) {
+    const metadata = computeSelectionMetadata(originalMarkdown, selectedText);
+    return {
+      selectedText,
+      offsetStart: metadata.offsetStart,
+      offsetEnd: metadata.offsetEnd,
+      lineStart: metadata.lineStart,
+      lineEnd: metadata.lineEnd,
+      inlineEligible: metadata.inlineEligible,
+      fallbackReason: metadata.fallbackReason,
+    };
   }
 
   // ─── Vim Navigation ───
@@ -1114,21 +1275,31 @@ function getScript(sessionId: string): string {
   }
 
   // ─── Comments ───
-  async function addComment(selectedText, commentText) {
-    const offsets = findOffsetInMarkdown(selectedText);
+  async function addComment(selection, commentText) {
+    const body = {
+      selectedText: selection.selectedText,
+      comment: commentText,
+      offsetStart: selection.offsetStart,
+      offsetEnd: selection.offsetEnd,
+      ...(isPullRequestMode() && selection.lineStart !== undefined && selection.lineEnd !== undefined
+        ? {
+            lineStart: selection.lineStart,
+            lineEnd: selection.lineEnd,
+          }
+        : {}),
+    };
 
     const res = await fetch(API_BASE + '/comments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        selectedText,
-        comment: commentText,
-        offsetStart: offsets.start,
-        offsetEnd: offsets.end,
-      }),
+      body: JSON.stringify(body),
     });
 
     const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to create review comment.');
+    }
+
     comments.push(data.comment);
     renderComments();
     highlightCommentInDocument(data.comment);
@@ -1145,6 +1316,8 @@ function getScript(sessionId: string): string {
 
   function renderComments() {
     commentCount.textContent = comments.length + ' comment' + (comments.length !== 1 ? 's' : '');
+    renderFinishCopy();
+    updateFinishCount();
 
     if (comments.length === 0) {
       commentsList.innerHTML = '<div class="no-comments">No comments yet.<br>Select text and press <kbd>c</kbd> to add a comment.</div>';
@@ -1154,6 +1327,7 @@ function getScript(sessionId: string): string {
     commentsList.innerHTML = comments.map(c => \`
       <div class="comment-card" data-comment-id="\${c.id}">
         <div class="comment-selected-text">\${escapeHtml(c.selectedText.slice(0, 200))}\${c.selectedText.length > 200 ? '...' : ''}</div>
+        \${buildCommentMetaHtml(c)}
         <div class="comment-text">\${escapeHtml(c.comment)}</div>
         <div class="comment-actions">
           <button class="comment-delete" onclick="window.__deleteComment('\${c.id}')">Delete</button>
@@ -1202,9 +1376,17 @@ function getScript(sessionId: string): string {
   }
 
   // ─── Comment Popup ───
-  function showCommentPopup(selectedText, x, y) {
-    pendingSelection = selectedText;
-    popupSelectedText.textContent = selectedText.slice(0, 200) + (selectedText.length > 200 ? '...' : '');
+  function showCommentPopup(selection, x, y) {
+    pendingSelection = selection;
+    popupSelectedText.textContent = selection.selectedText.slice(0, 200) + (selection.selectedText.length > 200 ? '...' : '');
+
+    if (isPullRequestMode() && selection.fallbackReason === 'multi_line_selection') {
+      popupModeHint.textContent = 'Fallback only — multi-line selections are preserved in the PR review body instead of an inline diff comment.';
+      popupModeHint.classList.remove('hidden');
+    } else {
+      popupModeHint.textContent = '';
+      popupModeHint.classList.add('hidden');
+    }
 
     // Position popup near the selection
     const popupWidth = 380;
@@ -1230,6 +1412,8 @@ function getScript(sessionId: string): string {
     commentPopup.classList.add('hidden');
     commentPopupOpen = false;
     pendingSelection = null;
+    popupModeHint.textContent = '';
+    popupModeHint.classList.add('hidden');
 
     setModeLabel(visualMode ? 'VISUAL' : 'NORMAL');
     focusEditor();
@@ -1237,16 +1421,28 @@ function getScript(sessionId: string): string {
     ensureCaretInView();
   }
 
-  function submitComment() {
+  async function submitComment() {
     const text = commentInput.value.trim();
     if (!text || !pendingSelection) return;
-    addComment(pendingSelection, text);
-    hideCommentPopup();
+    try {
+      await addComment(pendingSelection, text);
+      hideCommentPopup();
+    } catch (err) {
+      showToast('Error creating comment: ' + err.message, 'error');
+    }
   }
 
   // ─── Finish Review ───
+  function updateFinishCount() {
+    const countEl = document.getElementById('finish-count');
+    if (countEl) {
+      countEl.textContent = comments.length;
+    }
+  }
+
   function showFinishModal() {
-    finishCountEl.textContent = comments.length;
+    renderFinishCopy();
+    updateFinishCount();
     finishModal.classList.remove('hidden');
     finishModalOpen = true;
   }
@@ -1266,15 +1462,26 @@ function getScript(sessionId: string): string {
     try {
       const res = await fetch(API_BASE + '/finish', { method: 'POST' });
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to finish review.');
+      }
       hideFinishModal();
       reviewCompleted = true;
 
       // Show a done state
-      document.getElementById('finish-btn').textContent = '✓ Done';
-      document.getElementById('finish-btn').disabled = true;
-      document.getElementById('finish-btn').style.opacity = '0.5';
+      finishButton.textContent = '✓ Done';
+      finishButton.disabled = true;
+      finishButton.style.opacity = '0.5';
 
-      showToast('Review complete! ' + data.commentsWritten + ' comment(s) written to file.', 'success');
+      if (data.mode === 'pull_request') {
+        const prLabel = data.pullRequest ? data.pullRequest.owner + '/' + data.pullRequest.repo + '#' + data.pullRequest.number : 'the pull request';
+        showToast(
+          'Review complete! ' + data.inlineComments + ' inline and ' + data.fallbackComments + ' fallback comment(s) submitted to ' + prLabel + '.',
+          'success'
+        );
+      } else {
+        showToast('Review complete! ' + data.commentsWritten + ' comment(s) written to file.', 'success');
+      }
 
       // Best-effort: browsers often block tab closing unless script-opened.
       setTimeout(() => {
@@ -1451,7 +1658,7 @@ function getScript(sessionId: string): string {
         rememberCaretFromSelection();
         const range = sel.getRangeAt(0);
         const rect = range.getBoundingClientRect();
-        showCommentPopup(selectedText, rect.left, rect.bottom);
+        showCommentPopup(buildPendingSelection(selectedText), rect.left, rect.bottom);
       }
       lastKey = keyLower;
       lastKeyTime = now;
