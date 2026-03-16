@@ -50,13 +50,13 @@ Focus on:
 - reporting what changed and how it was verified.`;
 
 const DESIGN_INTENT_PATTERNS = [
-	/^\s*(plan|design|spec|research|brainstorm|evaluate|compare|analy[sz]e|review|audit)\b/i,
+	/^\s*(?:let'?s\s+|please\s+|can you\s+|could you\s+)?(plan|design|spec|research|brainstorm|evaluate|compare|analy[sz]e|review|audit)\b/i,
 	/\b(prd|specification|architecture|architect|trade-?offs?|options?|approaches?|proposal|investigate|analysis)\b/i,
 	/\b(best approach|different options|compare options|evaluate options)\b/i,
 ];
 
 const IMPLEMENT_INTENT_PATTERNS = [
-	/^\s*(implement|fix|change|edit|update|refactor|add|create|write|rename|remove|wire)\b/i,
+	/^\s*(?:please\s+)?(implement|fix|change|edit|update|refactor|add|create|write|rename|remove|wire)\b/i,
 	/\b(code|patch|ship|hook up|hook-up|apply the change|make the change)\b/i,
 	/\b(bug fix|hotfix|cleanup|rewrite this part)\b/i,
 ];
@@ -105,7 +105,7 @@ const IMPLEMENT_KEYWORDS = [
 	"cleanup",
 ];
 
-function normalizeMode(raw: string | undefined): WorkflowMode | undefined {
+export function normalizeMode(raw: string | undefined): WorkflowMode | undefined {
 	if (!raw) return undefined;
 	const value = raw.trim().toLowerCase();
 	if (["design", "d"].includes(value)) return "design";
@@ -121,9 +121,36 @@ function countKeywordHits(text: string, keywords: string[]): number {
 	}, 0);
 }
 
-function detectModeFromPrompt(text: string): WorkflowMode | undefined {
+export function detectExplicitModeFromPrompt(text: string): WorkflowMode | undefined {
 	const normalized = text.trim().toLowerCase();
 	if (!normalized || normalized.startsWith("/")) return undefined;
+
+	const switchMatch = normalized.match(
+		/\b(?:switch(?:\s+workflow)?\s+mode\s+to|switch\s+to|change\s+(?:the\s+)?mode\s+to|set\s+(?:the\s+)?mode\s+to)\s+(design|d|implement|implementation|build|building|i)\b/,
+	);
+	if (switchMatch) {
+		return normalizeMode(switchMatch[1]);
+	}
+
+	const labelMatch = normalized.match(/^(?:mode\s*:\s*|)(design|d|implement|implementation|build|building|i)\s*:/);
+	if (labelMatch) {
+		return normalizeMode(labelMatch[1]);
+	}
+
+	const directLabelMatch = normalized.match(/^mode\s*:\s*(design|d|implement|implementation|build|building|i)\b/);
+	if (directLabelMatch) {
+		return normalizeMode(directLabelMatch[1]);
+	}
+
+	return undefined;
+}
+
+export function detectModeFromPrompt(text: string): WorkflowMode | undefined {
+	const normalized = text.trim().toLowerCase();
+	if (!normalized || normalized.startsWith("/")) return undefined;
+
+	const explicitMode = detectExplicitModeFromPrompt(normalized);
+	if (explicitMode) return explicitMode;
 
 	const designPatternHit = DESIGN_INTENT_PATTERNS.some((pattern) => pattern.test(normalized));
 	const implementPatternHit = IMPLEMENT_INTENT_PATTERNS.some((pattern) => pattern.test(normalized));
@@ -178,9 +205,14 @@ Priorities:
 ${request ? `User request:\n${request}` : ""}`;
 }
 
-function isSafeDesignCommand(command: string): boolean {
+export function isSafeDesignCommand(command: string): boolean {
 	const trimmed = command.trim();
 	if (!trimmed) return false;
+
+	const cdPrefixMatch = trimmed.match(/^cd\s+([^;&|]+)\s*&&\s*(.+)$/i);
+	if (cdPrefixMatch) {
+		return isSafeDesignCommand(cdPrefixMatch[2]!);
+	}
 
 	const destructivePatterns = [
 		/(^|\s)(rm|rmdir|mv|cp|mkdir|touch|chmod|chown|chgrp|ln|dd|truncate|tee)(\s|$)/i,
@@ -226,8 +258,9 @@ function isSafeDesignCommand(command: string): boolean {
 		/^sed\s+-n\b/i,
 		/^awk\b/i,
 		/^git\s+(status|log|diff|show|branch|remote|config\s+--get)\b/i,
-		/^npm\s+(ls|list|outdated|view|info|search)\b/i,
-		/^yarn\s+(list|info|why)\b/i,
+		/^npm\s+(test|ls|list|outdated|view|info|search)\b/i,
+		/^yarn\s+(test|list|info|why)\b/i,
+		/^pnpm\s+(test|list|why)\b/i,
 	];
 
 	return safeStarts.some((p) => p.test(trimmed));
