@@ -68,12 +68,19 @@ function buildConversationContext(ctx: ExtensionContext, maxMessages = 5): strin
 
 function buildSuggestionPrompt(conversationContext: string, workflowMode?: string): string {
 	const modeHint = workflowMode ? `\n- Current workflow mode: ${workflowMode}` : "";
-	return `Based on the recent conversation, suggest ONE brief prompt the user might want to send next.
+	return `You are predicting what the user will type next in a coding assistant chat.
+
+Based on the recent conversation, suggest ONE brief prompt the user is most likely to send next.
 
 Rules:
 - Single sentence, 5-20 words
-- Specific to what was just discussed (not generic)
-- Match the conversation intent (debugging, implementing, designing, etc.)${modeHint}
+- Must be a natural follow-up to what JUST happened (the last exchange)
+- If the user just completed a task, suggest testing it, verifying it works, or moving on to the next related task
+- If the user was debugging, suggest the next debugging step
+- If the user asked a question, suggest a follow-up question or action
+- Do NOT suggest new features, improvements, or extensions to what was just built — unless the user explicitly asked for that
+- Do NOT suggest tangentially related work
+- Think: "what would the user most likely type right now?"${modeHint}
 - Return ONLY the prompt text. No quotes, no explanation, no markdown.
 
 <recent_conversation>
