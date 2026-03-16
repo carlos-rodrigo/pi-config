@@ -2,7 +2,7 @@
  * Bordered Editor — input box with rounded borders, embedded status info,
  * workflow mode label, and ghost text support for AutoProm suggestions.
  *
- * ╭─ Implement ───────────────── claude-opus-4-6 · xhigh ─╮
+ * ╭─ mode:implement ──────────── claude-opus-4-6 · xhigh ─╮
  * │   ▌Implement the error handling changes                  │  ← gray ghost text
  * ╰─ 42% of 200k · $1.14 ───────────── ~/project (main) ─╯
  *
@@ -210,7 +210,7 @@ class BorderedEditor extends CustomEditor {
 		let topLeft = "";
 		if (this.modeLabel && theme) {
 			const color = this.modeLabel.toLowerCase() === "design" ? "success" : "warning";
-			topLeft = theme.fg(color, this.modeLabel);
+			topLeft = theme.fg("dim", "mode:") + theme.fg(color, this.modeLabel.toLowerCase());
 		}
 
 		// --- Top right: model · level ---
