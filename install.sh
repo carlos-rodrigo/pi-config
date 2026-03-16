@@ -21,10 +21,20 @@ mkdir -p "${PI_DIR}/themes"
 mkdir -p "${PI_DIR}/agents"
 mkdir -p "${PI_DIR}/prompts"
 
+# Remove stale test symlinks that should never be loaded as extensions.
+for stale in "${PI_DIR}"/extensions/*.test.ts; do
+  [ -L "$stale" ] || continue
+  rm "$stale"
+  echo "  ✓ removed stale extension test symlink $(basename "$stale")"
+done
+
 # --- Extensions (single files) ---
 for f in "${REPO_DIR}"/extensions/*.ts; do
   [ -f "$f" ] || continue
   name="$(basename "$f")"
+  if [[ "$name" == *.test.ts ]]; then
+    continue
+  fi
   target="${PI_DIR}/extensions/${name}"
   if [ -L "$target" ]; then
     rm "$target"
