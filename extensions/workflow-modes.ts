@@ -356,10 +356,9 @@ export default function (pi: ExtensionAPI) {
 		},
 	};
 
-	pi.registerShortcut("ctrl+m", cycleModeShortcut);
-	pi.registerShortcut("ctrl+alt+m", cycleModeShortcut);
+	pi.registerShortcut("ctrl+shift+m", cycleModeShortcut);
 
-	pi.registerCommand("mode", {
+	const switchModeCommand = {
 		description: "Switch workflow mode: design | implement",
 		handler: async (args, ctx) => {
 			const input = args.trim();
@@ -387,6 +386,20 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			await applyMode(mode, ctx);
+		},
+	};
+
+	pi.registerCommand("mode", switchModeCommand);
+	pi.registerCommand("design", {
+		description: "Switch workflow mode to Design",
+		handler: async (_args, ctx) => {
+			await applyMode("design", ctx);
+		},
+	});
+	pi.registerCommand("implement", {
+		description: "Switch workflow mode to Implement",
+		handler: async (_args, ctx) => {
+			await applyMode("implement", ctx);
 		},
 	});
 

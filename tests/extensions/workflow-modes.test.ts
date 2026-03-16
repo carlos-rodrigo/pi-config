@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { matchesKey, setKittyProtocolActive } from "@mariozechner/pi-tui";
+
 import workflowModesExtension, {
 	detectExplicitModeFromPrompt,
 	detectModeFromPrompt,
@@ -13,6 +15,7 @@ type PiEventHandler = (...args: any[]) => unknown;
 
 function createPiHarness(options?: { flagMode?: string; tools?: Array<{ name: string }> }) {
 	const shortcuts = new Map<string, ShortcutHandler>();
+	const commands = new Map<string, { description: string; handler: (...args: any[]) => unknown }>();
 	const eventHandlers = new Map<string, PiEventHandler>();
 	let activeTools: string[] = [];
 	let thinkingLevel: string | undefined;
@@ -20,6 +23,7 @@ function createPiHarness(options?: { flagMode?: string; tools?: Array<{ name: st
 
 	return {
 		shortcuts,
+		commands,
 		eventHandlers,
 		getActiveTools: () => activeTools,
 		getThinkingLevel: () => thinkingLevel,
@@ -29,7 +33,9 @@ function createPiHarness(options?: { flagMode?: string; tools?: Array<{ name: st
 			registerShortcut(name: string, definition: ShortcutHandler) {
 				shortcuts.set(name, definition);
 			},
-			registerCommand() {},
+			registerCommand(name: string, definition: { description: string; handler: (...args: any[]) => unknown }) {
+				commands.set(name, definition);
+			},
 			on(name: string, handler: PiEventHandler) {
 				eventHandlers.set(name, handler);
 			},
@@ -148,20 +154,69 @@ test("design mode allows planning-safe repo commands but blocks destructive shel
 	assert.equal(isSafeDesignCommand("printf 'hello' > notes.md"), false);
 });
 
-test("workflow-modes registers ctrl+m and ctrl+alt+m for cycling", () => {
+test("workflow-modes registers only ctrl+shift+m for cycling", () => {
 	const { shortcuts, pi } = createPiHarness();
 
 	workflowModesExtension(pi as any);
 
-	const primaryShortcut = shortcuts.get("ctrl+m");
-	const compatibilityShortcut = shortcuts.get("ctrl+alt+m");
+	const shortcut = shortcuts.get("ctrl+shift+m");
 
-	assert.ok(primaryShortcut);
-	assert.ok(compatibilityShortcut);
-	assert.equal(primaryShortcut.description, "Cycle workflow mode (Design/Implement)");
-	assert.equal(compatibilityShortcut.description, "Cycle workflow mode (Design/Implement)");
-	assert.equal(shortcuts.has("ctrl+shift+m"), false);
+	assert.ok(shortcut);
+	assert.equal(shortcut.description, "Cycle workflow mode (Design/Implement)");
+	assert.equal(shortcuts.has("f6"), false);
+	assert.equal(shortcuts.has("f7"), false);
+	assert.equal(shortcuts.has("f8"), false);
+	assert.equal(shortcuts.has("alt+w"), false);
+	assert.equal(shortcuts.has("ctrl+alt+w"), false);
+	assert.equal(shortcuts.has("ctrl+alt+m"), false);
+	assert.equal(shortcuts.has("ctrl+m"), false);
 	assert.equal(shortcuts.has("ctrl+tab"), false);
+});
+
+
+test("ctrl+shift+m matches csi-u input when kitty protocol is not active", () => {
+	setKittyProtocolActive(false);
+	assert.equal(matchesKey("\x1b[109;6u", "ctrl+shift+m"), true);
+});
+
+
+test("ctrl+shift+m shortcut cycles from implement to design", async () => {
+	const { shortcuts, pi, getSelectedModel, getThinkingLevel } = createPiHarness();
+	const { ctx, notifications } = createContext();
+
+	workflowModesExtension(pi as any);
+
+	const shortcut = shortcuts.get("ctrl+shift+m");
+	assert.ok(shortcut);
+
+	await shortcut.handler(ctx as any);
+
+	assert.deepEqual(getSelectedModel(), { provider: "anthropic", model: "claude-opus-4-6" });
+	assert.equal(getThinkingLevel(), "xhigh");
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Design/i);
+});
+
+
+test("/design and /implement commands switch modes directly", async () => {
+	const { commands, pi, getSelectedModel, getThinkingLevel } = createPiHarness();
+	const { ctx, notifications } = createContext();
+
+	workflowModesExtension(pi as any);
+
+	const designCommand = commands.get("design");
+	const implementCommand = commands.get("implement");
+	assert.ok(designCommand);
+	assert.ok(implementCommand);
+
+	await designCommand.handler("", ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "anthropic", model: "claude-opus-4-6" });
+	assert.equal(getThinkingLevel(), "xhigh");
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Design/i);
+
+	await implementCommand.handler("", ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.4" });
+	assert.equal(getThinkingLevel(), "high");
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Implement/i);
 });
 
 test("design mode keeps edit/write tools active for planning artifacts", async () => {

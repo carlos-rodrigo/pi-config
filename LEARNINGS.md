@@ -96,6 +96,13 @@
 **Learning:** Design mode should differ from Implement mode primarily by model selection and prompt framing, not by blocking file creation outright. Planning artifacts (PRDs, design docs, research notes, task files) still need normal file-write tools, while the "no implementation" rule should live in prompt guidance and focused tests.
 **Applies to:** Future mode-gated workflows, prompt-injection features, and extensions that distinguish planning from coding.
 
+## Workflow Mode Shortcuts: Prefer chords already supported by the active parser
+
+**Date:** 2026-03-16
+**Context:** Debugging workflow shortcuts for Ghostty + tmux without patching vendored Pi modules.
+**Learning:** When a terminal shortcut fails, prefer selecting a chord the existing parser already handles in the current transport format instead of patching dependencies. In tmux `extended-keys-format csi-u`, `ctrl+shift+letter` chords such as `Ctrl+Shift+M` are matched cleanly by Pi's current parser, while some `ctrl+alt+letter` chords can be transport- or parser-sensitive.
+**Applies to:** Future TUI shortcut selection, terminal-compatibility debugging, and Pi extension hotkeys meant to work in tmux.
+
 ## AutoProm UX: Optimize ghost prompts for next-step utility, not reply prediction
 
 **Date:** 2026-03-16
