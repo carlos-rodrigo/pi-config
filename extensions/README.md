@@ -223,3 +223,63 @@ If worktree creation fails, the extension automatically:
 - creates `feat/<slug>` from `main` in the current repo,
 - checks it out when the repo is clean,
 - and continues the feature kickoff there.
+
+---
+
+## autoprom
+
+Inline ghost text prompt suggestions — like fish shell autosuggestion but for your next prompt.
+
+### Preview
+
+After the agent finishes responding, a gray suggestion appears inside the editor:
+
+```
+╭──────────────────────────── claude-opus-4-6 · xhigh ─────────╮
+│   ▌Implement the error handling changes from the design       │
+╰─ 42% of 200k · $1.14 ──────────────── ~/project (main) ────╯
+     ↑                                 ↑
+  cursor                        gray ghost text
+```
+
+### How it works
+
+1. After `agent_end`, calls an LLM (Sonnet 4.6, fallback Haiku 4.5) with the last few messages
+2. The LLM returns one short suggested prompt
+3. The suggestion appears as gray ghost text in the editor (rendered by `bordered-editor`)
+4. Uses the same API key already configured in pi — no extra setup
+
+### Interaction
+
+| Input | What happens |
+|-------|-------------|
+| **→** (right arrow) | Accept: ghost text becomes real editor text, cursor at end |
+| **Any character** | Dismiss ghost, character typed normally |
+| **Backspace** | Dismiss ghost |
+| **Escape** | Dismiss ghost |
+| Type before suggestion arrives | LLM call is cancelled, no ghost shown |
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/suggest` | Toggle auto-suggestions on/off |
+| `/suggest now` | Manually trigger a suggestion |
+| `/suggest model` | Show current suggestion model |
+| `/suggest model <provider>/<id>` | Change model (e.g. `/suggest model anthropic/claude-haiku-4-5`) |
+
+### Configuration
+
+- **Default model:** `anthropic/claude-sonnet-4-6`
+- **Fallback model:** `anthropic/claude-haiku-4-5` (if primary unavailable)
+- State (enabled/disabled, model) persists across session restarts
+- Workflow mode context (design/implement) is included in the suggestion prompt for relevance
+
+### Architecture
+
+Two-extension communication via `pi.events`:
+
+- **autoprom.ts** — suggestion engine (LLM calls, timing, cancellation)
+- **bordered-editor.ts** — ghost text rendering and input handling
+
+Events: `autoprom:suggest`, `autoprom:clear`, `autoprom:accepted`, `autoprom:dismissed`
