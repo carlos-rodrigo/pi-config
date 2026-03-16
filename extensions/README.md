@@ -245,7 +245,7 @@ After the agent finishes responding, a gray suggestion appears inside the editor
 ### How it works
 
 1. After `agent_end`, calls an LLM (Sonnet 4.6, fallback Haiku 4.5) with the last few messages
-2. The LLM returns one short suggested prompt
+2. The LLM returns one short suggested next-step prompt the user can send to move the work forward
 3. The suggestion appears as gray ghost text in the editor (rendered by `bordered-editor`)
 4. Uses the same API key already configured in pi — no extra setup
 

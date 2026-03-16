@@ -88,3 +88,17 @@
 **Context:** Adding PR-mode metadata and line capture to the document-reviewer browser page without a DOM test harness.
 **Learning:** When an extension UI is rendered as one inline HTML/JS string, lift payload builders and mode-specific copy into exported pure helpers. That keeps the browser script small, makes compile-first `tsc -> node --test` coverage practical, and lets tests validate PR/document divergences without spinning up a real DOM.
 **Applies to:** Future inlined extension pages, browser-review flows, and other features that need targeted tests before a richer frontend harness exists.
+
+## Workflow Modes: Separate planning permissions from implementation intent
+
+**Date:** 2026-03-16
+**Context:** Fixing workflow-mode switching and clarifying Design vs Implement behavior.
+**Learning:** Design mode should differ from Implement mode primarily by model selection and prompt framing, not by blocking file creation outright. Planning artifacts (PRDs, design docs, research notes, task files) still need normal file-write tools, while the "no implementation" rule should live in prompt guidance and focused tests.
+**Applies to:** Future mode-gated workflows, prompt-injection features, and extensions that distinguish planning from coding.
+
+## AutoProm UX: Optimize ghost prompts for next-step utility, not reply prediction
+
+**Date:** 2026-03-16
+**Context:** Retargeting AutoProm suggestions to better match the user's role in the workflow.
+**Learning:** Prompt-suggestion systems for coding workflows should generate the next useful user prompt to move the task forward, rather than predicting the statistically most likely next message. Make the contract explicit, keep suggestions in the user's voice, and layer workflow-mode guidance so Design mode suggests planning steps while Implement mode suggests execution or verification steps.
+**Applies to:** Future ghost-text suggestions, workflow assistants, and any prompt-generation helper tied to staged engineering flows.

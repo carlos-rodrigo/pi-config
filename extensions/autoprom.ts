@@ -1,9 +1,10 @@
 /**
- * AutoProm Suggestion — ghost text prompt suggestions.
+ * AutoProm Suggestion — ghost text next-step prompt suggestions.
  *
  * After the agent finishes responding, calls an LLM to generate a single
- * suggested next prompt. The suggestion appears as gray ghost text inside
- * the editor (rendered by bordered-editor via pi.events).
+ * suggested next prompt the user can send to move the work forward. The
+ * suggestion appears as gray ghost text inside the editor (rendered by
+ * bordered-editor via pi.events).
  *
  * - Right arrow → accepts the full suggestion
  * - Any character → dismisses ghost, types normally
@@ -66,21 +67,33 @@ function buildConversationContext(ctx: ExtensionContext, maxMessages = 5): strin
 	return messages.join("\n\n");
 }
 
-function buildSuggestionPrompt(conversationContext: string, workflowMode?: string): string {
+export function buildSuggestionPrompt(conversationContext: string, workflowMode?: string): string {
 	const modeHint = workflowMode ? `\n- Current workflow mode: ${workflowMode}` : "";
-	return `You are predicting what the user will type next in a coding assistant chat.
+	const modeGuidance =
+		workflowMode === "design"
+			? `
+- In Design mode, prefer prompts that help clarify requirements, compare options, produce research, write PRDs/design docs, or break work into tasks
+- Do NOT push toward implementation unless the user explicitly asked for it`
+			: workflowMode === "implement"
+				? `
+- In Implement mode, prefer prompts that help make the next concrete code/testing/verification step
+- Favor prompts that move from plan to execution, or from changes to validation`
+				: "";
 
-Based on the recent conversation, suggest ONE brief prompt the user is most likely to send next.
+	return `You draft the next prompt the USER should send to the coding assistant to move the work forward.
+
+Based on the recent conversation, suggest ONE brief, useful next-step prompt for the user.
 
 Rules:
+- Write the prompt as something the user can send directly to the assistant
+- Optimize for forward progress, not for predicting the statistically most likely reply
 - Single sentence, 5-20 words
-- Must be a natural follow-up to what JUST happened (the last exchange)
-- If the user just completed a task, suggest testing it, verifying it works, or moving on to the next related task
+- Must be a natural next step from what JUST happened
+- If the user just completed a task, suggest testing it, verifying it works, or moving to the next necessary step
 - If the user was debugging, suggest the next debugging step
-- If the user asked a question, suggest a follow-up question or action
-- Do NOT suggest new features, improvements, or extensions to what was just built — unless the user explicitly asked for that
-- Do NOT suggest tangentially related work
-- Think: "what would the user most likely type right now?"${modeHint}
+- If the user asked a question, suggest the best follow-up question or action
+- Stay in the user's role; do NOT write as the assistant, do NOT offer help, and do NOT explain the suggestion
+- Do NOT suggest new features, improvements, or tangential work unless the user explicitly asked for that${modeHint}${modeGuidance}
 - Return ONLY the prompt text. No quotes, no explanation, no markdown.
 
 <recent_conversation>

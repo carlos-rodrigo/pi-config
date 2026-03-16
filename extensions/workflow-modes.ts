@@ -19,7 +19,7 @@ const MODE_PROFILE: Record<WorkflowMode, { provider: string; model: string; thin
 	implement: { provider: "openai-codex", model: "gpt-5.4", thinking: "high" },
 };
 
-const DESIGN_BUILTINS = ["read", "bash", "grep", "find", "ls"];
+const DESIGN_BUILTINS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const IMPLEMENT_BUILTINS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 
 const DESIGN_PROMPT = `
@@ -33,8 +33,9 @@ Focus on:
 - evaluating different options and trade-offs
 - asking clarifying questions before implementation
 - researching current code and alternatives
-- producing PRD/design/tasks when needed
-Do not implement code changes in this mode.`;
+- producing PRD/design/tasks/research artifacts when needed
+- creating or updating planning files when that helps the design flow
+Do not implement product code changes in this mode unless the user explicitly asks to switch to implementation.`;
 
 const IMPLEMENT_PROMPT = `
 [WORKFLOW MODE: Implement]
@@ -183,7 +184,8 @@ Priorities:
 - understand the problem and constraints
 - evaluate different options and trade-offs
 - ask clarifying questions when requirements are unclear
-- avoid code changes unless the user explicitly asks to switch to implementation
+- create or update planning artifacts when useful (PRDs, research notes, technical designs, task files)
+- avoid product code changes unless the user explicitly asks to switch to implementation
 ${request ? `User request:\n${request}` : ""}`;
 	}
 
@@ -347,12 +349,15 @@ export default function (pi: ExtensionAPI) {
 		type: "string",
 	});
 
-	pi.registerShortcut("ctrl+alt+m", {
+	const cycleModeShortcut = {
 		description: "Cycle workflow mode (Design/Implement)",
-		handler: async (ctx) => {
+		handler: async (ctx: ExtensionContext) => {
 			await cycleMode(ctx);
 		},
-	});
+	};
+
+	pi.registerShortcut("ctrl+m", cycleModeShortcut);
+	pi.registerShortcut("ctrl+alt+m", cycleModeShortcut);
 
 	pi.registerCommand("mode", {
 		description: "Switch workflow mode: design | implement",
@@ -404,13 +409,6 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("tool_call", async (event) => {
 		if (currentMode !== "design") return;
-
-		if (event.toolName === "edit" || event.toolName === "write") {
-			return {
-				block: true,
-				reason: "Mode: Design blocks code-writing tools. Switch with /mode implement.",
-			};
-		}
 
 		if (event.toolName === "bash") {
 			const command = (event.input as { command?: string }).command ?? "";
