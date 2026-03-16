@@ -1,10 +1,15 @@
 /**
  * Bordered Editor — input box with rounded borders, embedded status info,
- * and ghost text support for AutoProm suggestions.
+ * workflow mode label, and ghost text support for AutoProm suggestions.
  *
- * ╭──────────────────────────── claude-opus-4-6 · xhigh ─╮
- * │   ▌Implement the error handling changes                 │  ← gray ghost text
- * ╰─ 42% of 200k · $1.14 ──────────── ~/project (main) ─╯
+ * ╭─ Implement ───────────────── claude-opus-4-6 · xhigh ─╮
+ * │   ▌Implement the error handling changes                  │  ← gray ghost text
+ * ╰─ 42% of 200k · $1.14 ───────────── ~/project (main) ─╯
+ *
+ * Top left:     workflow mode (Design in green, Implement in yellow)
+ * Top right:    model · thinking-level (level in green)
+ * Bottom left:  context% of Nk · $cost
+ * Bottom right: cwd plus git state — branch (main checkout) or worktree info
  *
  * Ghost text: appears when editor is empty, right arrow accepts, any key dismisses.
  */
@@ -110,6 +115,9 @@ class BorderedEditor extends CustomEditor {
 	private getWorktreeInfo: () => string | null = () => null;
 	private getThinkingLevel: () => string = () => "off";
 
+	// --- Mode label state ---
+	private modeLabel: string | null = null;
+
 	// --- Ghost text state ---
 	private ghostText: string | null = null;
 	onGhostAccepted?: (text: string) => void;
@@ -125,6 +133,10 @@ class BorderedEditor extends CustomEditor {
 		this.getGitBranch = getGitBranch;
 		this.getWorktreeInfo = getWorktreeInfo;
 		this.getThinkingLevel = getThinkingLevel;
+	}
+
+	setModeLabel(label: string | null): void {
+		this.modeLabel = label;
 	}
 
 	setGhostText(text: string | null): void {
@@ -194,6 +206,13 @@ class BorderedEditor extends CustomEditor {
 			}
 		}
 
+		// --- Top left: workflow mode ---
+		let topLeft = "";
+		if (this.modeLabel && theme) {
+			const color = this.modeLabel.toLowerCase() === "design" ? "success" : "warning";
+			topLeft = theme.fg(color, this.modeLabel);
+		}
+
 		// --- Top right: model · level ---
 		let topRight = "";
 		if (this.ctx?.model && theme) {
@@ -245,7 +264,7 @@ class BorderedEditor extends CustomEditor {
 
 		return lines.map((line, i) => {
 			if (i === 0)
-				return this.buildBorder(width, "╭", "╮", bc, "", topRight);
+				return this.buildBorder(width, "╭", "╮", bc, topLeft, topRight);
 			if (i === bottomIdx)
 				return this.buildBorder(
 					width,
@@ -325,6 +344,17 @@ export default function (pi: ExtensionAPI) {
 	let editorInstance: BorderedEditor | undefined;
 	let requestRender: (() => void) | undefined;
 
+	// --- Workflow mode events ---
+
+	pi.events.on("workflow:mode", (data) => {
+		const { mode } = data as { mode: string };
+		if (editorInstance) {
+			const label = mode === "design" ? "Design" : "Implement";
+			editorInstance.setModeLabel(label);
+			requestRender?.();
+		}
+	});
+
 	// --- AutoProm ghost text events ---
 
 	pi.events.on("autoprom:suggest", (data) => {
@@ -391,6 +421,10 @@ export default function (pi: ExtensionAPI) {
 			};
 
 			editorInstance = editor;
+
+			// Request current workflow mode (if workflow-modes extension is loaded)
+			pi.events.emit("workflow:request-mode", {});
+
 			return editor;
 		});
 	});
