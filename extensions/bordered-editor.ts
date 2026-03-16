@@ -1,13 +1,12 @@
 /**
- * Bordered Editor — input box with rounded borders and embedded status info.
+ * Bordered Editor — input box with rounded borders, embedded status info,
+ * and ghost text support for AutoProm suggestions.
  *
  * ╭──────────────────────────── claude-opus-4-6 · xhigh ─╮
- * │   your prompt here                                      │
+ * │   ▌Implement the error handling changes                 │  ← gray ghost text
  * ╰─ 42% of 200k · $1.14 ──────────── ~/project (main) ─╯
  *
- * Top right:    model · thinking-level (level in green)
- * Bottom left:  context% of Nk · $cost
- * Bottom right: cwd plus git state — branch (main checkout) or worktree info (linked worktree)
+ * Ghost text: appears when editor is empty, right arrow accepts, any key dismisses.
  */
 
 import * as fs from "node:fs";
@@ -15,9 +14,12 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { visibleWidth } from "@mariozechner/pi-tui";
+import { CURSOR_MARKER, matchesKey, Key, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
 
 const ANSI_SGR = /\x1b\[[0-9;]*m/g;
+const GHOST_COLOR = "\x1b[90m"; // bright black (gray)
+const ANSI_RESET = "\x1b[0m";
+const PADDING_X = 2;
 
 interface WorktreeEntry {
 	path: string;
@@ -108,6 +110,11 @@ class BorderedEditor extends CustomEditor {
 	private getWorktreeInfo: () => string | null = () => null;
 	private getThinkingLevel: () => string = () => "off";
 
+	// --- Ghost text state ---
+	private ghostText: string | null = null;
+	onGhostAccepted?: (text: string) => void;
+	onGhostDismissed?: () => void;
+
 	setDataProviders(
 		ctx: ExtensionContext,
 		getGitBranch: () => string | null,
@@ -120,6 +127,51 @@ class BorderedEditor extends CustomEditor {
 		this.getThinkingLevel = getThinkingLevel;
 	}
 
+	setGhostText(text: string | null): void {
+		if (text && this.getText().length > 0) {
+			// Don't show ghost when editor has content
+			return;
+		}
+		this.ghostText = text;
+	}
+
+	clearGhostText(): void {
+		this.ghostText = null;
+	}
+
+	// --- Input handling for ghost text ---
+
+	handleInput(data: string): void {
+		if (this.ghostText && this.getText().length === 0) {
+			if (matchesKey(data, Key.right)) {
+				// Accept: fill editor with ghost text
+				const text = this.ghostText;
+				this.ghostText = null;
+				this.ctx?.ui.setEditorText(text);
+				this.onGhostAccepted?.(text);
+				return;
+			}
+
+			// Any other input: dismiss ghost first
+			this.ghostText = null;
+			this.onGhostDismissed?.();
+
+			// Escape just dismisses ghost — don't pass through (avoids agent abort flicker)
+			if (matchesKey(data, Key.escape)) return;
+
+			// Backspace on empty editor — nothing to delete, just dismiss
+			if (matchesKey(data, Key.backspace)) return;
+
+			// Everything else (printable chars, ctrl combos, etc.) — pass through
+			super.handleInput(data);
+			return;
+		}
+
+		super.handleInput(data);
+	}
+
+	// --- Rendering ---
+
 	render(width: number): string[] {
 		if (width < 10) return super.render(width);
 
@@ -127,6 +179,11 @@ class BorderedEditor extends CustomEditor {
 		const lines = super.render(innerWidth);
 		const bc = this.borderColor;
 		const theme = this.ctx?.ui.theme;
+
+		// If ghost text is active and editor is empty, replace the cursor line
+		if (this.ghostText && this.getText().length === 0) {
+			this.replaceWithGhostLine(lines, innerWidth);
+		}
 
 		// Find bottom border: last line that starts with ─ after stripping ANSI
 		let bottomIdx = 0;
@@ -137,7 +194,7 @@ class BorderedEditor extends CustomEditor {
 			}
 		}
 
-		// --- Top labels: model · level (top right) ---
+		// --- Top right: model · level ---
 		let topRight = "";
 		if (this.ctx?.model && theme) {
 			const name = this.ctx.model.name || this.ctx.model.id;
@@ -204,6 +261,32 @@ class BorderedEditor extends CustomEditor {
 		});
 	}
 
+	/** Replace the first content line with ghost text when editor is empty. */
+	private replaceWithGhostLine(lines: string[], innerWidth: number): void {
+		if (!this.ghostText) return;
+
+		// Find the first content line (between inner top and bottom borders).
+		// Content lines are those between the ─ borders.
+		let firstContentIdx = -1;
+		for (let i = 1; i < lines.length; i++) {
+			if (!lines[i].replace(ANSI_SGR, "").startsWith("─")) {
+				firstContentIdx = i;
+				break;
+			}
+		}
+		if (firstContentIdx < 0) return;
+
+		const padding = " ".repeat(PADDING_X);
+		const maxGhostWidth = innerWidth - PADDING_X;
+		const gt = truncateToWidth(this.ghostText, maxGhostWidth);
+		const gtVW = visibleWidth(gt);
+		const fill = " ".repeat(Math.max(0, maxGhostWidth - gtVW));
+
+		// CURSOR_MARKER positions the hardware cursor; only emit when focused
+		const marker = this.focused ? CURSOR_MARKER : "";
+		lines[firstContentIdx] = padding + marker + GHOST_COLOR + gt + ANSI_RESET + fill;
+	}
+
 	/** Build a border line with optional left/right labels embedded in ─ */
 	private buildBorder(
 		width: number,
@@ -239,6 +322,28 @@ class BorderedEditor extends CustomEditor {
 }
 
 export default function (pi: ExtensionAPI) {
+	let editorInstance: BorderedEditor | undefined;
+	let requestRender: (() => void) | undefined;
+
+	// --- AutoProm ghost text events ---
+
+	pi.events.on("autoprom:suggest", (data) => {
+		const { text } = data as { text: string };
+		if (editorInstance) {
+			editorInstance.setGhostText(text);
+			requestRender?.();
+		}
+	});
+
+	pi.events.on("autoprom:clear", () => {
+		if (editorInstance) {
+			editorInstance.clearGhostText();
+			requestRender?.();
+		}
+	});
+
+	// --- Session lifecycle ---
+
 	pi.on("session_start", (_event, ctx) => {
 		let gitBranch: string | null = null;
 		let linkedWorktreeLabel: string | null = getLinkedWorktreeLabel(ctx.cwd, gitBranch);
@@ -266,15 +371,26 @@ export default function (pi: ExtensionAPI) {
 			};
 		});
 
-		// Install bordered editor
+		// Install bordered editor with ghost text support
 		ctx.ui.setEditorComponent((tui, theme, kb) => {
-			const editor = new BorderedEditor(tui, theme, kb, { paddingX: 2 });
+			requestRender = () => tui.requestRender();
+			const editor = new BorderedEditor(tui, theme, kb, { paddingX: PADDING_X });
 			editor.setDataProviders(
 				ctx,
 				() => gitBranch,
 				() => linkedWorktreeLabel,
 				() => pi.getThinkingLevel(),
 			);
+
+			// Wire ghost text callbacks → events
+			editor.onGhostAccepted = (text) => {
+				pi.events.emit("autoprom:accepted", { text });
+			};
+			editor.onGhostDismissed = () => {
+				pi.events.emit("autoprom:dismissed", {});
+			};
+
+			editorInstance = editor;
 			return editor;
 		});
 	});
