@@ -1,5 +1,5 @@
 /**
- * AutoProm Suggestion — ghost text next-step prompt suggestions.
+ * Auto Prompt Suggestion — ghost text next-step prompt suggestions.
  *
  * After the agent finishes responding, calls an LLM to generate a single
  * suggested next prompt the user can send to move the work forward. The
@@ -138,17 +138,17 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 
 	const model = resolveModelSync();
 	if (!model) {
-		ctx.ui.notify("AutoProm: no model available, suggestions disabled", "warning");
+		ctx.ui.notify("Auto Prompt: no model available, suggestions disabled", "warning");
 		enabled = false;
-		pi.appendEntry("autoprom", { enabled });
+		pi.appendEntry("auto-prompt", { enabled });
 		return;
 	}
 
 	const apiKey = await ctx.modelRegistry.getApiKey(model);
 	if (!apiKey) {
-		ctx.ui.notify("AutoProm: no API key available, suggestions disabled", "warning");
+		ctx.ui.notify("Auto Prompt: no API key available, suggestions disabled", "warning");
 		enabled = false;
-		pi.appendEntry("autoprom", { enabled });
+		pi.appendEntry("auto-prompt", { enabled });
 		return;
 	}
 
@@ -198,7 +198,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 			.trim();
 
 		if (suggestion && suggestion.length > 0 && suggestion.length < 200) {
-			pi.events.emit("autoprom:suggest", { text: suggestion });
+			pi.events.emit("auto-prompt:suggest", { text: suggestion });
 		}
 	} catch (err: unknown) {
 		if (err instanceof Error && err.name === "AbortError") return;
@@ -216,13 +216,13 @@ export default function (pi: ExtensionAPI) {
 	// Clear ghost text and cancel pending when user acts
 	pi.on("input", async (_event, _ctx) => {
 		cancelPending();
-		pi.events.emit("autoprom:clear", {});
+		pi.events.emit("auto-prompt:clear", {});
 		return { action: "continue" as const };
 	});
 
 	pi.on("turn_start", async () => {
 		cancelPending();
-		pi.events.emit("autoprom:clear", {});
+		pi.events.emit("auto-prompt:clear", {});
 	});
 
 	// Generate suggestion after agent finishes
@@ -233,11 +233,11 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// Track acceptance/dismissal
-	pi.events.on("autoprom:accepted", () => {
+	pi.events.on("auto-prompt:accepted", () => {
 		cancelPending();
 	});
 
-	pi.events.on("autoprom:dismissed", () => {
+	pi.events.on("auto-prompt:dismissed", () => {
 		cancelPending();
 	});
 
@@ -251,7 +251,7 @@ export default function (pi: ExtensionAPI) {
 				customType?: string;
 				data?: { enabled?: boolean; model?: { provider: string; id: string } };
 			};
-			if (e.type === "custom" && e.customType === "autoprom") {
+			if (e.type === "custom" && e.customType === "auto-prompt") {
 				if (e.data?.enabled !== undefined) enabled = e.data.enabled;
 				if (e.data?.model) configuredModel = e.data.model;
 			}
@@ -266,18 +266,18 @@ export default function (pi: ExtensionAPI) {
 
 			if (!input) {
 				enabled = !enabled;
-				pi.appendEntry("autoprom", { enabled, model: configuredModel });
-				ctx.ui.notify(`AutoProm suggestions ${enabled ? "enabled" : "disabled"}`, "info");
+				pi.appendEntry("auto-prompt", { enabled, model: configuredModel });
+				ctx.ui.notify(`Auto Prompt suggestions ${enabled ? "enabled" : "disabled"}`, "info");
 				if (!enabled) {
 					cancelPending();
-					pi.events.emit("autoprom:clear", {});
+					pi.events.emit("auto-prompt:clear", {});
 				}
 				return;
 			}
 
 			if (input === "now") {
 				if (!enabled) {
-					ctx.ui.notify("AutoProm is disabled. Use /suggest to enable.", "warning");
+					ctx.ui.notify("Auto Prompt is disabled. Use /suggest to enable.", "warning");
 					return;
 				}
 				await generateSuggestion(pi, ctx);
@@ -296,8 +296,8 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 				configuredModel = { provider: parts[0], id: parts[1] };
-				pi.appendEntry("autoprom", { enabled, model: configuredModel });
-				ctx.ui.notify(`AutoProm model set to ${configuredModel.provider}/${configuredModel.id}`, "info");
+				pi.appendEntry("auto-prompt", { enabled, model: configuredModel });
+				ctx.ui.notify(`Auto Prompt model set to ${configuredModel.provider}/${configuredModel.id}`, "info");
 				return;
 			}
 

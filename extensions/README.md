@@ -1,5 +1,27 @@
 # Extensions
 
+## Install individually with `pi install`
+
+From a local clone of this repo, you can install only the extension you want:
+
+```bash
+pi install ./extensions/bordered-editor.ts
+pi install ./extensions/auto-prompt.ts
+pi install ./extensions/file-opener.ts
+pi install ./extensions/workflow-modes.ts
+pi install ./extensions/worktree-manager.ts
+pi install ./extensions/feature-flow.ts
+pi install ./extensions/document-reviewer.ts
+pi install ./extensions/handoff.ts
+pi install ./extensions/agent-handoff.ts
+pi install ./extensions/subagent/index.ts
+```
+
+Notes:
+- `subagent` uses `./extensions/subagent/index.ts` as its extension entrypoint.
+- `document-reviewer.ts`, `feature-flow.ts`, and `worktree-manager.ts` import helper files next to them; install the entrypoint file exactly as shown.
+- Auto Prompt (`auto-prompt.ts`) is most useful together with `bordered-editor`.
+
 ## bordered-editor
 
 Replaces Pi's default input editor with a bordered version that embeds status information directly into the box borders.
@@ -226,7 +248,7 @@ If worktree creation fails, the extension automatically:
 
 ---
 
-## autoprom
+## Auto Prompt
 
 Inline ghost text prompt suggestions — like fish shell autosuggestion but for your next prompt.
 
@@ -279,7 +301,7 @@ After the agent finishes responding, a gray suggestion appears inside the editor
 
 Two-extension communication via `pi.events`:
 
-- **autoprom.ts** — suggestion engine (LLM calls, timing, cancellation)
+- **auto-prompt.ts** — suggestion engine (LLM calls, timing, cancellation)
 - **bordered-editor.ts** — ghost text rendering and input handling
 
-Events: `autoprom:suggest`, `autoprom:clear`, `autoprom:accepted`, `autoprom:dismissed`
+Events: `auto-prompt:suggest`, `auto-prompt:clear`, `auto-prompt:accepted`, `auto-prompt:dismissed`

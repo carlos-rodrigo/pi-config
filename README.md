@@ -4,11 +4,36 @@ My personal [Pi](https://github.com/badlogic/pi-mono) extensions, themes, agents
 
 ## Install
 
-### Via pi (extensions only)
+### Via pi (all extensions in this package)
 
 ```bash
 pi install git:github.com/carlos-rodrigo/pi-config
 ```
+
+### Via pi (one extension from a local clone)
+
+Pi supports installing a single local extension file directly. Clone the repo once, then install only the extension you want:
+
+```bash
+git clone https://github.com/carlos-rodrigo/pi-config.git
+cd pi-config
+
+pi install ./extensions/bordered-editor.ts
+pi install ./extensions/auto-prompt.ts
+pi install ./extensions/file-opener.ts
+pi install ./extensions/workflow-modes.ts
+pi install ./extensions/worktree-manager.ts
+pi install ./extensions/feature-flow.ts
+pi install ./extensions/document-reviewer.ts
+pi install ./extensions/handoff.ts
+pi install ./extensions/agent-handoff.ts
+pi install ./extensions/subagent/index.ts
+```
+
+Notes:
+- Use the exact file path for the extension entrypoint.
+- Some extensions are best used together, for example Auto Prompt (`auto-prompt.ts`) + `bordered-editor.ts`.
+- Pi can install a single local file, but it does **not** currently install one subpath from a git package in a single `pi install` command. For remote one-by-one installs, each extension would need to be published as its own package.
 
 ### Via install.sh (everything)
 

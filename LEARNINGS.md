@@ -103,9 +103,9 @@
 **Learning:** When a terminal shortcut fails, prefer selecting a chord the existing parser already handles in the current transport format instead of patching dependencies. In tmux `extended-keys-format csi-u`, `ctrl+shift+letter` chords such as `Ctrl+Shift+M` are matched cleanly by Pi's current parser, while some `ctrl+alt+letter` chords can be transport- or parser-sensitive.
 **Applies to:** Future TUI shortcut selection, terminal-compatibility debugging, and Pi extension hotkeys meant to work in tmux.
 
-## AutoProm UX: Optimize ghost prompts for next-step utility, not reply prediction
+## Auto Prompt UX: Optimize ghost prompts for next-step utility, not reply prediction
 
 **Date:** 2026-03-16
-**Context:** Retargeting AutoProm suggestions to better match the user's role in the workflow.
+**Context:** Retargeting Auto Prompt suggestions to better match the user's role in the workflow.
 **Learning:** Prompt-suggestion systems for coding workflows should generate the next useful user prompt to move the task forward, rather than predicting the statistically most likely next message. Make the contract explicit, keep suggestions in the user's voice, and layer workflow-mode guidance so Design mode suggests planning steps while Implement mode suggests execution or verification steps.
 **Applies to:** Future ghost-text suggestions, workflow assistants, and any prompt-generation helper tied to staged engineering flows.

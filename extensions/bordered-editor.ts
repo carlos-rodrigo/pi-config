@@ -1,6 +1,6 @@
 /**
  * Bordered Editor — input box with rounded borders, embedded status info,
- * workflow mode label, and ghost text support for AutoProm suggestions.
+ * workflow mode label, and ghost text support for Auto Prompt suggestions.
  *
  * ╭─ mode:implement ──────────── claude-opus-4-6 · xhigh ─╮
  * │   ▌Implement the error handling changes                  │  ← gray ghost text
@@ -355,9 +355,9 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	// --- AutoProm ghost text events ---
+	// --- Auto Prompt ghost text events ---
 
-	pi.events.on("autoprom:suggest", (data) => {
+	pi.events.on("auto-prompt:suggest", (data) => {
 		const { text } = data as { text: string };
 		if (editorInstance) {
 			editorInstance.setGhostText(text);
@@ -365,7 +365,7 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	pi.events.on("autoprom:clear", () => {
+	pi.events.on("auto-prompt:clear", () => {
 		if (editorInstance) {
 			editorInstance.clearGhostText();
 			requestRender?.();
@@ -414,10 +414,10 @@ export default function (pi: ExtensionAPI) {
 
 			// Wire ghost text callbacks → events
 			editor.onGhostAccepted = (text) => {
-				pi.events.emit("autoprom:accepted", { text });
+				pi.events.emit("auto-prompt:accepted", { text });
 			};
 			editor.onGhostDismissed = () => {
-				pi.events.emit("autoprom:dismissed", {});
+				pi.events.emit("auto-prompt:dismissed", {});
 			};
 
 			editorInstance = editor;

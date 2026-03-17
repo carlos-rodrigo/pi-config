@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildSuggestionPrompt } from "../../extensions/autoprom.ts";
+import { buildSuggestionPrompt } from "../../extensions/auto-prompt.ts";
 
 test("buildSuggestionPrompt frames suggestions as useful next-step user prompts", () => {
 	const prompt = buildSuggestionPrompt(
