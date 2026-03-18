@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 
 const sourceTests = [
 	"extensions/document-reviewer/github-pr.test.ts",
@@ -12,6 +13,16 @@ const sourceTests = [
 ];
 
 const tempDir = mkdtempSync(path.join(os.tmpdir(), "pi-config-doc-review-tests-"));
+const localTsc = path.join(process.cwd(), "node_modules", ".bin", "tsc");
+
+function ensureLocalTsc() {
+	try {
+		accessSync(localTsc, constants.X_OK);
+	} catch {
+		console.error("Missing local TypeScript compiler at node_modules/.bin/tsc. Run `npm install` first.");
+		process.exit(1);
+	}
+}
 
 function run(command, args) {
 	const result = spawnSync(command, args, {
@@ -25,8 +36,8 @@ function run(command, args) {
 }
 
 try {
-	run("npx", [
-		"tsc",
+	ensureLocalTsc();
+	run(localTsc, [
 		"--skipLibCheck",
 		"--module",
 		"nodenext",

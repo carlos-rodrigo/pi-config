@@ -8,6 +8,7 @@ From a local clone of this repo, you can install only the extension you want:
 pi install ./extensions/bordered-editor.ts
 pi install ./extensions/auto-prompt.ts
 pi install ./extensions/file-opener.ts
+pi install ./extensions/web-tools.ts
 pi install ./extensions/workflow-modes.ts
 pi install ./extensions/worktree-manager.ts
 pi install ./extensions/feature-flow.ts
@@ -113,6 +114,59 @@ The viewer tracks the original content of each file when first opened in a sessi
 
 - **tmux** is required for the "edit" mode. If not in tmux, falls back gracefully with an error message.
 - **diff** npm package (used for computing line diffs).
+
+---
+
+## web-tools
+
+Web search and web fetch tools for agent use, modeled after Opencode-style `websearch` and `webfetch` behavior.
+
+### What it adds
+
+| Tool | Description |
+|------|-------------|
+| `websearch` | Searches the web using **Exa** by default, with optional **Tavily** support |
+| `webfetch` | Fetches a URL and returns content as `text`, `markdown`, or raw `html` |
+
+### Usage
+
+**Ask the agent:**
+
+```text
+Search the web for the latest Pi package docs
+Fetch https://example.com/docs as markdown
+Search for Next.js caching docs, only from nextjs.org
+```
+
+### websearch
+
+Parameters:
+- `query` — search query string
+- `provider` — `exa` or `tavily` (defaults to `exa`, matching Opencode)
+- `allowed_domains` — optional allowlist
+- `blocked_domains` — optional blocklist
+- `limit` — optional result count cap
+
+Environment variables:
+- `EXA_API_KEY` for `provider=exa`
+- `TAVILY_API_KEY` for `provider=tavily`
+
+### webfetch
+
+Parameters:
+- `url` — fully formed `http`/`https` URL (`http` auto-upgrades to `https`)
+- `format` — `text`, `markdown`, or `html`
+- `maxChars` — optional output size cap
+
+Behavior:
+- Read-only
+- Short in-memory cache window
+- HTML pages are converted to markdown/text when requested
+
+### Notes
+
+- `websearch` mirrors Opencode's provider choice: **Exa** by default, **Tavily** optionally.
+- `webfetch` follows the Opencode bridge contract of explicit output formats: `text | markdown | html`.
 
 ---
 

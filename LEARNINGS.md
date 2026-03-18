@@ -103,6 +103,13 @@
 **Learning:** When a terminal shortcut fails, prefer selecting a chord the existing parser already handles in the current transport format instead of patching dependencies. In tmux `extended-keys-format csi-u`, `ctrl+shift+letter` chords such as `Ctrl+Shift+M` are matched cleanly by Pi's current parser, while some `ctrl+alt+letter` chords can be transport- or parser-sensitive.
 **Applies to:** Future TUI shortcut selection, terminal-compatibility debugging, and Pi extension hotkeys meant to work in tmux.
 
+## Web Tools: Mirror third-party behavior by copying contracts, not just names
+
+**Date:** 2026-03-16
+**Context:** Adding `websearch` and `webfetch` tools modeled after Opencode.
+**Learning:** When porting tools from another agent environment, first copy the public contract that agents rely on (parameter names, provider defaults, output formats, env vars), then implement the smallest local runtime that satisfies that contract. For Opencode-style web tools, that meant preserving `webfetch` formats (`text | markdown | html`) and `websearch`'s Exa-default / Tavily-optional provider model.
+**Applies to:** Future tool ports from Opencode, Claude Code, or MCP-backed environments into Pi extensions.
+
 ## Auto Prompt UX: Optimize ghost prompts for next-step utility, not reply prediction
 
 **Date:** 2026-03-16

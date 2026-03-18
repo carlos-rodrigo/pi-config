@@ -12,7 +12,7 @@ echo ""
 
 # Install npm dependencies into ~/.pi/agent so symlinked extensions can resolve them
 echo "Installing dependencies..."
-npm install --prefix "${PI_DIR}" --silent diff
+npm install --prefix "${PI_DIR}" --silent diff turndown
 echo ""
 
 # Create target directories

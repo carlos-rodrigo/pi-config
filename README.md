@@ -21,6 +21,7 @@ cd pi-config
 pi install ./extensions/bordered-editor.ts
 pi install ./extensions/auto-prompt.ts
 pi install ./extensions/file-opener.ts
+pi install ./extensions/web-tools.ts
 pi install ./extensions/workflow-modes.ts
 pi install ./extensions/worktree-manager.ts
 pi install ./extensions/feature-flow.ts
@@ -53,6 +54,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 
 - **[bordered-editor](extensions/README.md#bordered-editor)** — Custom input box with rounded borders and embedded status info (model, context usage, cost, git branch).
 - **[file-opener](extensions/README.md#file-opener)** — Open files in a syntax-highlighted overlay modal or in nvim via tmux, with built-in diff support. Adds `/open` command and `open_file` tool.
+- **[web-tools](extensions/README.md#web-tools)** — Web search and page fetch tools for agents. Adds `websearch` and `webfetch` tools with Opencode-style provider choices.
 - **[worktree-manager](extensions/README.md#worktree-manager)** — Git worktree lifecycle manager with `/ws` commands and `worktree_manage` tool.
 - **[feature-flow](extensions/README.md#feature-flow)** — Opinionated `/feature` workflow orchestrator: create isolated branch/worktree, launch a tmux Pi pane by default (or window with `--window`), and start PRD → design → tasks flow.
 - **[subagent](extensions/subagent/)** — Delegate tasks to specialized sub-agents with isolated context windows. Supports single, parallel, and chain modes.

@@ -266,7 +266,31 @@ test("design mode prompt injection allows planning files but still avoids implem
 	};
 
 	assert.match(result.systemPrompt, /creating or updating planning files/i);
+	assert.match(result.systemPrompt, /Be concise in progress updates and final responses/i);
 	assert.match(result.systemPrompt, /Do not implement product code changes/i);
+	assert.match(result.message.content, /keep responses concise and high-signal/i);
 	assert.match(result.message.content, /create or update planning artifacts when useful/i);
 	assert.match(result.message.content, /avoid product code changes/i);
+});
+
+test("implement mode prompt injection prefers concise responses", async () => {
+	const { pi, eventHandlers } = createPiHarness({ flagMode: "implement" });
+	const { ctx } = createContext();
+
+	workflowModesExtension(pi as any);
+	await eventHandlers.get("session_start")?.({}, ctx as any);
+
+	const beforeAgentStart = eventHandlers.get("before_agent_start");
+	assert.ok(beforeAgentStart);
+	const result = (await beforeAgentStart?.({
+		prompt: "Implement the fix and verify it.",
+		systemPrompt: "BASE SYSTEM",
+	})) as {
+		systemPrompt: string;
+		message: { content: string };
+	};
+
+	assert.match(result.systemPrompt, /Be concise in progress updates and final responses/i);
+	assert.match(result.message.content, /keep responses concise and high-signal/i);
+	assert.match(result.message.content, /Implement the fix and verify it\./i);
 });
