@@ -117,6 +117,7 @@ class BorderedEditor extends CustomEditor {
 
 	// --- Mode label state ---
 	private modeLabel: string | null = null;
+	private modeColor: "success" | "error" | "warning" = "success";
 
 	// --- Ghost text state ---
 	private ghostText: string | null = null;
@@ -133,10 +134,17 @@ class BorderedEditor extends CustomEditor {
 		this.getGitBranch = getGitBranch;
 		this.getWorktreeInfo = getWorktreeInfo;
 		this.getThinkingLevel = getThinkingLevel;
+		// Apply initial border color from mode
+		this.borderColor = (s: string) => ctx.ui.theme.fg(this.modeColor, s);
 	}
 
 	setModeLabel(label: string | null): void {
 		this.modeLabel = label;
+		if (label && this.ctx) {
+			const mode = label.toLowerCase();
+			this.modeColor = mode === "deep" ? "error" : mode === "fast" ? "warning" : "success";
+			this.borderColor = (s: string) => this.ctx!.ui.theme.fg(this.modeColor, s);
+		}
 	}
 
 	setGhostText(text: string | null): void {
