@@ -1,12 +1,12 @@
 /**
  * Bordered Editor — input box with rounded borders, embedded status info,
- * workflow mode label, and ghost text support for Auto Prompt suggestions.
+ * agent mode label, and ghost text support for Auto Prompt suggestions.
  *
- * ╭─ mode:implement ──────────── claude-opus-4-6 · xhigh ─╮
- * │   ▌Implement the error handling changes                  │  ← gray ghost text
+ * ╭─ mode:smart ──────────────── claude-opus-4-6 · high ─╮
+ * │   ▌Implement the error handling changes                │  ← gray ghost text
  * ╰─ 42% of 200k · $1.14 ───────────── ~/project (main) ─╯
  *
- * Top left:     workflow mode (Design in green, Implement in yellow)
+ * Top left:     agent mode (Smart in green, Deep in red, Fast in yellow)
  * Top right:    model · thinking-level (level in green)
  * Bottom left:  context% of Nk · $cost
  * Bottom right: cwd plus git state — branch (main checkout) or worktree info
@@ -206,11 +206,12 @@ class BorderedEditor extends CustomEditor {
 			}
 		}
 
-		// --- Top left: workflow mode ---
+		// --- Top left: agent mode ---
 		let topLeft = "";
 		if (this.modeLabel && theme) {
-			const color = this.modeLabel.toLowerCase() === "design" ? "success" : "warning";
-			topLeft = theme.fg("dim", "mode:") + theme.fg(color, this.modeLabel.toLowerCase());
+			const mode = this.modeLabel.toLowerCase();
+			const color = mode === "smart" ? "success" : mode === "deep" ? "error" : "warning";
+			topLeft = theme.fg("dim", "mode:") + theme.fg(color, mode);
 		}
 
 		// --- Top right: model · level ---
@@ -344,12 +345,13 @@ export default function (pi: ExtensionAPI) {
 	let editorInstance: BorderedEditor | undefined;
 	let requestRender: (() => void) | undefined;
 
-	// --- Workflow mode events ---
+	// --- Agent mode events ---
 
 	pi.events.on("workflow:mode", (data) => {
 		const { mode } = data as { mode: string };
 		if (editorInstance) {
-			const label = mode === "design" ? "Design" : "Implement";
+			const normalized = mode.toLowerCase();
+			const label = normalized === "deep" ? "Deep" : normalized === "fast" ? "Fast" : "Smart";
 			editorInstance.setModeLabel(label);
 			requestRender?.();
 		}
@@ -422,7 +424,7 @@ export default function (pi: ExtensionAPI) {
 
 			editorInstance = editor;
 
-			// Request current workflow mode (if workflow-modes extension is loaded)
+			// Request current agent mode (if workflow-modes extension is loaded)
 			pi.events.emit("workflow:request-mode", {});
 
 			return editor;

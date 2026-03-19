@@ -64,7 +64,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 Sub-agent definitions used by the subagent extension:
 
 - **oracle** — Deep reasoning second opinion (gpt-5.4). For complex debugging, architecture decisions, and thorough code analysis. Read-only.
-- **research** — Research specialist (Sonnet). Investigates technologies, reads library source code, compares approaches, checks state of the art. Uses `curl`/`gh`.
+- **researcher** — Research specialist (Sonnet). Investigates technologies, reads library source code, compares approaches, checks state of the art. Uses `curl`/`gh`.
 
 ### [Prompts](prompts/)
 

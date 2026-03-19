@@ -349,7 +349,7 @@ After the agent finishes responding, a gray suggestion appears inside the editor
 - **Default model:** `anthropic/claude-sonnet-4-6`
 - **Fallback model:** `anthropic/claude-haiku-4-5` (if primary unavailable)
 - State (enabled/disabled, model) persists across session restarts
-- Workflow mode context (design/implement) is included in the suggestion prompt for relevance
+- Agent mode context (smart/deep/fast) is included in the suggestion prompt for relevance
 
 ### Architecture
 

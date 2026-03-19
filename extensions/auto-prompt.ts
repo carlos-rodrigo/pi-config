@@ -68,17 +68,18 @@ function buildConversationContext(ctx: ExtensionContext, maxMessages = 5): strin
 }
 
 export function buildSuggestionPrompt(conversationContext: string, workflowMode?: string): string {
-	const modeHint = workflowMode ? `\n- Current workflow mode: ${workflowMode}` : "";
+	const modeHint = workflowMode ? `\n- Current agent mode: ${workflowMode}` : "";
 	const modeGuidance =
-		workflowMode === "design"
+		workflowMode === "deep"
 			? `
-- In Design mode, prefer prompts that help clarify requirements, compare options, produce research, write PRDs/design docs, or break work into tasks
-- Do NOT push toward implementation unless the user explicitly asked for it`
-			: workflowMode === "implement"
+- In Deep mode, prefer prompts that drive deeper analysis, edge-case checks, and thorough validation`
+			: workflowMode === "fast"
 				? `
-- In Implement mode, prefer prompts that help make the next concrete code/testing/verification step
-- Favor prompts that move from plan to execution, or from changes to validation`
-				: "";
+- In Fast mode, prefer narrow, concrete next actions with minimal scope`
+				: workflowMode === "smart"
+					? `
+- In Smart mode, prefer balanced prompts that keep momentum without sacrificing quality`
+					: "";
 
 	return `You draft the next prompt the USER should send to the coding assistant to move the work forward.
 
@@ -155,7 +156,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 	const conversationContext = buildConversationContext(ctx);
 	if (!conversationContext.trim()) return;
 
-	// Detect workflow mode from session
+	// Detect current agent mode from session
 	let workflowMode: string | undefined;
 	const entries = ctx.sessionManager.getEntries() as Array<{
 		type: string;

@@ -3,17 +3,12 @@ import assert from "node:assert/strict";
 
 import { matchesKey, setKittyProtocolActive } from "@mariozechner/pi-tui";
 
-import workflowModesExtension, {
-	detectExplicitModeFromPrompt,
-	detectModeFromPrompt,
-	isSafeDesignCommand,
-	normalizeMode,
-} from "../../extensions/workflow-modes.ts";
+import workflowModesExtension, { normalizeMode } from "../../extensions/workflow-modes.ts";
 
 type ShortcutHandler = { description: string; handler: (...args: any[]) => unknown };
 type PiEventHandler = (...args: any[]) => unknown;
 
-function createPiHarness(options?: { flagMode?: string; tools?: Array<{ name: string }> }) {
+function createPiHarness(options?: { flagMode?: string; tools?: Array<{ name: string }>; entries?: any[] }) {
 	const shortcuts = new Map<string, ShortcutHandler>();
 	const commands = new Map<string, { description: string; handler: (...args: any[]) => unknown }>();
 	const eventHandlers = new Map<string, PiEventHandler>();
@@ -112,46 +107,14 @@ function createContext() {
 	};
 }
 
-test("normalizeMode accepts documented aliases", () => {
-	assert.equal(normalizeMode("design"), "design");
-	assert.equal(normalizeMode("D"), "design");
-	assert.equal(normalizeMode("implementation"), "implement");
-	assert.equal(normalizeMode("build"), "implement");
+test("normalizeMode accepts smart/deep/fast aliases", () => {
+	assert.equal(normalizeMode("smart"), "smart");
+	assert.equal(normalizeMode("S"), "smart");
+	assert.equal(normalizeMode("deep"), "deep");
+	assert.equal(normalizeMode("D"), "deep");
+	assert.equal(normalizeMode("fast"), "fast");
+	assert.equal(normalizeMode("rush"), "fast");
 	assert.equal(normalizeMode("unknown"), undefined);
-});
-
-test("detectExplicitModeFromPrompt handles explicit mode switch phrasing", () => {
-	assert.equal(detectExplicitModeFromPrompt("switch to design mode"), "design");
-	assert.equal(detectExplicitModeFromPrompt("change the mode to implement"), "implement");
-	assert.equal(detectExplicitModeFromPrompt("mode: design"), "design");
-	assert.equal(detectExplicitModeFromPrompt("implement: wire the handler"), "implement");
-	assert.equal(detectExplicitModeFromPrompt("/mode design"), undefined);
-});
-
-test("detectModeFromPrompt recognizes conversational design and implement requests", () => {
-	assert.equal(detectModeFromPrompt("Let's design a better solution before coding."), "design");
-	assert.equal(detectModeFromPrompt("Please implement the fix and add the patch."), "implement");
-	assert.equal(detectModeFromPrompt("Can you review the architecture options?"), "design");
-	assert.equal(detectModeFromPrompt("Write the code and ship the patch."), "implement");
-});
-
-test("detectModeFromPrompt prioritizes explicit mode switches over generic keywords", () => {
-	assert.equal(detectModeFromPrompt("change the mode to design"), "design");
-	assert.equal(detectModeFromPrompt("switch workflow mode to implement"), "implement");
-});
-
-test("detectModeFromPrompt stays neutral for ambiguous requests", () => {
-	assert.equal(detectModeFromPrompt("Please think about this."), undefined);
-	assert.equal(detectModeFromPrompt("change the implementation details and compare options"), undefined);
-});
-
-test("design mode allows planning-safe repo commands but blocks destructive shell commands", () => {
-	assert.equal(isSafeDesignCommand("cd /tmp/repo && git status"), true);
-	assert.equal(isSafeDesignCommand('git add -A && git commit -m "docs" && git push'), false);
-	assert.equal(isSafeDesignCommand("npm test"), true);
-	assert.equal(isSafeDesignCommand("rm -rf .features"), false);
-	assert.equal(isSafeDesignCommand("git checkout -b feature/design"), false);
-	assert.equal(isSafeDesignCommand("printf 'hello' > notes.md"), false);
 });
 
 test("workflow-modes registers only ctrl+shift+m for cycling", () => {
@@ -162,7 +125,7 @@ test("workflow-modes registers only ctrl+shift+m for cycling", () => {
 	const shortcut = shortcuts.get("ctrl+shift+m");
 
 	assert.ok(shortcut);
-	assert.equal(shortcut.description, "Cycle workflow mode (Design/Implement)");
+	assert.equal(shortcut.description, "Cycle agent mode (Smart/Deep/Fast)");
 	assert.equal(shortcuts.has("f6"), false);
 	assert.equal(shortcuts.has("f7"), false);
 	assert.equal(shortcuts.has("f8"), false);
@@ -173,14 +136,12 @@ test("workflow-modes registers only ctrl+shift+m for cycling", () => {
 	assert.equal(shortcuts.has("ctrl+tab"), false);
 });
 
-
 test("ctrl+shift+m matches csi-u input when kitty protocol is not active", () => {
 	setKittyProtocolActive(false);
 	assert.equal(matchesKey("\x1b[109;6u", "ctrl+shift+m"), true);
 });
 
-
-test("ctrl+shift+m shortcut cycles from implement to design", async () => {
+test("ctrl+shift+m cycles from smart to deep", async () => {
 	const { shortcuts, pi, getSelectedModel, getThinkingLevel } = createPiHarness();
 	const { ctx, notifications } = createContext();
 
@@ -191,36 +152,58 @@ test("ctrl+shift+m shortcut cycles from implement to design", async () => {
 
 	await shortcut.handler(ctx as any);
 
-	assert.deepEqual(getSelectedModel(), { provider: "anthropic", model: "claude-opus-4-6" });
-	assert.equal(getThinkingLevel(), "xhigh");
-	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Design/i);
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.3-codex" });
+	assert.equal(getThinkingLevel(), "high");
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep/i);
 });
 
-
-test("/design and /implement commands switch modes directly", async () => {
+test("/smart /deep /fast commands switch modes directly", async () => {
 	const { commands, pi, getSelectedModel, getThinkingLevel } = createPiHarness();
 	const { ctx, notifications } = createContext();
 
 	workflowModesExtension(pi as any);
 
-	const designCommand = commands.get("design");
-	const implementCommand = commands.get("implement");
-	assert.ok(designCommand);
-	assert.ok(implementCommand);
+	const smartCommand = commands.get("smart");
+	const deepCommand = commands.get("deep");
+	const fastCommand = commands.get("fast");
+	assert.ok(smartCommand);
+	assert.ok(deepCommand);
+	assert.ok(fastCommand);
 
-	await designCommand.handler("", ctx as any);
+	await smartCommand.handler("", ctx as any);
 	assert.deepEqual(getSelectedModel(), { provider: "anthropic", model: "claude-opus-4-6" });
-	assert.equal(getThinkingLevel(), "xhigh");
-	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Design/i);
-
-	await implementCommand.handler("", ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.4" });
 	assert.equal(getThinkingLevel(), "high");
-	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Implement/i);
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Smart/i);
+
+	await deepCommand.handler("", ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.3-codex" });
+	assert.equal(getThinkingLevel(), "high");
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep/i);
+
+	await fastCommand.handler("", ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "anthropic", model: "claude-sonnet-4-6" });
+	assert.equal(getThinkingLevel(), "off");
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Fast/i);
 });
 
-test("design mode keeps edit/write tools active for planning artifacts", async () => {
-	const { pi, eventHandlers, getActiveTools, getSelectedModel, getThinkingLevel } = createPiHarness({ flagMode: "design" });
+test("/mode command accepts aliases and rejects unknown values", async () => {
+	const { commands, pi, getSelectedModel } = createPiHarness();
+	const { ctx, notifications } = createContext();
+
+	workflowModesExtension(pi as any);
+
+	const modeCommand = commands.get("mode");
+	assert.ok(modeCommand);
+
+	await modeCommand.handler("r", ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "anthropic", model: "claude-sonnet-4-6" });
+
+	await modeCommand.handler("invalid", ctx as any);
+	assert.match(notifications.at(-1)?.message ?? "", /Unknown mode\. Use: smart, deep, or fast/i);
+});
+
+test("session_start applies flag mode and keeps edit/write tools active", async () => {
+	const { pi, eventHandlers, getActiveTools, getSelectedModel, getThinkingLevel } = createPiHarness({ flagMode: "fast" });
 	const { ctx } = createContext();
 
 	workflowModesExtension(pi as any);
@@ -229,68 +212,18 @@ test("design mode keeps edit/write tools active for planning artifacts", async (
 	assert.ok(sessionStart);
 	await sessionStart?.({}, ctx as any);
 
-	assert.deepEqual(getSelectedModel(), { provider: "anthropic", model: "claude-opus-4-6" });
-	assert.equal(getThinkingLevel(), "xhigh");
+	assert.deepEqual(getSelectedModel(), { provider: "anthropic", model: "claude-sonnet-4-6" });
+	assert.equal(getThinkingLevel(), "off");
 	assert.ok(getActiveTools().includes("edit"));
 	assert.ok(getActiveTools().includes("write"));
 	assert.ok(getActiveTools().includes("open_file"));
-
-	const toolCall = eventHandlers.get("tool_call");
-	assert.ok(toolCall);
-	assert.equal(await toolCall?.({ toolName: "write", input: { path: ".features/test/prd.md", content: "# PRD" } }), undefined);
-	assert.equal(
-		await toolCall?.({ toolName: "edit", input: { path: ".features/test/prd.md", oldText: "PRD", newText: "Design" } }),
-		undefined,
-	);
-	assert.deepEqual(await toolCall?.({ toolName: "bash", input: { command: "mkdir -p .features/test" } }), {
-		block: true,
-		reason: "Mode: Design allows read-only bash commands only. Blocked: mkdir -p .features/test",
-	});
 });
 
-test("design mode prompt injection allows planning files but still avoids implementation", async () => {
-	const { pi, eventHandlers } = createPiHarness({ flagMode: "design" });
-	const { ctx } = createContext();
-
+test("legacy workflow behavior hooks are removed", () => {
+	const { pi, eventHandlers } = createPiHarness();
 	workflowModesExtension(pi as any);
-	await eventHandlers.get("session_start")?.({}, ctx as any);
 
-	const beforeAgentStart = eventHandlers.get("before_agent_start");
-	assert.ok(beforeAgentStart);
-	const result = (await beforeAgentStart?.({
-		prompt: "Create the PRD, technical design, research notes, and task files.",
-		systemPrompt: "BASE SYSTEM",
-	})) as {
-		systemPrompt: string;
-		message: { content: string };
-	};
-
-	assert.match(result.systemPrompt, /creating or updating planning files/i);
-	assert.match(result.systemPrompt, /Be concise in progress updates and final responses/i);
-	assert.match(result.systemPrompt, /Do not implement product code changes/i);
-	assert.match(result.message.content, /keep responses concise and high-signal/i);
-	assert.match(result.message.content, /create or update planning artifacts when useful/i);
-	assert.match(result.message.content, /avoid product code changes/i);
-});
-
-test("implement mode prompt injection prefers concise responses", async () => {
-	const { pi, eventHandlers } = createPiHarness({ flagMode: "implement" });
-	const { ctx } = createContext();
-
-	workflowModesExtension(pi as any);
-	await eventHandlers.get("session_start")?.({}, ctx as any);
-
-	const beforeAgentStart = eventHandlers.get("before_agent_start");
-	assert.ok(beforeAgentStart);
-	const result = (await beforeAgentStart?.({
-		prompt: "Implement the fix and verify it.",
-		systemPrompt: "BASE SYSTEM",
-	})) as {
-		systemPrompt: string;
-		message: { content: string };
-	};
-
-	assert.match(result.systemPrompt, /Be concise in progress updates and final responses/i);
-	assert.match(result.message.content, /keep responses concise and high-signal/i);
-	assert.match(result.message.content, /Implement the fix and verify it\./i);
+	assert.equal(eventHandlers.has("before_agent_start"), false);
+	assert.equal(eventHandlers.has("tool_call"), false);
+	assert.equal(eventHandlers.has("input"), false);
 });

@@ -6,7 +6,7 @@ import { buildSuggestionPrompt } from "../../extensions/auto-prompt.ts";
 test("buildSuggestionPrompt frames suggestions as useful next-step user prompts", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: I fixed the mode switch.\n\nAssistant: Great — the tests passed.",
-		"implement",
+		"smart",
 	);
 
 	assert.match(prompt, /next prompt the USER should send/i);
@@ -16,24 +16,22 @@ test("buildSuggestionPrompt frames suggestions as useful next-step user prompts"
 	assert.match(prompt, /Return ONLY the prompt text/i);
 });
 
-test("buildSuggestionPrompt is mode-aware for design work", () => {
+test("buildSuggestionPrompt is mode-aware for deep work", () => {
 	const prompt = buildSuggestionPrompt(
-		"User: Help me think through the architecture.\n\nAssistant: Here are three options.",
-		"design",
+		"User: We need to find edge cases before shipping.\n\nAssistant: Let's inspect failure modes.",
+		"deep",
 	);
 
-	assert.match(prompt, /Current workflow mode: design/i);
-	assert.match(prompt, /prefer prompts that help clarify requirements, compare options, produce research, write PRDs\/design docs, or break work into tasks/i);
-	assert.match(prompt, /Do NOT push toward implementation unless the user explicitly asked for it/i);
+	assert.match(prompt, /Current agent mode: deep/i);
+	assert.match(prompt, /prefer prompts that drive deeper analysis, edge-case checks, and thorough validation/i);
 });
 
-test("buildSuggestionPrompt is mode-aware for implementation work", () => {
+test("buildSuggestionPrompt is mode-aware for fast work", () => {
 	const prompt = buildSuggestionPrompt(
-		"User: We agreed on the fix.\n\nAssistant: Ready to implement.",
-		"implement",
+		"User: We only need a tiny tweak.\n\nAssistant: Let's keep this scoped.",
+		"fast",
 	);
 
-	assert.match(prompt, /Current workflow mode: implement/i);
-	assert.match(prompt, /prefer prompts that help make the next concrete code\/testing\/verification step/i);
-	assert.match(prompt, /Favor prompts that move from plan to execution, or from changes to validation/i);
+	assert.match(prompt, /Current agent mode: fast/i);
+	assert.match(prompt, /prefer narrow, concrete next actions with minimal scope/i);
 });
