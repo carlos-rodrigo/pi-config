@@ -1,9 +1,8 @@
 ---
-description: Scout the code, then have the oracle deeply review it
+description: Have the oracle deeply review code in a given area
 ---
-Use the subagent tool with the chain parameter to execute this workflow:
+Use the subagent tool to invoke the "oracle" agent with this task:
 
-1. First, use the "scout" agent to find all code relevant to: $@
-2. Then, use the "oracle" agent to deeply analyze the code from the previous step, looking for bugs, edge cases, and improvements (use {previous} placeholder)
+Deeply analyze all code relevant to: $@
 
-Execute this as a chain, passing output between steps via {previous}.
+Look for bugs, edge cases, architecture issues, and improvements. Be thorough.
