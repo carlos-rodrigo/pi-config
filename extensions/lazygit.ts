@@ -1,7 +1,9 @@
 import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { StringEnum } from "@mariozechner/pi-ai";
 import * as path from "node:path";
+import * as fs from "node:fs";
 import { execSync } from "node:child_process";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -38,15 +40,11 @@ function hasLazygit(): boolean {
 // ── Extension ──────────────────────────────────────────────────────────────
 
 export default function lazygitExtension(pi: ExtensionAPI) {
-  // ── Slash command ──────────────────────────────────────────────────────────
+  // ── Command ────────────────────────────────────────────────────────────────
   
-  pi.addSlashCommand({
-    name: "lazygit",
+  pi.registerCommand("lazygit", {
     description: "Open LazyGit in a tmux window",
-    parameters: Type.Object({
-      path: Type.Optional(Type.String({ description: "Directory to open (defaults to cwd)" })),
-    }),
-    async handler(params, ctx) {
+    handler: async (args, ctx) => {
       if (!hasLazygit()) {
         ctx.ui.notify("LazyGit is not installed", "error");
         return;
@@ -57,15 +55,16 @@ export default function lazygitExtension(pi: ExtensionAPI) {
       }
       
       let targetDir = ctx.cwd;
-      if (params.path) {
-        const resolved = path.isAbsolute(params.path)
-          ? params.path
-          : path.resolve(ctx.cwd, params.path);
+      const targetPath = args?.trim();
+      if (targetPath) {
+        const resolved = path.isAbsolute(targetPath)
+          ? targetPath
+          : path.resolve(ctx.cwd, targetPath);
         try {
-          const stat = require("node:fs").statSync(resolved);
+          const stat = fs.statSync(resolved);
           targetDir = stat.isDirectory() ? resolved : path.dirname(resolved);
         } catch {
-          ctx.ui.notify(`Path not found: ${params.path}`, "error");
+          ctx.ui.notify(`Path not found: ${targetPath}`, "error");
           return;
         }
       }
@@ -82,61 +81,50 @@ export default function lazygitExtension(pi: ExtensionAPI) {
 
   // ── Tool ───────────────────────────────────────────────────────────────────
   
-  pi.addTool({
+  pi.registerTool({
     name: "lazygit",
+    label: "LazyGit",
     description: "Open LazyGit in a tmux split. LazyGit is a terminal UI for git that makes it easy to stage, commit, push, manage branches, resolve conflicts, and more. Requires tmux.",
     parameters: Type.Object({
       path: Type.Optional(Type.String({ 
         description: "Directory to open lazygit in (defaults to cwd). Can be a file path - will use its parent directory." 
       })),
-      split: Type.Optional(Type.String({
+      split: Type.Optional(StringEnum(["horizontal", "vertical", "window"] as const, {
         description: "Tmux split direction: 'horizontal' (default), 'vertical', or 'window' for new window",
-        enum: ["horizontal", "vertical", "window"],
       })),
     }),
 
-    async call(params, ctx) {
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
       // Check lazygit is installed
       if (!hasLazygit()) {
-        return {
-          content: [{ type: "text", text: "LazyGit is not installed. Install with: pacman -S lazygit (Arch) or brew install lazygit (macOS)" }],
-          isError: true,
-        };
+        throw new Error("LazyGit is not installed. Install with: pacman -S lazygit (Arch) or brew install lazygit (macOS)");
       }
 
       // Check tmux
       if (!(await isInsideTmux())) {
-        return {
-          content: [{ type: "text", text: "Not inside tmux — cannot open lazygit in a split. Run pi inside tmux first." }],
-          isError: true,
-        };
+        throw new Error("Not inside tmux — cannot open lazygit in a split. Run pi inside tmux first.");
       }
 
       // Resolve directory
       let targetDir = ctx.cwd;
       if (params.path) {
-        const resolved = path.isAbsolute(params.path)
-          ? params.path
-          : path.resolve(ctx.cwd, params.path);
+        const filePath = params.path.replace(/^@/, "");
+        const resolved = path.isAbsolute(filePath)
+          ? filePath
+          : path.resolve(ctx.cwd, filePath);
         
         // If it's a file, use parent directory
         try {
-          const stat = require("node:fs").statSync(resolved);
+          const stat = fs.statSync(resolved);
           targetDir = stat.isDirectory() ? resolved : path.dirname(resolved);
         } catch {
-          return {
-            content: [{ type: "text", text: `Path not found: ${params.path}` }],
-            isError: true,
-          };
+          throw new Error(`Path not found: ${params.path}`);
         }
       }
 
       // Check it's a git repo
       if (!isGitRepo(targetDir)) {
-        return {
-          content: [{ type: "text", text: `Not a git repository: ${targetDir}` }],
-          isError: true,
-        };
+        throw new Error(`Not a git repository: ${targetDir}`);
       }
 
       // Build tmux command

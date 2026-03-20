@@ -406,27 +406,16 @@ class BlameViewerComponent {
 // ── Extension ──────────────────────────────────────────────────────────────
 
 export default function gitBlameExtension(pi: ExtensionAPI) {
-  // ── Slash command ──────────────────────────────────────────────────────────
+  // ── Command ────────────────────────────────────────────────────────────────
   
-  pi.addSlashCommand({
-    name: "blame",
+  pi.registerCommand("blame", {
     description: "Show git blame for the current or specified file",
-    parameters: Type.Object({
-      path: Type.Optional(Type.String({ description: "File to blame (defaults to currently open file)" })),
-    }),
-    async handler(params, ctx) {
-      // Get file path - from params or current editor context
-      let filePath = params.path;
+    handler: async (args, ctx) => {
+      let filePath = args?.trim();
       
       if (!filePath) {
-        // Try to get current file from editor context if available
-        const currentFile = (ctx as any).currentFile;
-        if (currentFile) {
-          filePath = currentFile;
-        } else {
-          ctx.ui.notify("No file specified. Use /blame <path>", "error");
-          return;
-        }
+        ctx.ui.notify("No file specified. Use /blame <path>", "error");
+        return;
       }
       
       const resolved = path.isAbsolute(filePath)
@@ -450,47 +439,37 @@ export default function gitBlameExtension(pi: ExtensionAPI) {
 
   // ── Tool ───────────────────────────────────────────────────────────────────
   
-  pi.addTool({
+  pi.registerTool({
     name: "git_blame",
+    label: "Git Blame",
     description: "Show git blame for a file in an interactive modal. Displays who modified each line, when, and the commit hash. Use to understand code history and authorship.",
     parameters: Type.Object({
       path: Type.String({ description: "Path to the file (relative to cwd or absolute)" }),
     }),
 
-    async call(params, ctx) {
-      const resolved = path.isAbsolute(params.path)
-        ? params.path
-        : path.resolve(ctx.cwd, params.path);
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      const filePath = params.path.replace(/^@/, "");
+      const resolved = path.isAbsolute(filePath)
+        ? filePath
+        : path.resolve(ctx.cwd, filePath);
 
       if (!fs.existsSync(resolved)) {
-        return {
-          content: [{ type: "text", text: `File not found: ${params.path}` }],
-          isError: true,
-        };
+        throw new Error(`File not found: ${params.path}`);
       }
 
       const stat = fs.statSync(resolved);
       if (stat.isDirectory()) {
-        return {
-          content: [{ type: "text", text: `Path is a directory: ${params.path}` }],
-          isError: true,
-        };
+        throw new Error(`Path is a directory: ${params.path}`);
       }
 
       // Max 5MB for blame
       if (stat.size > 5 * 1024 * 1024) {
-        return {
-          content: [{ type: "text", text: `File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB) for blame view.` }],
-          isError: true,
-        };
+        throw new Error(`File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB) for blame view.`);
       }
 
       const blameLines = getGitBlame(resolved);
       if (!blameLines) {
-        return {
-          content: [{ type: "text", text: `File is not tracked by git or git blame failed.` }],
-          isError: true,
-        };
+        throw new Error(`File is not tracked by git or git blame failed.`);
       }
 
       if (ctx.hasUI) {
