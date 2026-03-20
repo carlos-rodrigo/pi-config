@@ -128,6 +128,8 @@ ${getScript(sessionId)}
 export interface ReviewSelectionMetadata {
 	offsetStart: number;
 	offsetEnd: number;
+	/** The actual text matched in the markdown source (may include formatting chars). */
+	matchedText?: string;
 	lineStart?: number;
 	lineEnd?: number;
 	inlineEligible?: boolean;
@@ -145,22 +147,89 @@ export interface PullRequestSessionDisplayContext {
 	filePath?: string;
 }
 
-export function computeSelectionMetadata(markdown: string, selectedText: string): ReviewSelectionMetadata {
-	const exactMatchIndex = markdown.indexOf(selectedText);
-	const trimmedSelection = selectedText.trim();
-	const trimmedMatchIndex = exactMatchIndex === -1 && trimmedSelection ? markdown.indexOf(trimmedSelection) : -1;
-	const offsetStart = exactMatchIndex !== -1 ? exactMatchIndex : trimmedMatchIndex;
-	const matchedText =
-		exactMatchIndex !== -1 ? selectedText : trimmedMatchIndex !== -1 ? trimmedSelection : "";
-	const offsetEnd = offsetStart === -1 ? -1 : offsetStart + matchedText.length;
+/**
+ * Try to find `searchText` in `markdown` by skipping common inline formatting
+ * characters (`*`, `_`, `` ` ``, `~`) and normalising whitespace runs.
+ * Returns the start/end offsets in the *original* markdown, or null.
+ */
+export function findFlexibleMatch(markdown: string, searchText: string): { start: number; end: number } | null {
+	if (!searchText || !markdown) return null;
 
-	if (offsetStart === -1 || offsetEnd === -1 || matchedText.length === 0) {
-		return {
-			offsetStart,
-			offsetEnd,
-		};
+	const SKIP = new Set(["*", "_", "`", "~"]);
+	const WS = /\s/;
+	const searchLen = searchText.length;
+	const mdLen = markdown.length;
+
+	for (let start = 0; start < mdLen; start++) {
+		let mi = start;
+		let si = 0;
+
+		while (si < searchLen && mi < mdLen) {
+			// Skip inline-formatting characters in the markdown source
+			if (SKIP.has(markdown[mi]!)) {
+				mi++;
+				continue;
+			}
+
+			// Whitespace normalisation: consume all whitespace in both strings
+			if (WS.test(markdown[mi]!) && WS.test(searchText[si]!)) {
+				while (mi < mdLen && WS.test(markdown[mi]!)) mi++;
+				while (si < searchLen && WS.test(searchText[si]!)) si++;
+				continue;
+			}
+
+			if (markdown[mi] === searchText[si]) {
+				si++;
+				mi++;
+			} else {
+				break;
+			}
+		}
+
+		if (si >= searchLen) {
+			// Include any trailing formatting characters so the matched range
+			// covers complete formatting pairs (e.g. **bold** not **bold).
+			while (mi < mdLen && SKIP.has(markdown[mi]!)) mi++;
+			return { start, end: mi };
+		}
 	}
 
+	return null;
+}
+
+export function computeSelectionMetadata(markdown: string, selectedText: string): ReviewSelectionMetadata {
+	// Strategy 1: exact substring match
+	const exactIdx = markdown.indexOf(selectedText);
+	if (exactIdx !== -1) {
+		return buildSelectionResult(markdown, selectedText, exactIdx, exactIdx + selectedText.length);
+	}
+
+	// Strategy 2: trimmed match
+	const trimmed = selectedText.trim();
+	if (trimmed) {
+		const trimmedIdx = markdown.indexOf(trimmed);
+		if (trimmedIdx !== -1) {
+			return buildSelectionResult(markdown, trimmed, trimmedIdx, trimmedIdx + trimmed.length);
+		}
+	}
+
+	// Strategy 3: flexible match — skip formatting chars, normalise whitespace
+	const flex = findFlexibleMatch(markdown, selectedText);
+	if (flex) {
+		const matched = markdown.slice(flex.start, flex.end);
+		return buildSelectionResult(markdown, matched, flex.start, flex.end);
+	}
+
+	// No match found
+	return { offsetStart: -1, offsetEnd: -1 };
+}
+
+function buildSelectionResult(
+	markdown: string,
+	matchedText: string,
+	offsetStart: number,
+	offsetEnd: number,
+): ReviewSelectionMetadata {
 	const lineStart = markdown.slice(0, offsetStart).split("\n").length;
 	const lineEnd = markdown.slice(0, Math.max(offsetStart, offsetEnd - 1) + 1).split("\n").length;
 	const inlineEligible = lineStart === lineEnd;
@@ -168,6 +237,7 @@ export function computeSelectionMetadata(markdown: string, selectedText: string)
 	return {
 		offsetStart,
 		offsetEnd,
+		matchedText,
 		lineStart,
 		lineEnd,
 		inlineEligible,
@@ -855,6 +925,8 @@ function getScript(sessionId: string): string {
   const API_BASE = window.location.origin + '/api/' + SESSION_ID;
   const PAGE_STEP_FACTOR = 0.5;
   const CARET_VIEWPORT_PADDING = 28;
+  const findFlexibleMatch = ${findFlexibleMatch.toString()};
+  const buildSelectionResult = ${buildSelectionResult.toString()};
   const computeSelectionMetadata = ${computeSelectionMetadata.toString()};
   const buildCommentDraftPayload = ${buildCommentDraftPayload.toString()};
   const formatPullRequestSessionContext = ${formatPullRequestSessionContext.toString()};
@@ -1060,8 +1132,11 @@ function getScript(sessionId: string): string {
 
   function buildPendingSelection(selectedText) {
     const metadata = computeSelectionMetadata(originalMarkdown, selectedText);
+    if (metadata.offsetStart === -1) {
+      return null;
+    }
     return {
-      selectedText,
+      selectedText: metadata.matchedText || selectedText,
       offsetStart: metadata.offsetStart,
       offsetEnd: metadata.offsetEnd,
       lineStart: metadata.lineStart,
@@ -1686,9 +1761,14 @@ function getScript(sessionId: string): string {
       if (selectedText) {
         e.preventDefault();
         rememberCaretFromSelection();
-        const range = sel.getRangeAt(0);
-        const rect = range.getBoundingClientRect();
-        showCommentPopup(buildPendingSelection(selectedText), rect.left, rect.bottom);
+        const pending = buildPendingSelection(selectedText);
+        if (!pending) {
+          showToast('Could not match selection to source markdown. Try selecting a smaller portion of text.', 'error');
+        } else {
+          const range = sel.getRangeAt(0);
+          const rect = range.getBoundingClientRect();
+          showCommentPopup(pending, rect.left, rect.bottom);
+        }
       }
       lastKey = keyLower;
       lastKeyTime = now;

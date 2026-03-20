@@ -5,6 +5,7 @@ import {
 	buildFinishDescription,
 	buildReviewPage,
 	computeSelectionMetadata,
+	findFlexibleMatch,
 	formatPullRequestSessionContext,
 } from "./review-page.js";
 
@@ -12,6 +13,7 @@ test("computeSelectionMetadata derives single-line offsets and line numbers", ()
 	assert.deepEqual(computeSelectionMetadata("# Title\n\nHello world\n", "Hello"), {
 		offsetStart: 9,
 		offsetEnd: 14,
+		matchedText: "Hello",
 		lineStart: 3,
 		lineEnd: 3,
 		inlineEligible: true,
@@ -23,11 +25,55 @@ test("computeSelectionMetadata marks multi-line selections as fallback-only", ()
 	assert.deepEqual(computeSelectionMetadata("Line one\nLine two\n", "Line one\nLine two"), {
 		offsetStart: 0,
 		offsetEnd: 17,
+		matchedText: "Line one\nLine two",
 		lineStart: 1,
 		lineEnd: 2,
 		inlineEligible: false,
 		fallbackReason: "multi_line_selection",
 	});
+});
+
+test("computeSelectionMetadata uses flexible matching for formatted text", () => {
+	// Bold formatting: browser shows "bold text" but markdown has **bold** text
+	const md = "This is **bold** text";
+	const result = computeSelectionMetadata(md, "This is bold text");
+	assert.equal(result.offsetStart, 0);
+	assert.equal(result.offsetEnd, md.length);
+	assert.equal(result.matchedText, md);
+	assert.equal(result.lineStart, 1);
+});
+
+test("computeSelectionMetadata uses flexible matching across mixed formatting", () => {
+	const md = "This is **bold** and *italic* text";
+	const result = computeSelectionMetadata(md, "This is bold and italic text");
+	assert.equal(result.offsetStart, 0);
+	assert.equal(result.offsetEnd, md.length);
+	assert.equal(result.matchedText, md);
+});
+
+test("computeSelectionMetadata returns -1 offsets for unresolvable selections", () => {
+	const result = computeSelectionMetadata("# Hello World\n", "something completely different");
+	assert.equal(result.offsetStart, -1);
+	assert.equal(result.offsetEnd, -1);
+	assert.equal(result.matchedText, undefined);
+});
+
+test("findFlexibleMatch skips inline formatting characters", () => {
+	assert.deepEqual(findFlexibleMatch("**bold**", "bold"), { start: 0, end: 8 });
+	assert.deepEqual(findFlexibleMatch("*italic*", "italic"), { start: 0, end: 8 });
+	assert.deepEqual(findFlexibleMatch("`code`", "code"), { start: 0, end: 6 });
+	assert.deepEqual(findFlexibleMatch("~~strike~~", "strike"), { start: 0, end: 10 });
+});
+
+test("findFlexibleMatch normalises whitespace", () => {
+	assert.deepEqual(findFlexibleMatch("end\n\nstart", "end start"), { start: 0, end: 10 });
+	assert.deepEqual(findFlexibleMatch("a  b", "a b"), { start: 0, end: 4 });
+});
+
+test("findFlexibleMatch returns null when no match possible", () => {
+	assert.equal(findFlexibleMatch("hello world", "goodbye"), null);
+	assert.equal(findFlexibleMatch("", "hello"), null);
+	assert.equal(findFlexibleMatch("hello", ""), null);
 });
 
 test("buildCommentDraftPayload sends PR line metadata only in pull request mode", () => {
