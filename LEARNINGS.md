@@ -116,3 +116,10 @@
 **Context:** Retargeting Auto Prompt suggestions to better match the user's role in the workflow.
 **Learning:** Prompt-suggestion systems for coding workflows should generate the next useful user prompt to move the task forward, rather than predicting the statistically most likely next message. Make the contract explicit, keep suggestions in the user's voice, and layer workflow-mode guidance so Design mode suggests planning steps while Implement mode suggests execution or verification steps.
 **Applies to:** Future ghost-text suggestions, workflow assistants, and any prompt-generation helper tied to staged engineering flows.
+
+## Auto Prompt UX: Best-practice prompt generation with feedback loops and phase awareness
+
+**Date:** 2026-03-22
+**Context:** Iterating on auto-prompt to generate prompts following best practices from ampcode.com articles on feedback-loopable development, agent pairing, and context management.
+**Learning:** Ghost-text suggestions are dramatically better when they (1) are directive not questions, (2) include feedback loops / verification steps ("run tests after", "verify by checking X"), (3) reference specific files/patterns extracted from conversation, (4) detect the conversation phase (debugging/testing/building/shipping/planning) and tailor guidance accordingly. Extracting file paths and commands from conversation context gives the LLM concrete anchors to reference. Phase detection via keyword scoring (debug signals vs test signals vs build signals) is simple but effective for tailoring the suggestion style.
+**Applies to:** Prompt generation systems, ghost-text suggestions, any system that drafts prompts on behalf of users for coding agents.

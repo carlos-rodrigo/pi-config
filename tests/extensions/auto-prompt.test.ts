@@ -1,20 +1,65 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildSuggestionPrompt } from "../../extensions/auto-prompt.ts";
+import {
+	buildSuggestionPrompt,
+	extractFilePaths,
+	extractCommands,
+	detectPhase,
+	type ConversationPhase,
+} from "../../extensions/auto-prompt.ts";
 
-test("buildSuggestionPrompt frames suggestions as useful next-step user prompts", () => {
+// --- buildSuggestionPrompt: core framing ---
+
+test("buildSuggestionPrompt frames suggestions as directive next-step prompts", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: I fixed the mode switch.\n\nAssistant: Great — the tests passed.",
-		"smart",
 	);
 
 	assert.match(prompt, /next prompt the USER should send/i);
 	assert.match(prompt, /move the work forward/i);
-	assert.match(prompt, /Stay in the user's role/i);
-	assert.doesNotMatch(prompt, /most likely to send next/i);
+	assert.match(prompt, /Stay in the user's voice/i);
 	assert.match(prompt, /Return ONLY the prompt text/i);
 });
+
+test("buildSuggestionPrompt includes directive prompting principle", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: The login is broken.\n\nAssistant: I see the issue.",
+	);
+
+	assert.match(prompt, /DIRECTIVE/i);
+	assert.match(prompt, /Give direction, not questions/i);
+});
+
+test("buildSuggestionPrompt includes feedback-loop principle", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Add the API endpoint.\n\nAssistant: Done, I created the endpoint.",
+	);
+
+	assert.match(prompt, /FEEDBACK-LOOPABLE/i);
+	assert.match(prompt, /verify/i);
+});
+
+test("buildSuggestionPrompt includes specificity principle", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Make the components consistent.\n\nAssistant: I'll update them.",
+	);
+
+	assert.match(prompt, /SPECIFIC/i);
+	assert.match(prompt, /Reference exact files/i);
+});
+
+test("buildSuggestionPrompt describes the 3-part structure: what, verify, reference", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Build the feature.\n\nAssistant: Working on it.",
+	);
+
+	assert.match(prompt, /WHAT to do/i);
+	assert.match(prompt, /HOW to verify/i);
+	assert.match(prompt, /WHAT to reference/i);
+});
+
+// --- Mode awareness ---
 
 test("buildSuggestionPrompt is mode-aware for deep work", () => {
 	const prompt = buildSuggestionPrompt(
@@ -34,4 +79,210 @@ test("buildSuggestionPrompt is mode-aware for fast work", () => {
 
 	assert.match(prompt, /Current agent mode: fast/i);
 	assert.match(prompt, /prefer narrow, concrete next actions with minimal scope/i);
+});
+
+test("buildSuggestionPrompt is mode-aware for smart work", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Let's build this properly.\n\nAssistant: Agreed, balanced approach.",
+		"smart",
+	);
+
+	assert.match(prompt, /Current agent mode: smart/i);
+	assert.match(prompt, /prefer balanced prompts/i);
+});
+
+// --- File path extraction ---
+
+test("extractFilePaths finds file paths in conversation text", () => {
+	const text = "I updated `src/api/messages.ts` and also checked src/utils/helpers.ts for patterns.";
+	const paths = extractFilePaths(text);
+
+	assert.ok(paths.includes("src/api/messages.ts"));
+	assert.ok(paths.includes("src/utils/helpers.ts"));
+});
+
+test("extractFilePaths ignores URLs", () => {
+	const text = "Check https://example.com/page.html and www.site.com/path.js";
+	const paths = extractFilePaths(text);
+
+	assert.equal(paths.length, 0);
+});
+
+test("extractFilePaths deduplicates and limits results", () => {
+	const text = "Look at src/a.ts and src/a.ts again, plus src/b.ts";
+	const paths = extractFilePaths(text);
+
+	const aCount = paths.filter((p) => p === "src/a.ts").length;
+	assert.equal(aCount, 1, "should deduplicate paths");
+	assert.ok(paths.length <= 8, "should limit to 8 paths");
+});
+
+// --- Command extraction ---
+
+test("extractCommands finds npm/test commands", () => {
+	const text = "Run `npm test` to check, then use `pnpm run build` for the bundle.";
+	const cmds = extractCommands(text);
+
+	assert.ok(cmds.some((c) => c.includes("npm test")));
+});
+
+test("extractCommands finds shell-prefixed commands", () => {
+	const text = "$ node physics-cli.js --vx=-7.71 --vy=2.13\nOutput: Frame 1...";
+	const cmds = extractCommands(text);
+
+	assert.ok(cmds.some((c) => c.includes("node physics-cli.js")));
+});
+
+test("extractCommands limits results", () => {
+	const cmds = extractCommands("npm a\nnpm b\nnpm c\nnpm d\nnpm e\nnpm f\nnpm g");
+	assert.ok(cmds.length <= 5, "should limit to 5 commands");
+});
+
+// --- Phase detection ---
+
+test("detectPhase identifies debugging phase", () => {
+	const ctx = "User: There's a bug in the login flow, it crashes on submit.\n\nAssistant: I see the error in the stack trace.";
+	assert.equal(detectPhase(ctx), "debugging");
+});
+
+test("detectPhase identifies testing phase", () => {
+	const ctx = "User: Run the unit tests.\n\nAssistant: 3 tests failing, 42 passing. The assert on line 15 expects null.";
+	assert.equal(detectPhase(ctx), "testing");
+});
+
+test("detectPhase identifies building phase", () => {
+	const ctx = "User: Implement the notification component.\n\nAssistant: I created the component in src/Notification.tsx.";
+	assert.equal(detectPhase(ctx), "building");
+});
+
+test("detectPhase identifies shipping phase", () => {
+	const ctx = "User: Create a PR for these changes.\n\nAssistant: I'll commit and push, then open the pull request.";
+	assert.equal(detectPhase(ctx), "shipping");
+});
+
+test("detectPhase identifies planning phase", () => {
+	const ctx = "User: How should we approach the architecture for this?\n\nAssistant: Let me outline the design trade-offs.";
+	assert.equal(detectPhase(ctx), "planning");
+});
+
+test("detectPhase defaults to building when no signals", () => {
+	const ctx = "User: Hello.\n\nAssistant: Hi there.";
+	assert.equal(detectPhase(ctx), "building");
+});
+
+// --- File/command context inclusion in prompt ---
+
+test("buildSuggestionPrompt includes file paths when provided", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Update the API.\n\nAssistant: Done.",
+		undefined,
+		["src/api/messages.ts", "src/api/routes.ts"],
+	);
+
+	assert.match(prompt, /files_in_conversation/i);
+	assert.match(prompt, /src\/api\/messages\.ts/);
+	assert.match(prompt, /src\/api\/routes\.ts/);
+});
+
+test("buildSuggestionPrompt includes commands when provided", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Run the tests.\n\nAssistant: All passing.",
+		undefined,
+		undefined,
+		["npm test", "pnpm run build"],
+	);
+
+	assert.match(prompt, /commands_in_conversation/i);
+	assert.match(prompt, /npm test/);
+	assert.match(prompt, /pnpm run build/);
+});
+
+test("buildSuggestionPrompt omits file/command sections when empty", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Hello.\n\nAssistant: Hi.",
+		undefined,
+		[],
+		[],
+	);
+
+	assert.doesNotMatch(prompt, /files_in_conversation/i);
+	assert.doesNotMatch(prompt, /commands_in_conversation/i);
+});
+
+// --- Phase guidance in prompt ---
+
+test("buildSuggestionPrompt includes debugging phase guidance", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Fix the crash.\n\nAssistant: Found the issue.",
+		undefined,
+		undefined,
+		undefined,
+		"debugging",
+	);
+
+	assert.match(prompt, /phase_guidance.*debugging/i);
+	assert.match(prompt, /reproducible test case/i);
+});
+
+test("buildSuggestionPrompt includes testing phase guidance", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Run tests.\n\nAssistant: Done.",
+		undefined,
+		undefined,
+		undefined,
+		"testing",
+	);
+
+	assert.match(prompt, /phase_guidance.*testing/i);
+	assert.match(prompt, /edge case/i);
+});
+
+test("buildSuggestionPrompt includes building phase guidance", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Build the feature.\n\nAssistant: Done.",
+		undefined,
+		undefined,
+		undefined,
+		"building",
+	);
+
+	assert.match(prompt, /phase_guidance.*building/i);
+	assert.match(prompt, /next implementation step/i);
+});
+
+test("buildSuggestionPrompt includes shipping phase guidance", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Ship it.\n\nAssistant: Ready.",
+		undefined,
+		undefined,
+		undefined,
+		"shipping",
+	);
+
+	assert.match(prompt, /phase_guidance.*shipping/i);
+	assert.match(prompt, /pre-ship checks/i);
+});
+
+test("buildSuggestionPrompt includes planning phase guidance", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Plan the feature.\n\nAssistant: Let's scope.",
+		undefined,
+		undefined,
+		undefined,
+		"planning",
+	);
+
+	assert.match(prompt, /phase_guidance.*planning/i);
+	assert.match(prompt, /clarifying requirements/i);
+});
+
+// --- Word limit updated ---
+
+test("buildSuggestionPrompt allows 10-40 words for richer prompts", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Done.\n\nAssistant: Great.",
+	);
+
+	assert.match(prompt, /10-40 words/);
+	assert.match(prompt, /One or two sentences max/);
 });
