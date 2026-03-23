@@ -25,18 +25,25 @@
  *
  * Commands:
  *   /suggest          Toggle auto-suggestions on/off
- *   /suggest model    Change the suggestion model (e.g. /suggest model anthropic/claude-haiku-4-5)
+ *   /suggest model    Change the suggestion model (e.g. /suggest model openai-codex/gpt-5.1-codex-mini)
  *   /suggest now      Manually trigger a suggestion
  *   /improve          Manually improve the current editor text
  */
 
-import { complete, getModel, type Api, type Model } from "@mariozechner/pi-ai";
+import {
+	complete,
+	getModels,
+	getProviders,
+	type Api,
+	type KnownProvider,
+	type Model,
+} from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 
 // --- Configuration defaults ---
 
-const PRIMARY_MODEL = { provider: "anthropic" as const, id: "claude-sonnet-4-6" as const };
-const FALLBACK_MODEL = { provider: "anthropic" as const, id: "claude-haiku-4-5" as const };
+const PRIMARY_MODEL = { provider: "openai-codex" as const, id: "gpt-5.1-codex-mini" as const };
+const FALLBACK_MODEL = { provider: "openai-codex" as const, id: "gpt-5.3-codex-spark" as const };
 
 // --- State ---
 
@@ -47,16 +54,29 @@ let configuredModel: { provider: string; id: string } = { ...PRIMARY_MODEL };
 
 // --- Helpers ---
 
-type ContentBlock = { type?: string; text?: string };
+type ContentBlock = { type?: string; text?: string; thinking?: string };
 type SessionEntry = { type: string; message?: { role?: string; content?: unknown } };
 
 function extractTextFromContent(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
-	return content
-		.filter((p): p is ContentBlock => p?.type === "text" && typeof p.text === "string")
-		.map((p) => p.text!)
-		.join("\n");
+
+	const textParts = content
+		.filter((p): p is ContentBlock => typeof p?.text === "string")
+		.map((p) => p.text!.trim())
+		.filter(Boolean);
+	if (textParts.length > 0) return textParts.join("\n");
+
+	const thinkingParts = content
+		.filter((p): p is ContentBlock => typeof p?.thinking === "string")
+		.map((p) => p.thinking!.trim())
+		.filter(Boolean);
+	return thinkingParts.join("\n");
+}
+
+export function extractAssistantOutput(content: unknown): string {
+	if (!Array.isArray(content)) return "";
+	return extractTextFromContent(content).trim();
 }
 
 function buildConversationContext(ctx: ExtensionContext, maxMessages = 5): string {
@@ -151,6 +171,101 @@ export function detectPhase(conversationContext: string): ConversationPhase {
 	return scores[0][1] > 0 ? scores[0][0] : "building";
 }
 
+function normalizeGuideline(raw: string): string {
+	return raw
+		.replace(/^[-*]\s+/, "")
+		.replace(/^\d+\.\s+/, "")
+		.replace(/^>\s+/, "")
+		.replace(/\*\*(.*?)\*\*/g, "$1")
+		.replace(/`([^`]+)`/g, "$1")
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 220);
+}
+
+/**
+ * Extract a compact set of baseline AGENTS/system guidelines so prompt suggestions
+ * focus on the next-step delta instead of repeating global process defaults.
+ */
+export function extractBaselineGuidelines(systemPrompt: string, maxGuidelines = 8): string[] {
+	if (!systemPrompt.trim()) return [];
+
+	const lines = systemPrompt.split(/\r?\n/);
+	const sections = [
+		"non-negotiables",
+		"change discipline",
+		"development workflow",
+		"exceptions",
+		"golden rule",
+	];
+
+	const out: string[] = [];
+	const seen = new Set<string>();
+	let currentSection = "";
+
+	const push = (candidate: string): void => {
+		const normalized = normalizeGuideline(candidate);
+		if (!normalized) return;
+		const key = normalized.toLowerCase();
+		if (seen.has(key)) return;
+		seen.add(key);
+		out.push(normalized);
+	};
+
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+
+		if (/^#{1,6}\s+/.test(trimmed)) {
+			currentSection = trimmed.replace(/^#{1,6}\s+/, "").toLowerCase();
+			continue;
+		}
+
+		const inImportantSection = sections.some((s) => currentSection.includes(s));
+		const isBullet = /^[-*]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed);
+		const hasStrongPolicyLanguage =
+			/^(never|always|requires approval|allowed without approval|golden rule)/i.test(trimmed) ||
+			/\b(do not|must|never|requires approval)\b/i.test(trimmed);
+
+		if ((inImportantSection && isBullet) || hasStrongPolicyLanguage) {
+			push(trimmed);
+		}
+
+		if (out.length >= maxGuidelines) break;
+	}
+
+	return out.slice(0, maxGuidelines);
+}
+
+function buildBaselineGuidelinesBlock(baselineGuidelines?: string[]): string {
+	if (!baselineGuidelines || baselineGuidelines.length === 0) return "";
+	const bulletList = baselineGuidelines.map((g) => `- ${g}`).join("\n");
+	return `\n\n<baseline_agent_guidelines>\n${bulletList}\n</baseline_agent_guidelines>`;
+}
+
+function isLikelyBaselineRestatement(text: string): boolean {
+	const lower = text.toLowerCase();
+	const baselineSignals = [
+		"follow agents",
+		"follow the loop",
+		"feed the loop",
+		"best practices",
+		"keep it scoped",
+		"follow guidelines",
+		"non-negotiable",
+		"golden rule",
+		"according to agents",
+	];
+	const hasBaselineSignal = baselineSignals.some((s) => lower.includes(s));
+	if (!hasBaselineSignal) return false;
+
+	const hasConcreteArtifact = /[a-zA-Z0-9_./-]+\.[a-zA-Z]{1,10}/.test(text);
+	const hasConcreteCommand = /\b(npm|pnpm|yarn|bun|npx|node|go|cargo|make)\b/.test(lower);
+	const hasActionVerb = /\b(fix|implement|update|edit|run|add|remove|refactor|verify|commit|push)\b/.test(lower);
+
+	return !hasConcreteArtifact && !hasConcreteCommand && !hasActionVerb;
+}
+
 export type ConversationPhase = "debugging" | "testing" | "building" | "shipping" | "planning";
 
 export function buildSuggestionPrompt(
@@ -159,6 +274,7 @@ export function buildSuggestionPrompt(
 	filePaths?: string[],
 	commands?: string[],
 	phase?: ConversationPhase,
+	baselineGuidelines?: string[],
 ): string {
 	const modeHint = workflowMode ? `\n- Current agent mode: ${workflowMode}` : "";
 	const modeGuidance =
@@ -188,6 +304,8 @@ export function buildSuggestionPrompt(
 ${getPhaseGuidance(phase)}
 </phase_guidance>`
 		: "";
+
+	const baselineContext = buildBaselineGuidelinesBlock(baselineGuidelines);
 
 	return `You draft the next prompt the USER should send to a coding agent to move the work forward.
 You write prompts that follow best practices for agent collaboration.
@@ -222,12 +340,15 @@ Keep it concise: 10-40 words. One or two sentences max.
 - When a task was just completed, suggest verification (run tests, check output, try the feature)
 - When debugging, suggest the next concrete debugging action, not more investigation
 - When tests are failing, suggest fixing them with a specific approach
-- When the user was told to do something manually, suggest that manual step${modeHint}${modeGuidance}
+- When the user was told to do something manually, suggest that manual step
+- Assume baseline AGENTS/system guidelines are already enforced by the coding agent
+- Do NOT restate generic process defaults (e.g. "follow AGENTS", "run/feed the loop") unless it is the specific blocking action now
+- Prefer delta guidance: what concrete next action should happen now${modeHint}${modeGuidance}
 - Return ONLY the prompt text. No quotes, no explanation, no markdown.${phaseGuidance}
 
 <recent_conversation>
 ${conversationContext}
-</recent_conversation>${fileContext}${cmdContext}`;
+</recent_conversation>${fileContext}${cmdContext}${baselineContext}`;
 }
 
 function getPhaseGuidance(phase: ConversationPhase): string {
@@ -270,6 +391,7 @@ export function buildImprovementPrompt(
 	filePaths?: string[],
 	commands?: string[],
 	phase?: ConversationPhase,
+	baselineGuidelines?: string[],
 ): string {
 	const fileContext =
 		filePaths && filePaths.length > 0
@@ -282,6 +404,7 @@ export function buildImprovementPrompt(
 			: "";
 
 	const phaseHint = phase ? `\nThe conversation is currently in a ${phase.toUpperCase()} phase.` : "";
+	const baselineContext = buildBaselineGuidelinesBlock(baselineGuidelines);
 
 	return `You improve prompts that users send to coding agents.
 Given the user's draft prompt and the recent conversation, rewrite the prompt to be more effective.
@@ -305,6 +428,7 @@ Rewrite the user's draft to follow best practices for agent collaboration, while
 - If the draft is already good, make only minor improvements or return it as-is
 - Add verification/feedback steps only when there's a natural one (tests, build, check output)
 - Reference specific files or commands from conversation context when they're relevant to the task
+- Treat baseline AGENTS/system guidance as already implied; don't add generic process boilerplate unless it is explicitly requested
 - Do NOT add new requirements, features, or scope the user didn't ask for
 - Do NOT add preamble, explanation, or commentary
 - Return ONLY the improved prompt text. No quotes, no markdown formatting.${phaseHint}
@@ -315,30 +439,85 @@ ${userDraft}
 
 <recent_conversation>
 ${conversationContext}
-</recent_conversation>${fileContext}${cmdContext}`;
+</recent_conversation>${fileContext}${cmdContext}${baselineContext}`;
+}
+
+function resolveModel(config: { provider: string; id: string }): Model<Api> | null {
+	if (!config.provider || !config.id) return null;
+
+	try {
+		const provider = config.provider as KnownProvider;
+		if (!getProviders().includes(provider)) return null;
+		const candidates = getModels(provider) as Array<Model<Api>>;
+		return candidates.find((m) => m.id === config.id) ?? null;
+	} catch {
+		return null;
+	}
 }
 
 function resolveModelSync(): Model<Api> | null {
-	// Try configured model first
-	try {
-		const model = getModel(
-			configuredModel.provider as "anthropic",
-			configuredModel.id as "claude-sonnet-4-6",
-		);
-		if (model) return model as Model<Api>;
-	} catch {
-		// Model not found, try fallback
-	}
+	return resolveModel(configuredModel) ?? resolveModel(FALLBACK_MODEL);
+}
 
-	// Fallback
-	try {
-		const model = getModel(FALLBACK_MODEL.provider, FALLBACK_MODEL.id);
-		if (model) return model as Model<Api>;
-	} catch {
-		// Fallback also not found
-	}
+const AUTOPROMPT_SYSTEM_INSTRUCTIONS =
+	"You generate concise, actionable prompt text for coding-agent collaboration. Follow the user request exactly and return only plain text.";
 
-	return null;
+function buildCompletionContext(userText: string): {
+	systemPrompt: string;
+	messages: Array<{ role: "user"; content: Array<{ type: "text"; text: string }>; timestamp: number }>;
+} {
+	return {
+		systemPrompt: AUTOPROMPT_SYSTEM_INSTRUCTIONS,
+		messages: [
+			{
+				role: "user",
+				content: [{ type: "text", text: userText }],
+				timestamp: Date.now(),
+			},
+		],
+	};
+}
+
+function buildCompletionOptions(model: Model<Api>, apiKey: string, signal: AbortSignal): {
+	apiKey: string;
+	signal: AbortSignal;
+	reasoningEffort?: "none" | "minimal";
+} {
+	if (model.api === "openai-codex-responses") {
+		return { apiKey, signal, reasoningEffort: "none" };
+	}
+	if (
+		model.api === "openai-responses" ||
+		model.api === "openai-completions" ||
+		model.api === "azure-openai-responses"
+	) {
+		return { apiKey, signal, reasoningEffort: "minimal" };
+	}
+	return { apiKey, signal };
+}
+
+function ensureCompletionSucceeded(response: { stopReason: string; errorMessage?: string }): void {
+	if (response.stopReason === "error") {
+		throw new Error(response.errorMessage || "Model request failed");
+	}
+}
+
+function startImproveLoadingStatus(ctx: ExtensionContext): () => void {
+	const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+	const startedAt = Date.now();
+	let idx = 0;
+
+	ctx.ui.setStatus("auto-prompt", "Improving prompt…");
+	const timer = setInterval(() => {
+		const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+		ctx.ui.setStatus("auto-prompt", `${frames[idx % frames.length]} Improving prompt… ${elapsed}s`);
+		idx += 1;
+	}, 120);
+
+	return () => {
+		clearInterval(timer);
+		ctx.ui.setStatus("auto-prompt", undefined);
+	};
 }
 
 function cancelPending(): void {
@@ -390,34 +569,47 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 	const filePaths = extractFilePaths(conversationContext);
 	const commands = extractCommands(conversationContext);
 	const phase = detectPhase(conversationContext);
+	const baselineGuidelines = extractBaselineGuidelines(ctx.getSystemPrompt());
 
 	const controller = new AbortController();
 	pendingController = controller;
 
-	try {
-		const prompt = buildSuggestionPrompt(conversationContext, workflowMode, filePaths, commands, phase);
+	const requestSuggestion = async (revisionHint?: string): Promise<string> => {
+		const basePrompt = buildSuggestionPrompt(
+			conversationContext,
+			workflowMode,
+			filePaths,
+			commands,
+			phase,
+			baselineGuidelines,
+		);
+		const prompt = revisionHint
+			? `${basePrompt}\n\n<revision_request>\n${revisionHint}\n</revision_request>`
+			: basePrompt;
+
 		const response = await complete(
 			model,
-			{
-				messages: [
-					{
-						role: "user" as const,
-						content: [{ type: "text" as const, text: prompt }],
-						timestamp: Date.now(),
-					},
-				],
-			},
-			{ apiKey, reasoningEffort: "off", signal: controller.signal },
+			buildCompletionContext(prompt),
+			buildCompletionOptions(model, apiKey, controller.signal),
 		);
+		ensureCompletionSucceeded(response);
+
+		return extractAssistantOutput(response.content);
+	};
+
+	try {
+		let suggestion = await requestSuggestion();
 
 		// Don't emit if cancelled while waiting
 		if (controller.signal.aborted) return;
 
-		const suggestion = response.content
-			.filter((c): c is { type: "text"; text: string } => c.type === "text")
-			.map((c) => c.text.trim())
-			.join("")
-			.trim();
+		if (suggestion && isLikelyBaselineRestatement(suggestion)) {
+			suggestion = await requestSuggestion(
+				"Your previous output mostly repeated baseline process guidance. Rewrite as a concrete immediate next action tied to this conversation, ideally naming a file, command, or explicit deliverable.",
+			);
+		}
+
+		if (controller.signal.aborted) return;
 
 		if (suggestion && suggestion.length > 0 && suggestion.length < 200) {
 			pi.events.emit("auto-prompt:suggest", { text: suggestion });
@@ -456,39 +648,51 @@ async function improveCurrentDraft(pi: ExtensionAPI, ctx: ExtensionContext, expl
 		return;
 	}
 
-	const conversationContext = buildConversationContext(ctx);
+	const conversationContext = buildConversationContext(ctx, 3);
 	const analysisContext = [conversationContext, `User draft: ${draft}`].filter(Boolean).join("\n\n");
 	const filePaths = extractFilePaths(analysisContext);
 	const commands = extractCommands(analysisContext);
 	const phase = detectPhase(analysisContext);
+	const baselineGuidelines = extractBaselineGuidelines(ctx.getSystemPrompt());
 
 	const controller = new AbortController();
 	pendingController = controller;
 
+	let stopLoading: (() => void) | null = null;
+
 	try {
-		ctx.ui.setStatus("auto-prompt", "Improving prompt…");
-		const prompt = buildImprovementPrompt(draft, conversationContext, filePaths, commands, phase);
+		stopLoading = startImproveLoadingStatus(ctx);
+		const prompt = buildImprovementPrompt(
+			draft,
+			conversationContext,
+			filePaths,
+			commands,
+			phase,
+			baselineGuidelines,
+		);
 		const response = await complete(
 			model,
-			{
-				messages: [
-					{
-						role: "user" as const,
-						content: [{ type: "text" as const, text: prompt }],
-						timestamp: Date.now(),
-					},
-				],
-			},
-			{ apiKey, reasoningEffort: "off", signal: controller.signal },
+			buildCompletionContext(prompt),
+			buildCompletionOptions(model, apiKey, controller.signal),
 		);
+		ensureCompletionSucceeded(response);
 
 		if (controller.signal.aborted) return;
 
-		const improved = response.content
-			.filter((c): c is { type: "text"; text: string } => c.type === "text")
-			.map((c) => c.text.trim())
-			.join("")
-			.trim();
+		let improved = extractAssistantOutput(response.content);
+
+		if (!improved) {
+			const retryPrompt = `Rewrite this draft into one concise, actionable prompt for a coding agent. Preserve intent. Return only the rewritten prompt text.\n\nDraft: ${draft}`;
+			const retryResponse = await complete(
+				model,
+				buildCompletionContext(retryPrompt),
+				buildCompletionOptions(model, apiKey, controller.signal),
+			);
+			ensureCompletionSucceeded(retryResponse);
+
+			if (controller.signal.aborted) return;
+			improved = extractAssistantOutput(retryResponse.content);
+		}
 
 		if (!improved) {
 			ctx.ui.notify("Could not improve prompt. Try again.", "warning");
@@ -504,9 +708,11 @@ async function improveCurrentDraft(pi: ExtensionAPI, ctx: ExtensionContext, expl
 		ctx.ui.notify("Prompt improved", "success");
 	} catch (err: unknown) {
 		if (err instanceof Error && err.name === "AbortError") return;
-		ctx.ui.notify("Failed to improve prompt", "warning");
+		const reason = err instanceof Error ? err.message : "Unknown error";
+		const shortReason = reason.length > 120 ? `${reason.slice(0, 117)}...` : reason;
+		ctx.ui.notify(`Failed to improve prompt: ${shortReason}`, "warning");
 	} finally {
-		ctx.ui.setStatus("auto-prompt", undefined);
+		if (stopLoading) stopLoading();
 		if (pendingController === controller) {
 			pendingController = null;
 		}

@@ -6,6 +6,8 @@ import {
 	buildImprovementPrompt,
 	extractFilePaths,
 	extractCommands,
+	extractBaselineGuidelines,
+	extractAssistantOutput,
 	detectPhase,
 	type ConversationPhase,
 } from "../../extensions/auto-prompt.ts";
@@ -137,6 +139,19 @@ test("extractCommands finds shell-prefixed commands", () => {
 test("extractCommands limits results", () => {
 	const cmds = extractCommands("npm a\nnpm b\nnpm c\nnpm d\nnpm e\nnpm f\nnpm g");
 	assert.ok(cmds.length <= 5, "should limit to 5 commands");
+});
+
+test("extractAssistantOutput prefers text blocks", () => {
+	const out = extractAssistantOutput([
+		{ type: "thinking", thinking: "internal" },
+		{ type: "text", text: "Rewrite this prompt" },
+	]);
+	assert.equal(out, "Rewrite this prompt");
+});
+
+test("extractAssistantOutput falls back to thinking when text is unavailable", () => {
+	const out = extractAssistantOutput([{ type: "thinking", thinking: "Fallback response" }]);
+	assert.equal(out, "Fallback response");
 });
 
 // --- Phase detection ---
@@ -288,6 +303,36 @@ test("buildSuggestionPrompt allows 10-40 words for richer prompts", () => {
 	assert.match(prompt, /One or two sentences max/);
 });
 
+test("extractBaselineGuidelines captures AGENTS constraints", () => {
+	const systemPrompt = `
+## Non-Negotiables
+- Never ship behavior change without test update
+- Do not guess requirements
+
+## Development Workflow
+- Plan → Design → Create Tasks → Implement → Ship
+`;
+
+	const rules = extractBaselineGuidelines(systemPrompt, 5);
+	assert.ok(rules.some((r) => /never ship behavior change without test update/i.test(r)));
+	assert.ok(rules.some((r) => /do not guess requirements/i.test(r)));
+});
+
+test("buildSuggestionPrompt includes baseline-guideline context and avoids restating defaults", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: fix auth bug\n\nAssistant: done",
+		undefined,
+		undefined,
+		undefined,
+		"debugging",
+		["Never ship behavior change without test update", "Do not guess requirements"],
+	);
+
+	assert.match(prompt, /baseline_agent_guidelines/i);
+	assert.match(prompt, /Assume baseline AGENTS\/system guidelines are already enforced/i);
+	assert.match(prompt, /Do NOT restate generic process defaults/i);
+});
+
 // --- buildImprovementPrompt ---
 
 test("buildImprovementPrompt frames rewrite task and preserves intent", () => {
@@ -300,6 +345,20 @@ test("buildImprovementPrompt frames rewrite task and preserves intent", () => {
 	assert.match(prompt, /preserving their original intent exactly/i);
 	assert.match(prompt, /Return ONLY the improved prompt text/i);
 	assert.match(prompt, /Rewrite questions as instructions/i);
+});
+
+test("buildImprovementPrompt includes baseline context and implied-guidelines rule", () => {
+	const prompt = buildImprovementPrompt(
+		"feed that loop",
+		"User: fixed API tests\n\nAssistant: all green",
+		undefined,
+		undefined,
+		"shipping",
+		["Never ship behavior change without test update", "Do not guess requirements"],
+	);
+
+	assert.match(prompt, /baseline_agent_guidelines/i);
+	assert.match(prompt, /Treat baseline AGENTS\/system guidance as already implied/i);
 });
 
 test("buildImprovementPrompt includes file and command context when provided", () => {
