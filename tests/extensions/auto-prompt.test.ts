@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
 	buildSuggestionPrompt,
+	buildImprovementPrompt,
 	extractFilePaths,
 	extractCommands,
 	detectPhase,
@@ -285,4 +286,46 @@ test("buildSuggestionPrompt allows 10-40 words for richer prompts", () => {
 
 	assert.match(prompt, /10-40 words/);
 	assert.match(prompt, /One or two sentences max/);
+});
+
+// --- buildImprovementPrompt ---
+
+test("buildImprovementPrompt frames rewrite task and preserves intent", () => {
+	const prompt = buildImprovementPrompt(
+		"why is login broken?",
+		"User: login fails\n\nAssistant: investigate auth",
+	);
+
+	assert.match(prompt, /improve prompts/i);
+	assert.match(prompt, /preserving their original intent exactly/i);
+	assert.match(prompt, /Return ONLY the improved prompt text/i);
+	assert.match(prompt, /Rewrite questions as instructions/i);
+});
+
+test("buildImprovementPrompt includes file and command context when provided", () => {
+	const prompt = buildImprovementPrompt(
+		"fix notifications",
+		"User: endpoint failing",
+		["src/api/notifications.ts", "src/api/messages.ts"],
+		["npm test", "pnpm run build"],
+		"debugging",
+	);
+
+	assert.match(prompt, /files_in_conversation/i);
+	assert.match(prompt, /src\/api\/notifications\.ts/);
+	assert.match(prompt, /commands_in_conversation/i);
+	assert.match(prompt, /npm test/i);
+	assert.match(prompt, /DEBUGGING phase/i);
+});
+
+test("buildImprovementPrompt omits file and command sections when not provided", () => {
+	const prompt = buildImprovementPrompt(
+		"fix notifications",
+		"User: endpoint failing",
+		[],
+		[],
+	);
+
+	assert.doesNotMatch(prompt, /files_in_conversation/i);
+	assert.doesNotMatch(prompt, /commands_in_conversation/i);
 });

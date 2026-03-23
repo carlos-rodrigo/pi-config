@@ -17,10 +17,17 @@
  * - Any character → dismisses ghost, types normally
  * - Escape / Backspace → dismisses ghost
  *
+ * Improve Prompt (Ctrl+Shift+I):
+ *   Takes whatever the user has typed in the editor and rewrites it
+ *   following the same best-practice principles — making it more
+ *   directive, specific, and feedback-loopable. Replaces the editor
+ *   text with the improved version.
+ *
  * Commands:
  *   /suggest          Toggle auto-suggestions on/off
  *   /suggest model    Change the suggestion model (e.g. /suggest model anthropic/claude-haiku-4-5)
  *   /suggest now      Manually trigger a suggestion
+ *   /improve          Manually improve the current editor text
  */
 
 import { complete, getModel, type Api, type Model } from "@mariozechner/pi-ai";
@@ -257,6 +264,60 @@ function getPhaseGuidance(phase: ConversationPhase): string {
 	}
 }
 
+export function buildImprovementPrompt(
+	userDraft: string,
+	conversationContext: string,
+	filePaths?: string[],
+	commands?: string[],
+	phase?: ConversationPhase,
+): string {
+	const fileContext =
+		filePaths && filePaths.length > 0
+			? `\n\n<files_in_conversation>\n${filePaths.join("\n")}\n</files_in_conversation>`
+			: "";
+
+	const cmdContext =
+		commands && commands.length > 0
+			? `\n\n<commands_in_conversation>\n${commands.join("\n")}\n</commands_in_conversation>`
+			: "";
+
+	const phaseHint = phase ? `\nThe conversation is currently in a ${phase.toUpperCase()} phase.` : "";
+
+	return `You improve prompts that users send to coding agents.
+Given the user's draft prompt and the recent conversation, rewrite the prompt to be more effective.
+
+## Your Task
+
+Rewrite the user's draft to follow best practices for agent collaboration, while preserving their original intent exactly.
+
+## Improvement Principles
+
+1. DIRECTIVE — Rewrite questions as instructions. "Why isn't X working?" → "Fix X in file.ts"
+2. SPECIFIC — Add file paths, function names, or patterns from the conversation when relevant
+3. FEEDBACK-LOOPABLE — Add a verification step if one is missing: "then run the tests", "verify by checking X"
+4. SCOPED — Keep it focused on one task. If the draft is already scoped, don't expand it
+5. CONTEXTUAL — Add relevant constraints or references the user likely meant but didn't spell out
+
+## Rules
+
+- PRESERVE the user's intent — do NOT change what they want done, only improve how they say it
+- Keep improvements proportional — a short draft becomes a better short prompt, not a paragraph
+- If the draft is already good, make only minor improvements or return it as-is
+- Add verification/feedback steps only when there's a natural one (tests, build, check output)
+- Reference specific files or commands from conversation context when they're relevant to the task
+- Do NOT add new requirements, features, or scope the user didn't ask for
+- Do NOT add preamble, explanation, or commentary
+- Return ONLY the improved prompt text. No quotes, no markdown formatting.${phaseHint}
+
+<user_draft>
+${userDraft}
+</user_draft>
+
+<recent_conversation>
+${conversationContext}
+</recent_conversation>${fileContext}${cmdContext}`;
+}
+
 function resolveModelSync(): Model<Api> | null {
 	// Try configured model first
 	try {
@@ -371,6 +432,87 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 	}
 }
 
+async function improveCurrentDraft(pi: ExtensionAPI, ctx: ExtensionContext, explicitDraft?: string): Promise<void> {
+	if (!ctx.hasUI) return;
+
+	const draft = (explicitDraft ?? ctx.ui.getEditorText()).trim();
+	if (!draft) {
+		ctx.ui.notify("Type a prompt first, then press Ctrl+Shift+I", "info");
+		return;
+	}
+
+	cancelPending();
+	pi.events.emit("auto-prompt:clear", {});
+
+	const model = resolveModelSync();
+	if (!model) {
+		ctx.ui.notify("Auto Prompt: no model available", "warning");
+		return;
+	}
+
+	const apiKey = await ctx.modelRegistry.getApiKey(model);
+	if (!apiKey) {
+		ctx.ui.notify("Auto Prompt: no API key available", "warning");
+		return;
+	}
+
+	const conversationContext = buildConversationContext(ctx);
+	const analysisContext = [conversationContext, `User draft: ${draft}`].filter(Boolean).join("\n\n");
+	const filePaths = extractFilePaths(analysisContext);
+	const commands = extractCommands(analysisContext);
+	const phase = detectPhase(analysisContext);
+
+	const controller = new AbortController();
+	pendingController = controller;
+
+	try {
+		ctx.ui.setStatus("auto-prompt", "Improving prompt…");
+		const prompt = buildImprovementPrompt(draft, conversationContext, filePaths, commands, phase);
+		const response = await complete(
+			model,
+			{
+				messages: [
+					{
+						role: "user" as const,
+						content: [{ type: "text" as const, text: prompt }],
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{ apiKey, reasoningEffort: "off", signal: controller.signal },
+		);
+
+		if (controller.signal.aborted) return;
+
+		const improved = response.content
+			.filter((c): c is { type: "text"; text: string } => c.type === "text")
+			.map((c) => c.text.trim())
+			.join("")
+			.trim();
+
+		if (!improved) {
+			ctx.ui.notify("Could not improve prompt. Try again.", "warning");
+			return;
+		}
+
+		if (improved.length > 1000) {
+			ctx.ui.notify("Improved prompt is too long. Try a more focused draft.", "warning");
+			return;
+		}
+
+		ctx.ui.setEditorText(improved);
+		ctx.ui.notify("Prompt improved", "success");
+	} catch (err: unknown) {
+		if (err instanceof Error && err.name === "AbortError") return;
+		ctx.ui.notify("Failed to improve prompt", "warning");
+	} finally {
+		ctx.ui.setStatus("auto-prompt", undefined);
+		if (pendingController === controller) {
+			pendingController = null;
+		}
+	}
+}
+
 // --- Extension entry ---
 
 export default function (pi: ExtensionAPI) {
@@ -417,6 +559,20 @@ export default function (pi: ExtensionAPI) {
 				if (e.data?.model) configuredModel = e.data.model;
 			}
 		}
+	});
+
+	pi.registerShortcut("ctrl+shift+i", {
+		description: "Improve the current draft prompt in the editor",
+		handler: async (ctx: ExtensionContext) => {
+			await improveCurrentDraft(pi, ctx);
+		},
+	});
+
+	pi.registerCommand("improve", {
+		description: "Improve the current editor text (or /improve <text>) using prompt best practices",
+		handler: async (args, ctx) => {
+			await improveCurrentDraft(pi, ctx, args);
+		},
 	});
 
 	// /suggest command

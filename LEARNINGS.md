@@ -123,3 +123,10 @@
 **Context:** Iterating on auto-prompt to generate prompts following best practices from ampcode.com articles on feedback-loopable development, agent pairing, and context management.
 **Learning:** Ghost-text suggestions are dramatically better when they (1) are directive not questions, (2) include feedback loops / verification steps ("run tests after", "verify by checking X"), (3) reference specific files/patterns extracted from conversation, (4) detect the conversation phase (debugging/testing/building/shipping/planning) and tailor guidance accordingly. Extracting file paths and commands from conversation context gives the LLM concrete anchors to reference. Phase detection via keyword scoring (debug signals vs test signals vs build signals) is simple but effective for tailoring the suggestion style.
 **Applies to:** Prompt generation systems, ghost-text suggestions, any system that drafts prompts on behalf of users for coding agents.
+
+## TUI Shortcut Design: Avoid terminal keycode aliases for extension hotkeys
+
+**Date:** 2026-03-23
+**Context:** Adding an Auto Prompt "improve current draft" shortcut.
+**Learning:** In terminal TUIs, `Ctrl+I` collides with `Tab` (same keycode), so shortcuts that seem distinct in GUI apps may be impossible to disambiguate. Prefer `Ctrl+Shift+<letter>` chords that are already known to work in the user's terminal transport (for example tmux CSI-u). For in-editor rewrite actions, `ctx.ui.getEditorText()` + `ctx.ui.setEditorText()` provides a clean, extension-local flow without editor-specific event plumbing.
+**Applies to:** Future shortcut design in pi extensions, especially input-editor actions and keybinding additions.

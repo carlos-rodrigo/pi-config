@@ -334,6 +334,7 @@ After the agent finishes responding, a gray suggestion appears inside the editor
 | **Backspace** | Dismiss ghost |
 | **Escape** | Dismiss ghost |
 | Type before suggestion arrives | LLM call is cancelled, no ghost shown |
+| **Ctrl+Shift+I** | Improve current draft prompt in-place (directive + specific + feedback-loopable rewrite) |
 
 ### Commands
 
@@ -343,6 +344,7 @@ After the agent finishes responding, a gray suggestion appears inside the editor
 | `/suggest now` | Manually trigger a suggestion |
 | `/suggest model` | Show current suggestion model |
 | `/suggest model <provider>/<id>` | Change model (e.g. `/suggest model anthropic/claude-haiku-4-5`) |
+| `/improve [text]` | Improve the current editor text (or explicit text argument) using the same prompt-quality principles |
 
 ### Configuration
 
