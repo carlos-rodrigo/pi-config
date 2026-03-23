@@ -46,6 +46,8 @@ cd pi-config
 
 This symlinks all extensions, themes, agents, and prompts into `~/.pi/agent/`. Restart Pi and use `/reload` to pick up changes.
 
+It also migrates any legacy `~/.pi/agent/skills/` entries into `~/.agents/skills/` and removes the legacy directory to avoid duplicate-skill collisions.
+
 To update, just `git pull` — symlinks pick up changes automatically.
 
 ## Contents

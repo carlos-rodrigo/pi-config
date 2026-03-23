@@ -3,6 +3,9 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 PI_DIR="${HOME}/.pi/agent"
+AGENTS_DIR="${HOME}/.agents"
+AGENTS_SKILLS_DIR="${AGENTS_DIR}/skills"
+LEGACY_PI_SKILLS_DIR="${PI_DIR}/skills"
 
 echo "Installing pi-config from ${REPO_DIR}"
 echo ""
@@ -20,6 +23,32 @@ mkdir -p "${PI_DIR}/extensions"
 mkdir -p "${PI_DIR}/themes"
 mkdir -p "${PI_DIR}/agents"
 mkdir -p "${PI_DIR}/prompts"
+mkdir -p "${AGENTS_SKILLS_DIR}"
+
+# Migrate legacy skills out of ~/.pi/agent/skills to ~/.agents/skills.
+if [ -d "${LEGACY_PI_SKILLS_DIR}" ] || [ -L "${LEGACY_PI_SKILLS_DIR}" ]; then
+  echo "Migrating legacy skills from ${LEGACY_PI_SKILLS_DIR} to ${AGENTS_SKILLS_DIR}..."
+  migrated=0
+  skipped=0
+  for skill in "${LEGACY_PI_SKILLS_DIR}"/*; do
+    [ -e "$skill" ] || [ -L "$skill" ] || continue
+    name="$(basename "$skill")"
+    target="${AGENTS_SKILLS_DIR}/${name}"
+
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    cp -RL "$skill" "$target"
+    echo "  ✓ migrated skill ${name}"
+    migrated=$((migrated + 1))
+  done
+
+  rm -rf "${LEGACY_PI_SKILLS_DIR}"
+  echo "  ✓ removed legacy ${LEGACY_PI_SKILLS_DIR} (migrated ${migrated}, skipped ${skipped})"
+  echo ""
+fi
 
 # Remove stale test symlinks that should never be loaded as extensions.
 for stale in "${PI_DIR}"/extensions/*.test.ts; do
@@ -110,4 +139,5 @@ echo ""
 echo "Done. Restart pi or use /reload to pick up changes."
 echo ""
 echo "Note: AGENTS.md and skills are managed separately via the agents repo."
+echo "  Skills location: ~/.agents/skills (legacy ~/.pi/agent/skills is removed by this installer)"
 echo "  See: https://github.com/carlos-rodrigo/agents"
