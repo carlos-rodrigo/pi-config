@@ -9,7 +9,8 @@
     "test:auto-prompt": "node --test tests/extensions/auto-prompt.test.ts",
     "test:web-tools": "node --test tests/extensions/web-tools.test.ts",
     "test:workflow-modes": "node --test tests/extensions/workflow-modes.test.ts",
-    "test:direct": "node --test tests/extensions/auto-prompt.test.ts tests/extensions/web-tools.test.ts tests/extensions/workflow-modes.test.ts extensions/document-reviewer/review-flow.test.ts",
+    "test:lazygit": "node --test tests/extensions/lazygit.test.ts",
+    "test:direct": "node --test tests/extensions/auto-prompt.test.ts tests/extensions/web-tools.test.ts tests/extensions/workflow-modes.test.ts tests/extensions/lazygit.test.ts extensions/document-reviewer/review-flow.test.ts",
     "test:document-reviewer": "node scripts/test-document-reviewer.mjs",
     "test": "npm run test:direct && npm run test:document-reviewer"
   },
