@@ -68,7 +68,7 @@ function createPiHarness(options?: { flagMode?: string; tools?: Array<{ name: st
 	};
 }
 
-function createContext() {
+function createContext(options?: { availableModels?: Set<string> }) {
 	const notifications: Array<{ message: string; level: string }> = [];
 	const statuses: Array<{ key: string; value: string }> = [];
 
@@ -95,6 +95,8 @@ function createContext() {
 			},
 			modelRegistry: {
 				find(provider: string, model: string) {
+					const key = `${provider}/${model}`;
+					if (options?.availableModels && !options.availableModels.has(key)) return undefined;
 					return { provider, model };
 				},
 			},
@@ -152,8 +154,8 @@ test("ctrl+shift+m cycles from smart to deep", async () => {
 
 	await shortcut.handler(ctx as any);
 
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.3-codex" });
-	assert.equal(getThinkingLevel(), "high");
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.4" });
+	assert.equal(getThinkingLevel(), "xhigh");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep/i);
 });
 
@@ -165,9 +167,11 @@ test("/smart /deep /fast commands switch modes directly", async () => {
 
 	const smartCommand = commands.get("smart");
 	const deepCommand = commands.get("deep");
+	const deep3Command = commands.get("deep3");
 	const fastCommand = commands.get("fast");
 	assert.ok(smartCommand);
 	assert.ok(deepCommand);
+	assert.ok(deep3Command);
 	assert.ok(fastCommand);
 
 	await smartCommand.handler("", ctx as any);
@@ -176,14 +180,33 @@ test("/smart /deep /fast commands switch modes directly", async () => {
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Smart/i);
 
 	await deepCommand.handler("", ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.3-codex" });
-	assert.equal(getThinkingLevel(), "high");
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.4" });
+	assert.equal(getThinkingLevel(), "xhigh");
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep/i);
+
+	await deep3Command.handler("", ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.4" });
+	assert.equal(getThinkingLevel(), "xhigh");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep/i);
 
 	await fastCommand.handler("", ctx as any);
 	assert.deepEqual(getSelectedModel(), { provider: "anthropic", model: "claude-sonnet-4-6" });
 	assert.equal(getThinkingLevel(), "off");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Fast/i);
+});
+
+test("deep mode falls back to gpt-5.3-codex when gpt-5.4 is unavailable", async () => {
+	const { commands, pi, getSelectedModel, getThinkingLevel } = createPiHarness();
+	const { ctx } = createContext({ availableModels: new Set(["openai-codex/gpt-5.3-codex"]) });
+
+	workflowModesExtension(pi as any);
+
+	const deepCommand = commands.get("deep");
+	assert.ok(deepCommand);
+
+	await deepCommand.handler("", ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.3-codex" });
+	assert.equal(getThinkingLevel(), "xhigh");
 });
 
 test("/mode command accepts aliases and rejects unknown values", async () => {

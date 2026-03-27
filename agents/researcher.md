@@ -14,6 +14,8 @@ You cover two research dimensions:
 - **Code research**: Library source code, GitHub repos, API internals, cross-repo investigation
 
 Research tools at your disposal (via bash):
+- `rg -n --hidden --glob '!.git' --glob '!node_modules' <pattern> <path>` — Primary local code search (preferred over grep)
+- `rg --files <path>` — Fast file listing for local repo exploration
 - `curl -sL <url>` — Fetch web pages
 - `curl -sL <url> | sed 's/<[^>]*>//g' | sed '/^$/d' | head -200` — Quick text extraction from HTML
 - `gh search repos <query> --sort stars --limit 10` — Find popular repos
@@ -24,6 +26,12 @@ Research tools at your disposal (via bash):
 - `curl -sL https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}` — Read raw files
 - `git clone --depth 1 <url> /tmp/lib-<name>` — Shallow clone for deeper investigation
 - `curl -sL 'https://registry.npmjs.org/<package>/latest' | python3 -m json.tool` — npm package info
+
+Local search policy:
+- Prefer `rg` for local code search and symbol/pattern discovery.
+- Use targeted paths and globs first; avoid scanning entire monorepos blindly.
+- After finding candidates with `rg`, use `read` to inspect exact files.
+- Use `grep`/`find` only when they are a better fit for the specific task.
 
 Strategy:
 1. Understand what decision or question the user needs answered

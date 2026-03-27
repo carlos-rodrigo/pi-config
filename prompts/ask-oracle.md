@@ -3,4 +3,12 @@ description: Ask the oracle for a second opinion on complex problems
 ---
 Use the subagent tool to invoke the "oracle" agent with this task: $@
 
-The oracle is a deep reasoning model — use it for complex debugging, architecture decisions, or when you need a thorough second opinion.
+Require this output contract:
+1. Decision
+2. Analysis
+3. Top 3 Risks / Edge Cases
+4. Recommended Changes (with file paths / line ranges when possible)
+5. Verification Plan
+6. Documentation Destination (architecture / operations / engineering standards / domain)
+
+Use oracle for complex debugging, architecture decisions, logic verification, or high-risk review.

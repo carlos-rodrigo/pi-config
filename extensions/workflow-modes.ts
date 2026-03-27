@@ -15,10 +15,23 @@ const MODE_STATUS_COLOR: Record<AgentMode, "success" | "error" | "warning"> = {
 	fast: "warning",
 };
 
-const MODE_PROFILE: Record<AgentMode, { provider: string; model: string; thinking: string }> = {
-	smart: { provider: "anthropic", model: "claude-opus-4-6", thinking: "high" },
-	deep: { provider: "openai-codex", model: "gpt-5.3-codex", thinking: "high" },
-	fast: { provider: "anthropic", model: "claude-sonnet-4-6", thinking: "off" },
+type ModeModelCandidate = { provider: string; model: string };
+
+type ModeProfile = {
+	models: ModeModelCandidate[];
+	thinking: string;
+};
+
+const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
+	smart: { models: [{ provider: "anthropic", model: "claude-opus-4-6" }], thinking: "high" },
+	deep: {
+		models: [
+			{ provider: "openai-codex", model: "gpt-5.4" },
+			{ provider: "openai-codex", model: "gpt-5.3-codex" },
+		],
+		thinking: "xhigh",
+	},
+	fast: { models: [{ provider: "anthropic", model: "claude-sonnet-4-6" }], thinking: "off" },
 };
 
 export function normalizeMode(raw: string | undefined): AgentMode | undefined {
@@ -53,20 +66,35 @@ export default function (pi: ExtensionAPI) {
 		pi.setActiveTools(getActiveToolsForMode());
 
 		const profile = MODE_PROFILE[mode];
-		const targetModel = ctx.modelRegistry.find(profile.provider, profile.model);
-		if (targetModel) {
+		let selectedModelCandidate: ModeModelCandidate | undefined;
+		let firstUnavailableModel: ModeModelCandidate | undefined;
+
+		for (const candidate of profile.models) {
+			const targetModel = ctx.modelRegistry.find(candidate.provider, candidate.model);
+			if (!targetModel) continue;
+
 			const ok = await pi.setModel(targetModel);
-			if (!ok) {
+			if (ok) {
+				selectedModelCandidate = candidate;
+				break;
+			}
+
+			if (!firstUnavailableModel) firstUnavailableModel = candidate;
+		}
+
+		if (!selectedModelCandidate) {
+			if (firstUnavailableModel) {
 				ctx.ui.notify(
-					`Mode ${MODE_LABEL[mode]}: no API key for ${profile.provider}/${profile.model}. Keeping current model.`,
+					`Mode ${MODE_LABEL[mode]}: no API key for ${firstUnavailableModel.provider}/${firstUnavailableModel.model}. Keeping current model.`,
+					"warning",
+				);
+			} else {
+				const requestedModels = profile.models.map((candidate) => `${candidate.provider}/${candidate.model}`).join(" or ");
+				ctx.ui.notify(
+					`Mode ${MODE_LABEL[mode]}: models ${requestedModels} not found. Keeping current model.`,
 					"warning",
 				);
 			}
-		} else {
-			ctx.ui.notify(
-				`Mode ${MODE_LABEL[mode]}: model ${profile.provider}/${profile.model} not found. Keeping current model.`,
-				"warning",
-			);
 		}
 
 		pi.setThinkingLevel(profile.thinking);
@@ -78,10 +106,10 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (options?.notify !== false) {
-			ctx.ui.notify(
-				`Switched to Mode: ${MODE_LABEL[mode]} (${profile.provider}/${profile.model}, ${profile.thinking})`,
-				"info",
-			);
+			const appliedModel = selectedModelCandidate
+				? `${selectedModelCandidate.provider}/${selectedModelCandidate.model}`
+				: "current model";
+			ctx.ui.notify(`Switched to Mode: ${MODE_LABEL[mode]} (${appliedModel}, ${profile.thinking})`, "info");
 		}
 	}
 
@@ -154,6 +182,13 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("deep", {
 		description: "Switch agent mode to Deep",
+		handler: async (_args, ctx) => {
+			await applyMode("deep", ctx);
+		},
+	});
+
+	pi.registerCommand("deep3", {
+		description: "Switch agent mode to Deep (xhigh reasoning)",
 		handler: async (_args, ctx) => {
 			await applyMode("deep", ctx);
 		},

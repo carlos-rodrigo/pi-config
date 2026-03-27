@@ -27,20 +27,32 @@ Strategy:
 
 Output format:
 
+## Decision
+
+Clear recommendation (approve/reject approach, or choose option A/B/C) with brief rationale.
+
 ## Analysis
 
-Step-by-step reasoning about the problem.
+Step-by-step reasoning about the problem and trade-offs.
 
-## Answer
+## Top 3 Risks / Edge Cases
 
-Clear, direct answer to the question.
+Most important failure modes, with severity and why they matter.
 
-## Recommendations (if applicable)
+## Recommended Changes
 
-Specific, actionable suggestions with file paths and line numbers.
+Specific, actionable suggestions with file paths and, when possible, line ranges.
 
-## Risks / Edge Cases
+## Verification Plan
 
-Things to watch out for that might not be obvious.
+Concrete checks: tests to run/add, commands, and manual validation steps.
 
-Be thorough but direct. The primary agent will use your analysis to make decisions.
+## Documentation Destination
+
+Where the accepted insight should live as source of truth:
+- architecture
+- operations
+- engineering standards
+- domain
+
+Be thorough but direct. The primary agent will use your analysis to make decisions and promote durable insights into canonical docs.

@@ -72,10 +72,11 @@ Sub-agent definitions used by the subagent extension:
 
 Workflow prompt templates:
 
-- `/ask-oracle <question>` — Ask the oracle for a second opinion
+- `/ask-oracle <question>` — Ask the oracle for a second opinion (decision/risk/verification contract)
 - `/research <topic>` — Research a technology, codebase, or library
-- `/deep-review <area>` — Have the oracle deeply review code
+- `/deep-review <area>` — Have the oracle deeply review code with structured output
 - `/research-and-plan <feature>` — Research state of the art → get implementation recommendation
+- `/oracle-checkpoint <decision>` — Run researcher → oracle chain for high-uncertainty decisions
 
 ### [Themes](themes/)
 
@@ -92,6 +93,7 @@ Use the researcher agent to investigate how Next.js App Router handles parallel 
 /ask-oracle Is there a better way to handle the state machine in src/parser.ts?
 /research What's the current best approach for real-time sync in web apps? Compare options.
 /research-and-plan Add end-to-end encryption to our messaging feature
+/oracle-checkpoint Choose an approach for cache invalidation across worker + API boundaries
 /deep-review Review the error handling in src/api/
 
 # Chain — sequential handoff
