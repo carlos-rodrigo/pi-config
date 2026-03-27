@@ -15,6 +15,7 @@
 import { complete, type Message } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, SessionEntry } from "@mariozechner/pi-coding-agent";
 import { BorderedLoader, convertToLlm, serializeConversation } from "@mariozechner/pi-coding-agent";
+import { getModelApiKey } from "./lib/model-registry.js";
 
 const SYSTEM_PROMPT = `You are a context transfer assistant. Given a conversation history and the user's goal for a new thread, generate a focused prompt that:
 
@@ -80,7 +81,10 @@ export default function (pi: ExtensionAPI) {
 				loader.onAbort = () => done(null);
 
 				const doGenerate = async () => {
-					const apiKey = await ctx.modelRegistry.getApiKey(ctx.model!);
+					const apiKey = await getModelApiKey(ctx, ctx.model!);
+					if (!apiKey) {
+						throw new Error(`No API key available for ${ctx.model!.provider}/${ctx.model!.id}`);
+					}
 
 					const userMessage: Message = {
 						role: "user",

@@ -39,6 +39,7 @@ import {
 	type Model,
 } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { getModelApiKey } from "./lib/model-registry.js";
 
 // --- Configuration defaults ---
 
@@ -540,7 +541,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 		return;
 	}
 
-	const apiKey = await ctx.modelRegistry.getApiKey(model);
+	const apiKey = await getModelApiKey(ctx, model);
 	if (!apiKey) {
 		ctx.ui.notify("Auto Prompt: no API key available, suggestions disabled", "warning");
 		enabled = false;
@@ -642,7 +643,7 @@ async function improveCurrentDraft(pi: ExtensionAPI, ctx: ExtensionContext, expl
 		return;
 	}
 
-	const apiKey = await ctx.modelRegistry.getApiKey(model);
+	const apiKey = await getModelApiKey(ctx, model);
 	if (!apiKey) {
 		ctx.ui.notify("Auto Prompt: no API key available", "warning");
 		return;
