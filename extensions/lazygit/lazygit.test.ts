@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildTmuxLazygitCommand, parseLazygitCommandArgs } from "../../extensions/lazygit.ts";
+import { buildTmuxLazygitCommand, parseLazygitCommandArgs } from "./index.ts";
 
 test("parseLazygitCommandArgs defaults to popup when no args", () => {
   const parsed = parseLazygitCommandArgs("");

@@ -5,7 +5,7 @@ import {
 	buildPullRequestReviewReadyText,
 	parsePullRequestReviewInput,
 	resolvePullRequestReviewFile,
-} from "../../../extensions/document-reviewer/review-flow.ts";
+} from "./review-flow.ts";
 
 test("parsePullRequestReviewInput splits the PR URL from an optional quoted file path", () => {
 	assert.deepEqual(parsePullRequestReviewInput("https://github.com/acme/widgets/pull/42 'docs/Design Notes.md'"), {

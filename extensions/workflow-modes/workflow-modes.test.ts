@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { matchesKey, setKittyProtocolActive } from "@mariozechner/pi-tui";
 
-import workflowModesExtension, { normalizeMode } from "../../extensions/workflow-modes.ts";
+import workflowModesExtension, { normalizeMode } from "./index.ts";
 
 type ShortcutHandler = { description: string; handler: (...args: any[]) => unknown };
 type PiEventHandler = (...args: any[]) => unknown;

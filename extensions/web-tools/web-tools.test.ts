@@ -7,7 +7,7 @@ import {
 	normalizeWebUrl,
 	renderFetchedContent,
 	resolveWebsearchProvider,
-} from "../../extensions/web-tools.ts";
+} from "./index.ts";
 
 test("normalizeWebUrl upgrades http URLs to https", () => {
 	assert.equal(normalizeWebUrl("http://example.com/docs"), "https://example.com/docs");

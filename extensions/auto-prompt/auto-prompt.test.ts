@@ -10,7 +10,7 @@ import {
 	extractAssistantOutput,
 	detectPhase,
 	type ConversationPhase,
-} from "../../extensions/auto-prompt.ts";
+} from "./index.ts";
 
 // --- buildSuggestionPrompt: core framing ---
 

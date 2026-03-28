@@ -50,32 +50,19 @@ if [ -d "${LEGACY_PI_SKILLS_DIR}" ] || [ -L "${LEGACY_PI_SKILLS_DIR}" ]; then
   echo ""
 fi
 
-# Remove stale test symlinks that should never be loaded as extensions.
-for stale in "${PI_DIR}"/extensions/*.test.ts; do
+# Remove stale symlinks (old single-file layout, dead links, test files).
+for stale in "${PI_DIR}"/extensions/*.ts "${PI_DIR}"/extensions/*.test.ts; do
   [ -L "$stale" ] || continue
   rm "$stale"
-  echo "  ✓ removed stale extension test symlink $(basename "$stale")"
+  echo "  ✓ removed stale symlink $(basename "$stale")"
+done
+for stale in "${PI_DIR}"/extensions/lib; do
+  [ -L "$stale" ] || continue
+  rm "$stale"
+  echo "  ✓ removed stale symlink $(basename "$stale")"
 done
 
-# --- Extensions (single files) ---
-for f in "${REPO_DIR}"/extensions/*.ts; do
-  [ -f "$f" ] || continue
-  name="$(basename "$f")"
-  if [[ "$name" == *.test.ts ]]; then
-    continue
-  fi
-  target="${PI_DIR}/extensions/${name}"
-  if [ -L "$target" ]; then
-    rm "$target"
-  elif [ -e "$target" ]; then
-    echo "  ⚠ Skipping extensions/${name} — file already exists (not a symlink)"
-    continue
-  fi
-  ln -s "$f" "$target"
-  echo "  ✓ extensions/${name}"
-done
-
-# --- Extensions (directories, e.g. subagent/) ---
+# --- Extensions (each extension is a directory with index.ts) ---
 for d in "${REPO_DIR}"/extensions/*/; do
   [ -d "$d" ] || continue
   name="$(basename "$d")"

@@ -2,8 +2,8 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { buildLaunchFallbackText } from "./document-reviewer/launch-help.js";
-import { getDocumentReviewService } from "./document-reviewer/server.js";
+import { buildLaunchFallbackText } from "./launch-help.js";
+import { getDocumentReviewService } from "./server.js";
 import { openExternal } from "./lib/open-external.js";
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mkd", ".mdx"]);
