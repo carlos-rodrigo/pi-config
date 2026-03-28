@@ -16,7 +16,6 @@ import { complete, type Message } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, SessionEntry } from "@mariozechner/pi-coding-agent";
 import { convertToLlm, serializeConversation } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { getModelApiKey } from "./lib/model-registry.js";
 
 const SYSTEM_PROMPT = `You are a context transfer assistant. Given a conversation history and the user's goal for a new thread, generate a focused prompt that:
 
@@ -137,7 +136,7 @@ export default function (pi: ExtensionAPI) {
 			// Convert to LLM format and serialize
 			const llmMessages = convertToLlm(messages);
 			const conversationText = serializeConversation(llmMessages);
-			const apiKey = await getModelApiKey(ctx, ctx.model);
+			const apiKey = await ctx.modelRegistry.getApiKeyForProvider(ctx.model.provider);
 			if (!apiKey) {
 				return {
 					content: [{ type: "text", text: `Error: no API key available for ${ctx.model.provider}/${ctx.model.id}.` }],

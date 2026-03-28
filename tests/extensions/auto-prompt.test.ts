@@ -11,7 +11,6 @@ import {
 	detectPhase,
 	type ConversationPhase,
 } from "../../extensions/auto-prompt.ts";
-import { getModelApiKey } from "../../extensions/lib/model-registry.js";
 
 // --- buildSuggestionPrompt: core framing ---
 
@@ -390,45 +389,3 @@ test("buildImprovementPrompt omits file and command sections when not provided",
 	assert.doesNotMatch(prompt, /commands_in_conversation/i);
 });
 
-// --- Model registry compatibility ---
-
-test("getModelApiKey uses modelRegistry.getApiKey when available", async () => {
-	const apiKey = await getModelApiKey(
-		{
-			modelRegistry: {
-				getApiKey: async (model: { provider: string; id: string }) => `${model.provider}:${model.id}`,
-			},
-		} as any,
-		{ provider: "openai-codex", id: "gpt-5.4" } as any,
-	);
-
-	assert.equal(apiKey, "openai-codex:gpt-5.4");
-});
-
-test("getModelApiKey falls back to getApiKeyForProvider on older runtimes", async () => {
-	const apiKey = await getModelApiKey(
-		{
-			modelRegistry: {
-				getApiKeyForProvider: async (provider: string) => `${provider}:legacy`,
-			},
-		} as any,
-		{ provider: "openai-codex", id: "gpt-5.4" } as any,
-	);
-
-	assert.equal(apiKey, "openai-codex:legacy");
-});
-
-test("getModelApiKey falls back to authStorage.getApiKey when needed", async () => {
-	const apiKey = await getModelApiKey(
-		{
-			modelRegistry: {
-				authStorage: {
-					getApiKey: async (provider: string) => `${provider}:auth-storage`,
-				},
-			},
-		} as any,
-		{ provider: "anthropic", id: "claude-opus-4-6" } as any,
-	);
-
-	assert.equal(apiKey, "anthropic:auth-storage");
-});
