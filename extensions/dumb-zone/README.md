@@ -19,7 +19,7 @@ When the agent crosses 45%, a follow-up message is injected that forces the agen
 
 ## Dependencies
 
-Requires the `agent-handoff` extension (provides the `handoff` tool the agent calls).
+Requires the `handoff` extension (provides both the `/handoff` command and the `handoff` tool).
 
 ## Installation
 

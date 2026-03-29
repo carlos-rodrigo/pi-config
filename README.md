@@ -27,7 +27,6 @@ pi install ./extensions/worktree-manager.ts
 pi install ./extensions/feature-flow.ts
 pi install ./extensions/document-reviewer.ts
 pi install ./extensions/handoff.ts
-pi install ./extensions/agent-handoff.ts
 pi install ./extensions/subagent/index.ts
 ```
 

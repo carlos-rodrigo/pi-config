@@ -2,4 +2,6 @@ node_modules/
 .features/
 scripts/*
 !scripts/test-document-reviewer.mjs
+!scripts/verify.sh
+!scripts/run_silent.sh
 .pi
