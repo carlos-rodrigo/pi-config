@@ -22,3 +22,20 @@ npm run test:<name>   # run a single extension's tests (e.g. test:dumb-zone)
 | `document-reviewer` | Browser-based document and PR review with inline comments |
 | `web-tools` | Web search and fetch tools |
 | `lazygit` | LazyGit integration via tmux |
+| `verify` | Back-pressure hook — runs `scripts/verify.sh` on agent_end |
+
+## Verification
+
+`scripts/verify.sh` runs tests. Silent on success (exit 0), verbose on failure.
+The `verify` extension auto-runs this on `agent_end` — if tests fail, errors are
+injected as a follow-up message so the agent must fix them before finishing.
+
+```bash
+bash scripts/verify.sh        # manual run
+```
+
+Use `scripts/run_silent.sh` for context-efficient command execution:
+```bash
+source scripts/run_silent.sh
+run_silent "description" command arg1 arg2
+```

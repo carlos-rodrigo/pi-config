@@ -29,6 +29,7 @@ pi install ./extensions/handoff
 pi install ./extensions/lazygit
 pi install ./extensions/git-blame
 pi install ./extensions/subagent
+pi install ./extensions/verify
 ```
 
 ## Extensions
@@ -46,6 +47,7 @@ pi install ./extensions/subagent
 | [subagent](subagent/) | Delegate tasks to specialized sub-agents |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
 | [workflow-modes](workflow-modes/) | Smart/deep/fast mode switching |
+| [verify](verify/) | Back-pressure hook — runs verification on agent_end |
 | [worktree-manager](worktree-manager/) | Git worktree management commands |
 
 ## Notes
