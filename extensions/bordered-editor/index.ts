@@ -8,7 +8,7 @@
  *
  * Top left:     agent mode (Smart in green, Deep in red, Fast in yellow)
  * Top right:    model · thinking-level (level in green)
- * Bottom left:  context% of Nk · $cost
+ * Bottom left:  context% of Nk . $cost - status
  * Bottom right: cwd plus git state — branch (main checkout) or worktree info
  *
  * Ghost text: appears when editor is empty, right arrow accepts, any key dismisses.
@@ -25,6 +25,10 @@ const ANSI_SGR = /\x1b\[[0-9;]*m/g;
 const GHOST_COLOR = "\x1b[90m"; // bright black (gray)
 const ANSI_RESET = "\x1b[0m";
 const PADDING_X = 2;
+
+export function pickPrimaryExtensionStatus(statuses: ReadonlyMap<string, string>): string | null {
+	return statuses.get("dumb-zone") ?? statuses.values().next().value ?? null;
+}
 
 interface WorktreeEntry {
 	path: string;
@@ -114,6 +118,7 @@ class BorderedEditor extends CustomEditor {
 	private getGitBranch: () => string | null = () => null;
 	private getWorktreeInfo: () => string | null = () => null;
 	private getThinkingLevel: () => string = () => "off";
+	private getExtensionStatus: () => string | null = () => null;
 
 	// --- Mode label state ---
 	private modeLabel: string | null = null;
@@ -129,11 +134,13 @@ class BorderedEditor extends CustomEditor {
 		getGitBranch: () => string | null,
 		getWorktreeInfo: () => string | null,
 		getThinkingLevel: () => string,
+		getExtensionStatus: () => string | null,
 	) {
 		this.ctx = ctx;
 		this.getGitBranch = getGitBranch;
 		this.getWorktreeInfo = getWorktreeInfo;
 		this.getThinkingLevel = getThinkingLevel;
+		this.getExtensionStatus = getExtensionStatus;
 		// Apply initial border color from mode
 		this.borderColor = (s: string) => ctx.ui.theme.fg(this.modeColor, s);
 	}
@@ -233,7 +240,7 @@ class BorderedEditor extends CustomEditor {
 				theme.fg("success", level);
 		}
 
-		// --- Bottom-left: context · cost ---
+		// --- Bottom-left: context . cost - primary extension status ---
 		let bottomLeft = "";
 		if (this.ctx && theme) {
 			const usage = this.ctx.getContextUsage();
@@ -250,8 +257,12 @@ class BorderedEditor extends CustomEditor {
 				: "—";
 			bottomLeft = theme.fg(
 				"muted",
-				`${pct} of ${ctxWin} · $${cost.toFixed(2)}`,
+				`${pct} of ${ctxWin} . $${cost.toFixed(2)}`,
 			);
+			const extensionStatus = this.getExtensionStatus();
+			if (extensionStatus) {
+				bottomLeft += theme.fg("dim", " - ") + extensionStatus;
+			}
 		}
 
 		// --- Bottom-right: path (branch or linked-worktree info) ---
@@ -387,6 +398,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
 		let gitBranch: string | null = null;
 		let linkedWorktreeLabel: string | null = getLinkedWorktreeLabel(ctx.cwd, gitBranch);
+		let getExtensionStatus: () => string | null = () => null;
 
 		const refreshWorktreeLabel = () => {
 			linkedWorktreeLabel = getLinkedWorktreeLabel(ctx.cwd, gitBranch);
@@ -396,6 +408,7 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.setFooter((tui, _theme, footerData) => {
 			gitBranch = footerData.getGitBranch();
 			refreshWorktreeLabel();
+			getExtensionStatus = () => pickPrimaryExtensionStatus(footerData.getExtensionStatuses());
 			const unsub = footerData.onBranchChange(() => {
 				gitBranch = footerData.getGitBranch();
 				refreshWorktreeLabel();
@@ -420,6 +433,7 @@ export default function (pi: ExtensionAPI) {
 				() => gitBranch,
 				() => linkedWorktreeLabel,
 				() => pi.getThinkingLevel(),
+				getExtensionStatus,
 			);
 
 			// Wire ghost text callbacks → events

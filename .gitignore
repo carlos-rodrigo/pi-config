@@ -2,3 +2,4 @@ node_modules/
 .features/
 scripts/*
 !scripts/test-document-reviewer.mjs
+.pi
