@@ -8,7 +8,23 @@ Personal pi extensions and themes — bordered editor, file opener, catppuccin t
 npm test              # run all tests
 npm run test:direct   # run unit tests only (no document-reviewer integration)
 npm run test:<name>   # run a single extension's tests (e.g. test:dumb-zone)
+bash scripts/verify.sh  # back-pressure verification (silent success, verbose failure)
 ```
+
+## Documentation
+
+Agent-facing knowledge lives in `docs/`:
+
+```
+docs/
+├── playbooks/     ← curated how-to guides (auto-maintained)
+├── features/      ← feature specs (PRD, design) + verification workflows
+│   └── archive/   ← completed features
+```
+
+Tasks are separate in `.features/{feature}/tasks/` (ephemeral, operational).
+
+Load relevant playbooks during research — don't read everything upfront.
 
 ## Extensions
 
@@ -16,7 +32,7 @@ npm run test:<name>   # run a single extension's tests (e.g. test:dumb-zone)
 |-----------|---------|
 | `bordered-editor` | Rounded-border composer with mode, model, context, cost, git info |
 | `dumb-zone` | Context-window monitor — shows active zone label, auto-handoff at 45% |
-| `handoff` | `/handoff` command + LLM-callable `handoff` tool for session transfer |
+| `handoff` | `/handoff` command + LLM tool — produces structured context packets |
 | `workflow-modes` | Smart/Deep/Fast agent modes with model switching |
 | `auto-prompt` | Ghost-text suggestions after each turn |
 | `document-reviewer` | Browser-based document and PR review with inline comments |
@@ -29,10 +45,6 @@ npm run test:<name>   # run a single extension's tests (e.g. test:dumb-zone)
 `scripts/verify.sh` runs tests. Silent on success (exit 0), verbose on failure.
 The `verify` extension auto-runs this on `agent_end` — if tests fail, errors are
 injected as a follow-up message so the agent must fix them before finishing.
-
-```bash
-bash scripts/verify.sh        # manual run
-```
 
 Use `scripts/run_silent.sh` for context-efficient command execution:
 ```bash
