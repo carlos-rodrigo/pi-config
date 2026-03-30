@@ -331,26 +331,36 @@ export class MinimapComponent {
 		// Separator
 		out.push(this.drawSep(width, th));
 
-		// Ensure selected block is visible
+		// Ensure selected block is visible (each block takes ~2 rows: content + separator)
 		const listHeight = viewHeight - 2;
+		const visibleBlocks = Math.max(1, Math.floor((listHeight + 1) / 2));
 		if (s.selectedBlock < s.scrollOffset) {
 			s.scrollOffset = s.selectedBlock;
-		} else if (s.selectedBlock >= s.scrollOffset + listHeight) {
-			s.scrollOffset = s.selectedBlock - listHeight + 1;
+		} else if (s.selectedBlock >= s.scrollOffset + visibleBlocks) {
+			s.scrollOffset = s.selectedBlock - visibleBlocks + 1;
 		}
 
-		// Render block list
-		for (let i = 0; i < listHeight; i++) {
-			const blockIdx = s.scrollOffset + i;
-			if (blockIdx >= blocks.length) {
-				out.push(this.emptyLine(innerWidth, th));
-				continue;
-			}
-
+		// Render block list (each block is 1 line + thin separator)
+		let row = 0;
+		let blockIdx = s.scrollOffset;
+		while (row < listHeight && blockIdx < blocks.length) {
 			const block = blocks[blockIdx]!;
 			const isSelected = blockIdx === s.selectedBlock;
-			const line = this.renderBlockLine(block, blockIdx, isSelected, innerWidth - 4, th);
+			const line = this.renderBlockLine(block, blockIdx, isSelected, innerWidth - 2, th);
 			out.push(this.wrapLine(line, innerWidth, th));
+			row++;
+
+			// Thin separator between blocks (not after last visible)
+			if (row < listHeight && blockIdx < blocks.length - 1) {
+				out.push(this.wrapLine(th.fg("dim", "─".repeat(innerWidth - 2)), innerWidth, th));
+				row++;
+			}
+			blockIdx++;
+		}
+		// Fill remaining
+		while (row < listHeight) {
+			out.push(this.emptyLine(innerWidth, th));
+			row++;
 		}
 
 		// Footer
@@ -363,25 +373,16 @@ export class MinimapComponent {
 
 	private renderBlockLine(block: Block, _idx: number, isSelected: boolean, contentWidth: number, th: Theme): string {
 		const color = KIND_COLORS[block.kind];
-		const bg = isSelected ? BG_SELECTED : "";
-		const bgEnd = isSelected ? BG_RESET : "";
+		const bg = isSelected ? BG_SELECTED : KIND_BG[block.kind];
 
-		// Token bar width (proportional, min 1 char, max 10)
-		const session = this.state.sessions[this.state.selectedSession]!;
-		const maxTokens = Math.max(...session.blocks.map((b) => b.tokens));
-		const barWidth = Math.max(1, Math.min(10, Math.round((block.tokens / Math.max(1, maxTokens)) * 10)));
-		const bar = "█".repeat(barWidth);
-
-		const labelText = truncateToWidth(block.label, 12, "…");
+		const labelText = truncateToWidth(block.label, 10, "…");
 		const cursor = isSelected ? th.fg("accent", "▸") : " ";
-		const label = th.fg(color, th.bold(labelText.padEnd(12, " ")));
+		const label = th.fg(color, th.bold(labelText.padEnd(10)));
 		const tokenStr = th.fg("dim", this.formatTokens(block.tokens).padStart(5));
-		const barStr = th.fg(color, bar);
-		const detail = th.fg("muted", truncateToWidth(block.detail, Math.max(8, contentWidth - 33), "…"));
+		const detail = th.fg("muted", truncateToWidth(block.detail, Math.max(6, contentWidth - 20), "…"));
+		const errorMark = block.isError ? th.fg("error", " ✗") : "";
 
-		const errorMark = block.isError ? th.fg("error", "✗") : "";
-
-		return bg + cursor + " " + label + " " + tokenStr + " " + barStr + (errorMark ? " " + errorMark : "") + " " + detail + bgEnd;
+		return bg + cursor + label + " " + tokenStr + errorMark + " " + detail + BG_RESET;
 	}
 
 	// ── Detail view: one block expanded ────────────────────────────────────
