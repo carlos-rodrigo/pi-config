@@ -66,9 +66,9 @@ export default function (pi: ExtensionAPI) {
 					overlay: true,
 					overlayOptions: {
 						anchor: "center" as const,
-						width: "90%",
-						minWidth: 80,
-						maxHeight: "90%",
+						width: "76%",
+						minWidth: 64,
+						maxHeight: "88%",
 					},
 				},
 			);

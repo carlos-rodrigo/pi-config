@@ -272,7 +272,7 @@ export class MinimapComponent {
 		const session = sessions[s.selectedSession];
 		const blockCount = session ? session.blocks.length : 0;
 		const tokens = session ? this.formatTokens(session.totalTokens) : "0";
-		out.push(this.drawBottom(width, `←→/hl:select  ↵:drill in  ${blockCount} blocks  ${tokens} tokens  q:close`, th));
+		out.push(this.drawBottom(width, `hl/←→:select  ↵:open  ${blockCount}b  ${tokens}t  q:close`, th));
 
 		return out;
 	}
@@ -326,7 +326,7 @@ export class MinimapComponent {
 		const title = session.name || `Session ${s.selectedSession + 1}`;
 		const tokens = this.formatTokens(session.totalTokens);
 		const cost = session.contextUsage?.cost != null ? ` $${session.contextUsage.cost.toFixed(2)}` : "";
-		out.push(this.drawTop(width, `Context Map — ${title}`, `${blocks.length} blocks  ${tokens}${cost}`, th));
+		out.push(this.drawTop(width, `Map — ${title}`, `${blocks.length}b  ${tokens}${cost}`, th));
 
 		// Separator
 		out.push(this.drawSep(width, th));
@@ -356,7 +356,7 @@ export class MinimapComponent {
 		// Footer
 		const pos = blocks.length > 0 ? `${s.selectedBlock + 1}/${blocks.length}` : "empty";
 		const backHint = s.sessions.length > 1 ? "⌫:back  " : "";
-		out.push(this.drawBottom(width, `↑↓/jk:navigate  ↵:detail  ${backHint}${pos}  q:close`, th));
+		out.push(this.drawBottom(width, `jk/↑↓:move  ↵:detail  ${backHint}${pos}  q:close`, th));
 
 		return out;
 	}
@@ -366,22 +366,22 @@ export class MinimapComponent {
 		const bg = isSelected ? BG_SELECTED : "";
 		const bgEnd = isSelected ? BG_RESET : "";
 
-		// Token bar width (proportional, min 1 char, max 20)
+		// Token bar width (proportional, min 1 char, max 10)
 		const session = this.state.sessions[this.state.selectedSession]!;
 		const maxTokens = Math.max(...session.blocks.map((b) => b.tokens));
-		const barWidth = Math.max(1, Math.min(20, Math.round((block.tokens / Math.max(1, maxTokens)) * 20)));
+		const barWidth = Math.max(1, Math.min(10, Math.round((block.tokens / Math.max(1, maxTokens)) * 10)));
 		const bar = "█".repeat(barWidth);
 
-		const cursor = isSelected ? th.fg("accent", "▸ ") : "  ";
-		const label = th.fg(color, th.bold(truncateToWidth(block.label, 16, "…")));
-		const labelPad = " ".repeat(Math.max(0, 18 - visibleWidth(block.label) - 2));
-		const tokenStr = th.fg("dim", this.formatTokens(block.tokens).padStart(6));
+		const labelText = truncateToWidth(block.label, 12, "…");
+		const cursor = isSelected ? th.fg("accent", "▸") : " ";
+		const label = th.fg(color, th.bold(labelText.padEnd(12, " ")));
+		const tokenStr = th.fg("dim", this.formatTokens(block.tokens).padStart(5));
 		const barStr = th.fg(color, bar);
-		const detail = th.fg("muted", truncateToWidth(block.detail, Math.max(10, contentWidth - 50), "…"));
+		const detail = th.fg("muted", truncateToWidth(block.detail, Math.max(8, contentWidth - 33), "…"));
 
-		const errorMark = block.isError ? th.fg("error", " ✗") : "";
+		const errorMark = block.isError ? th.fg("error", "✗") : "";
 
-		return bg + cursor + label + labelPad + tokenStr + " " + barStr + errorMark + " " + detail + bgEnd;
+		return bg + cursor + " " + label + " " + tokenStr + " " + barStr + (errorMark ? " " + errorMark : "") + " " + detail + bgEnd;
 	}
 
 	// ── Detail view: one block expanded ────────────────────────────────────
@@ -439,7 +439,7 @@ export class MinimapComponent {
 			}
 		}
 
-		out.push(this.drawBottom(width, "⌫/↵:back  ↑↓/jk:scroll  q:close", th));
+		out.push(this.drawBottom(width, "⌫/↵:back  jk/↑↓:scroll  q:close", th));
 		return out;
 	}
 
