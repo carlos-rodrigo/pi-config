@@ -18,7 +18,6 @@ Or run the install script for symlink-based local development:
 
 ```bash
 pi install ./extensions/bordered-editor
-pi install ./extensions/context-map
 pi install ./extensions/auto-prompt
 pi install ./extensions/file-opener
 pi install ./extensions/web-tools
@@ -38,7 +37,6 @@ pi install ./extensions/verify
 | Extension | Description |
 |-----------|-------------|
 | [auto-prompt](auto-prompt/) | Inline ghost text prompt suggestions (fish-style) |
-| [context-map](context-map/) | Context window minimap — visualize what's in the context |
 | [bordered-editor](bordered-editor/) | Bordered input editor with model/context/git info |
 | [document-reviewer](document-reviewer/) | Markdown review sessions with browser UI |
 | [feature-flow](feature-flow/) | Feature orchestration with Git worktrees |

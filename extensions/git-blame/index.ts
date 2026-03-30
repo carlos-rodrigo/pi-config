@@ -274,7 +274,7 @@ class BlameViewerComponent {
     if (currentLine) {
       const shortHash = currentLine.hash.slice(0, 8);
       const author = truncateToWidth(currentLine.author, 20, "…");
-      subtitle = `${th.fg("accent", shortHash)} ${th.fg("dim", "by")} ${th.fg("info", author)} ${th.fg("dim", "on")} ${th.fg("muted", currentLine.date)}`;
+      subtitle = `${th.fg("accent", shortHash)} ${th.fg("dim", "by")} ${th.fg("text", author)} ${th.fg("dim", "on")} ${th.fg("muted", currentLine.date)}`;
     }
     out.push(wrapContentLine(subtitle, innerWidth, th));
     out.push(drawSeparator(modalWidth, th));
