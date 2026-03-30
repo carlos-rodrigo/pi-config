@@ -12,7 +12,8 @@
     "test:lazygit": "node --test extensions/lazygit/lazygit.test.ts",
     "test:bordered-editor": "node --test extensions/bordered-editor/bordered-editor.test.ts",
     "test:dumb-zone": "node --test extensions/dumb-zone/dumb-zone.test.ts",
-    "test:direct": "node --test extensions/auto-prompt/auto-prompt.test.ts extensions/web-tools/web-tools.test.ts extensions/workflow-modes/workflow-modes.test.ts extensions/lazygit/lazygit.test.ts extensions/document-reviewer/review-flow.test.ts extensions/bordered-editor/bordered-editor.test.ts extensions/dumb-zone/dumb-zone.test.ts",
+    "test:context-map": "node --test extensions/context-map/context-map.test.ts",
+    "test:direct": "node --test extensions/auto-prompt/auto-prompt.test.ts extensions/web-tools/web-tools.test.ts extensions/workflow-modes/workflow-modes.test.ts extensions/lazygit/lazygit.test.ts extensions/document-reviewer/review-flow.test.ts extensions/bordered-editor/bordered-editor.test.ts extensions/dumb-zone/dumb-zone.test.ts extensions/context-map/context-map.test.ts",
     "test:document-reviewer": "node scripts/test-document-reviewer.mjs",
     "test": "npm run test:direct && npm run test:document-reviewer"
   },
