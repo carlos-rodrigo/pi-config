@@ -57,6 +57,23 @@ const KIND_BG: Record<BlockKind, string> = {
 const BG_RESET = "\x1b[49m";
 const BG_SELECTED = "\x1b[48;2;60;60;90m";
 
+/** Group block kinds so tool-call/tool-result don't trigger gaps between each other */
+function kindGroup(kind: BlockKind): string {
+	switch (kind) {
+		case "tool-call":
+		case "tool-result":
+			return "tool";
+		case "compaction":
+		case "branch-summary":
+			return "summary";
+		case "custom":
+		case "meta":
+			return "other";
+		default:
+			return kind; // user, assistant, thinking, system
+	}
+}
+
 // ── Box drawing ────────────────────────────────────────────────────────────
 
 const BOX = { tl: "╭", tr: "╮", bl: "╰", br: "╯", h: "─", v: "│" };
@@ -249,9 +266,38 @@ export class MinimapComponent {
 		// Separator
 		out.push(this.drawSep(width, th));
 
-		// Minimap columns
+		// Minimap columns — pre-compute block groups per row/column for gap insertion
 		const mapHeight = viewHeight - 3; // header + sep + header line
+		const rowGroups: (string | null)[][] = [];
 		for (let row = 0; row < mapHeight; row++) {
+			const groups: (string | null)[] = [];
+			for (let i = 0; i < colCount; i++) {
+				const block = this.getBlockForRow(sessions[i]!, row, mapHeight);
+				groups.push(block ? kindGroup(block.kind) : null);
+			}
+			rowGroups.push(groups);
+		}
+
+		let rendered = 0;
+		for (let row = 0; row < mapHeight && rendered < mapHeight; row++) {
+			// Insert a gap row when block kind-group changes in any column
+			if (row > 0) {
+				let groupChanged = false;
+				for (let c = 0; c < colCount; c++) {
+					const prev = rowGroups[row - 1]![c];
+					const cur = rowGroups[row]![c];
+					if (prev != null && cur != null && prev !== cur) {
+						groupChanged = true;
+						break;
+					}
+				}
+				if (groupChanged) {
+					out.push(this.emptyLine(innerWidth, th));
+					rendered++;
+					if (rendered >= mapHeight) break;
+				}
+			}
+
 			let line = "";
 			for (let i = 0; i < colCount; i++) {
 				const sess = sessions[i]!;
@@ -261,6 +307,7 @@ export class MinimapComponent {
 				if (i < colCount - 1) line += " ".repeat(gap);
 			}
 			out.push(this.wrapLine(line, innerWidth, th));
+			rendered++;
 		}
 
 		// Pad remaining
@@ -275,6 +322,26 @@ export class MinimapComponent {
 		out.push(this.drawBottom(width, `hl/←→:select  ↵:open  ${blockCount}b  ${tokens}t  q:close`, th));
 
 		return out;
+	}
+
+	/** Return the block at a proportional row position within a session */
+	private getBlockForRow(session: SessionMap, row: number, totalRows: number): Block | null {
+		const blocks = session.blocks;
+		if (blocks.length === 0) return null;
+
+		const totalTokens = Math.max(1, session.totalTokens);
+		let tokenOffset = 0;
+		const rowTokenThreshold = (row / totalRows) * totalTokens;
+		const rowEndThreshold = ((row + 1) / totalRows) * totalTokens;
+
+		for (let i = 0; i < blocks.length; i++) {
+			const blockStart = tokenOffset;
+			tokenOffset += blocks[i]!.tokens;
+			if (tokenOffset > rowTokenThreshold && blockStart < rowEndThreshold) {
+				return blocks[i]!;
+			}
+		}
+		return null;
 	}
 
 	private renderMinimapRow(
@@ -379,7 +446,8 @@ export class MinimapComponent {
 		const cursor = isSelected ? th.fg("accent", "▸") : " ";
 		const label = th.fg(color, th.bold(labelText.padEnd(10)));
 		const tokenStr = th.fg("dim", this.formatTokens(block.tokens).padStart(5));
-		const detail = th.fg("muted", truncateToWidth(block.detail, Math.max(6, contentWidth - 20), "…"));
+		const safeDetail = block.detail.replace(/\t/g, "  ");
+		const detail = th.fg("muted", truncateToWidth(safeDetail, Math.max(6, contentWidth - 20), "…"));
 		const errorMark = block.isError ? th.fg("error", " ✗") : "";
 
 		return bg + cursor + label + " " + tokenStr + errorMark + " " + detail + BG_RESET;
@@ -411,8 +479,8 @@ export class MinimapComponent {
 		detailLines.push("");
 		detailLines.push(th.fg("accent", "Content:"));
 
-		// Wrap detail text
-		const detailText = block.detail;
+		// Wrap detail text (sanitize tabs — terminals render them wider than visibleWidth counts)
+		const detailText = block.detail.replace(/\t/g, "  ");
 		const words = detailText.split(/\s+/);
 		let currentLine = "";
 		for (const word of words) {
