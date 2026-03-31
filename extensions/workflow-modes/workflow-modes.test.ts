@@ -175,7 +175,7 @@ test("/smart /deep /fast commands switch modes directly", async () => {
 	assert.ok(fastCommand);
 
 	await smartCommand.handler("", ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "anthropic", model: "claude-opus-4-6" });
+	assert.deepEqual(getSelectedModel(), { provider: "anthropic", model: "claude-opus-4-5" });
 	assert.equal(getThinkingLevel(), "high");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Smart/i);
 

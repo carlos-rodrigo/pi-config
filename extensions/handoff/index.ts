@@ -11,6 +11,10 @@
  *
  * Usage (tool):
  *   Agent calls handoff({ goal: "..." }) to autonomously transfer context
+ *
+ * Note: pi.sendUserMessage() doesn't execute extension commands - it sends raw
+ * user messages to the LLM. So we can't use sendUserMessage to trigger a command.
+ * Instead, we use agent_end to set up the editor for manual completion.
  */
 
 import { complete, type Message } from "@mariozechner/pi-ai";
@@ -22,8 +26,22 @@ import { HANDOFF_SYSTEM_PROMPT } from "./shared.js";
 export default function (pi: ExtensionAPI) {
 	let pendingHandoffPrompt: string | null = null;
 
+	// After agent finishes, check if we have a pending handoff and prompt user to complete it
+	pi.on("agent_end", async (_event, ctx) => {
+		if (!pendingHandoffPrompt) return;
+
+		// Set up the editor with the command to complete the handoff
+		ctx.ui.setEditorText("/_handoff_complete");
+		ctx.ui.notify("Handoff ready — press Enter to create the new session.", "info");
+	});
+
+	// Clear pending state on session switch to avoid stale handoffs
+	pi.on("session_switch", async () => {
+		pendingHandoffPrompt = null;
+	});
+
 	// Internal command that completes the handoff (creates new session)
-	// Used by the tool via sendUserMessage followUp
+	// User presses Enter after agent_end sets up the editor
 	pi.registerCommand("_handoff_complete", {
 		description: "Complete a handoff initiated by the handoff tool (internal)",
 		handler: async (_args, ctx) => {
@@ -277,16 +295,21 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			// Store prompt and queue session creation as a follow-up
-			// (tools run during streaming — must use followUp delivery)
+			// Store prompt for completion in agent_end handler
+			// Note: We can't use pi.sendUserMessage("/_handoff_complete") because
+			// sendUserMessage doesn't execute extension commands - it sends raw
+			// user messages to the LLM. The agent_end handler will set up the
+			// editor for manual completion.
+			if (pendingHandoffPrompt) {
+				console.warn("[handoff] Overwriting pending handoff from earlier in this turn");
+			}
 			pendingHandoffPrompt = generatedPrompt;
-			pi.sendUserMessage("/_handoff_complete", { deliverAs: "followUp" });
 
 			return {
 				content: [
 					{
 						type: "text",
-						text: "Handoff initiated. A new session will be created with the generated prompt after this turn completes. Do not send any more messages.",
+						text: "Handoff prepared. When this turn ends, press Enter (the command will be pre-filled) to create the new session. Do not send any more messages in this session.",
 					},
 				],
 				details: {},

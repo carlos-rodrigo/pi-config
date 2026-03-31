@@ -23,7 +23,7 @@ type ModeProfile = {
 };
 
 const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
-	smart: { models: [{ provider: "anthropic", model: "claude-opus-4-6" }], thinking: "high" },
+	smart: { models: [{ provider: "anthropic", model: "claude-opus-4-5" }], thinking: "high" },
 	deep: {
 		models: [
 			{ provider: "openai-codex", model: "gpt-5.4" },
