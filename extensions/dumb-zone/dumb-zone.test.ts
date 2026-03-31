@@ -115,3 +115,150 @@ test("session_switch resets handoff state and immediately restores the legend", 
 	assert.deepEqual(statuses.at(-1), { key: "dumb-zone", value: "dumb" });
 	assert.equal(sentMessages.length, 2);
 });
+
+test("model_select updates status to reflect new context window", async () => {
+	const eventHandlers = new Map<string, PiEventHandler>();
+	const statuses: Array<{ key: string; value: string | undefined }> = [];
+
+	dumbZoneExtension({
+		on(name: string, handler: PiEventHandler) {
+			eventHandlers.set(name, handler);
+		},
+		sendMessage() {},
+	} as any);
+
+	const modelSelect = eventHandlers.get("model_select");
+	assert.ok(modelSelect);
+
+	// Switching to a model with a larger context window drops the percentage
+	const ctx = {
+		ui: {
+			theme: {
+				fg(_color: string, text: string) {
+					return text;
+				},
+			},
+			setStatus(key: string, value: string | undefined) {
+				statuses.push({ key, value });
+			},
+		},
+		getContextUsage() {
+			return { percent: 15, tokens: 300, contextWindow: 2000 };
+		},
+	};
+
+	await modelSelect({}, ctx as any);
+
+	assert.deepEqual(statuses.at(-1), { key: "dumb-zone", value: "smart" });
+});
+
+test("model_select resets handoff gate when new model drops below threshold", async () => {
+	const eventHandlers = new Map<string, PiEventHandler>();
+	const sentMessages: Array<{ message: any; options: any }> = [];
+	const statuses: Array<{ key: string; value: string | undefined }> = [];
+
+	dumbZoneExtension({
+		on(name: string, handler: PiEventHandler) {
+			eventHandlers.set(name, handler);
+		},
+		sendMessage(message: any, options: any) {
+			sentMessages.push({ message, options });
+		},
+	} as any);
+
+	const turnEnd = eventHandlers.get("turn_end");
+	const modelSelect = eventHandlers.get("model_select");
+	assert.ok(turnEnd);
+	assert.ok(modelSelect);
+
+	// First: trigger handoff in dumb zone
+	const dumbCtx = {
+		ui: {
+			theme: { fg(_c: string, t: string) { return t; } },
+			setStatus(key: string, value: string | undefined) {
+				statuses.push({ key, value });
+			},
+		},
+		getContextUsage() {
+			return { percent: 50, tokens: 500, contextWindow: 1000 };
+		},
+	};
+
+	await turnEnd({}, dumbCtx as any);
+	assert.equal(sentMessages.length, 1);
+
+	// Switch to a bigger model — drops below threshold
+	const bigModelCtx = {
+		ui: {
+			theme: { fg(_c: string, t: string) { return t; } },
+			setStatus(key: string, value: string | undefined) {
+				statuses.push({ key, value });
+			},
+		},
+		getContextUsage() {
+			return { percent: 20, tokens: 500, contextWindow: 2500 };
+		},
+	};
+
+	await modelSelect({}, bigModelCtx as any);
+	assert.deepEqual(statuses.at(-1), { key: "dumb-zone", value: "smart" });
+
+	// Now go back to dumb zone — handoff should fire again
+	await turnEnd({}, dumbCtx as any);
+	assert.equal(sentMessages.length, 2);
+});
+
+test("model_select does not reset handoff gate when still above threshold", async () => {
+	const eventHandlers = new Map<string, PiEventHandler>();
+	const sentMessages: Array<{ message: any; options: any }> = [];
+	const statuses: Array<{ key: string; value: string | undefined }> = [];
+
+	dumbZoneExtension({
+		on(name: string, handler: PiEventHandler) {
+			eventHandlers.set(name, handler);
+		},
+		sendMessage(message: any, options: any) {
+			sentMessages.push({ message, options });
+		},
+	} as any);
+
+	const turnEnd = eventHandlers.get("turn_end");
+	const modelSelect = eventHandlers.get("model_select");
+	assert.ok(turnEnd);
+	assert.ok(modelSelect);
+
+	// Trigger handoff
+	const dumbCtx = {
+		ui: {
+			theme: { fg(_c: string, t: string) { return t; } },
+			setStatus(key: string, value: string | undefined) {
+				statuses.push({ key, value });
+			},
+		},
+		getContextUsage() {
+			return { percent: 50, tokens: 500, contextWindow: 1000 };
+		},
+	};
+
+	await turnEnd({}, dumbCtx as any);
+	assert.equal(sentMessages.length, 1);
+
+	// Switch to a slightly bigger model — still above threshold
+	const stillDumbCtx = {
+		ui: {
+			theme: { fg(_c: string, t: string) { return t; } },
+			setStatus(key: string, value: string | undefined) {
+				statuses.push({ key, value });
+			},
+		},
+		getContextUsage() {
+			return { percent: 46, tokens: 500, contextWindow: 1087 };
+		},
+	};
+
+	await modelSelect({}, stillDumbCtx as any);
+
+	// Handoff should NOT fire again on next turn_end
+	await turnEnd({}, stillDumbCtx as any);
+	assert.equal(sentMessages.length, 1);
+});

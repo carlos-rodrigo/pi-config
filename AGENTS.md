@@ -38,13 +38,14 @@ Load relevant playbooks during research — don't read everything upfront.
 | `document-reviewer` | Browser-based document and PR review with inline comments |
 | `web-tools` | Web search and fetch tools |
 | `lazygit` | LazyGit integration via tmux |
-| `verify` | Back-pressure hook — runs `scripts/verify.sh` on agent_end |
+| `verify` | Back-pressure hook — verifies touched project roots and includes `/setup-verify` scaffolding |
 
 ## Verification
 
-`scripts/verify.sh` runs tests. Silent on success (exit 0), verbose on failure.
-The `verify` extension auto-runs this on `agent_end` — if tests fail, errors are
-injected as a follow-up message so the agent must fix them before finishing.
+`scripts/verify.sh` is the project-level verification entrypoint. Silent on success (exit 0), verbose on failure.
+The `verify` extension auto-runs it on `agent_end` for touched project roots that contain `scripts/verify.sh`.
+If verification fails, errors are injected as a follow-up message so the agent must fix them before finishing.
+Use `/setup-verify` to scaffold `scripts/verify.sh` and trigger the agent to customize it for the current repo.
 
 Use `scripts/run_silent.sh` for context-efficient command execution:
 ```bash

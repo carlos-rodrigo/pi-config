@@ -12,9 +12,8 @@
  * Usage (tool):
  *   Agent calls handoff({ goal: "..." }) to autonomously transfer context
  *
- * Note: pi.sendUserMessage() doesn't execute extension commands - it sends raw
- * user messages to the LLM. So we can't use sendUserMessage to trigger a command.
- * Instead, we use agent_end to set up the editor for manual completion.
+ * The tool uses sendUserMessage with deliverAs: "followUp" to queue the
+ * internal completion command, which runs after the agent turn ends.
  */
 
 import { complete, type Message } from "@mariozechner/pi-ai";
@@ -26,23 +25,14 @@ import { HANDOFF_SYSTEM_PROMPT } from "./shared.js";
 export default function (pi: ExtensionAPI) {
 	let pendingHandoffPrompt: string | null = null;
 
-	// After agent finishes, check if we have a pending handoff and prompt user to complete it
-	pi.on("agent_end", async (_event, ctx) => {
-		if (!pendingHandoffPrompt) return;
-
-		// Set up the editor with the command to complete the handoff
-		ctx.ui.setEditorText("/_handoff_complete");
-		ctx.ui.notify("Handoff ready — press Enter to create the new session.", "info");
-	});
-
 	// Clear pending state on session switch to avoid stale handoffs
 	pi.on("session_switch", async () => {
 		pendingHandoffPrompt = null;
 	});
 
 	// Internal command that completes the handoff (creates new session)
-	// User presses Enter after agent_end sets up the editor
-	pi.registerCommand("_handoff_complete", {
+	// Called automatically via sendUserMessage followUp from the tool
+	pi.registerCommand("handoff_complete", {
 		description: "Complete a handoff initiated by the handoff tool (internal)",
 		handler: async (_args, ctx) => {
 			const prompt = pendingHandoffPrompt;
@@ -295,21 +285,21 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
-			// Store prompt for completion in agent_end handler
-			// Note: We can't use pi.sendUserMessage("/_handoff_complete") because
-			// sendUserMessage doesn't execute extension commands - it sends raw
-			// user messages to the LLM. The agent_end handler will set up the
-			// editor for manual completion.
+				// Store prompt and queue the completion command
+			// sendUserMessage from tool execute works (like reload-runtime example)
 			if (pendingHandoffPrompt) {
 				console.warn("[handoff] Overwriting pending handoff from earlier in this turn");
 			}
 			pendingHandoffPrompt = generatedPrompt;
 
+			// Queue the command to run after this agent turn completes
+			pi.sendUserMessage("/handoff_complete", { deliverAs: "followUp" });
+
 			return {
 				content: [
 					{
 						type: "text",
-						text: "Handoff prepared. When this turn ends, press Enter (the command will be pre-filled) to create the new session. Do not send any more messages in this session.",
+						text: "Handoff prepared and queued. The new session will be created automatically after this turn.",
 					},
 				],
 				details: {},

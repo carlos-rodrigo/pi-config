@@ -47,7 +47,7 @@ pi install ./extensions/verify
 | [subagent](subagent/) | Delegate tasks to specialized sub-agents |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
 | [workflow-modes](workflow-modes/) | Smart/deep/fast mode switching |
-| [verify](verify/) | Back-pressure hook — runs verification on agent_end |
+| [verify](verify/) | Back-pressure hook — verifies touched project roots and scaffolds `scripts/verify.sh` via `/setup-verify` |
 | [worktree-manager](worktree-manager/) | Git worktree management commands |
 
 ## Notes

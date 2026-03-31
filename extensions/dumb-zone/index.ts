@@ -90,6 +90,17 @@ export default function (pi: ExtensionAPI) {
 		updateStatus(ctx);
 	});
 
+	// Recalculate when the model changes (different context window size).
+	pi.on("model_select", async (_event, ctx) => {
+		const usage = ctx.getContextUsage();
+		const pct = usage ? getContextPercent(usage) : 0;
+
+		// Reset handoff gate when new model drops below threshold
+		if (pct < HANDOFF_PCT) handoffFired = false;
+
+		updateStatus(ctx);
+	});
+
 	// Reset on new/resumed session and immediately repopulate the legend.
 	pi.on("session_switch", async (_event, ctx) => {
 		handoffFired = false;
