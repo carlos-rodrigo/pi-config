@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { HANDOFF_SESSION_STARTED_EVENT } from "../handoff/events.ts";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -398,10 +399,24 @@ function setupHelpText(): string {
 export default function (pi: ExtensionAPI) {
 	const touchedPaths = new Set<string>();
 	const touchedProjectRoots = new Set<string>();
+	let lastSessionId: string | undefined;
 
 	function clearTouchedState() {
 		touchedPaths.clear();
 		touchedProjectRoots.clear();
+	}
+
+	function syncSessionState(ctx: { sessionManager: { getSessionId(): string } }) {
+		const sessionId = ctx.sessionManager.getSessionId();
+		if (lastSessionId !== undefined && lastSessionId !== sessionId) {
+			clearTouchedState();
+		}
+		lastSessionId = sessionId;
+	}
+
+	function resetSessionState(ctx?: { sessionManager: { getSessionId(): string } }) {
+		clearTouchedState();
+		lastSessionId = ctx?.sessionManager.getSessionId();
 	}
 
 	function noteTouchedPath(ctxCwd: string, toolPath: string | undefined) {
@@ -409,21 +424,27 @@ export default function (pi: ExtensionAPI) {
 		touchedPaths.add(resolve(ctxCwd, normalizeToolPath(toolPath)));
 	}
 
-	pi.on("session_start", async () => {
-		clearTouchedState();
+	pi.on("session_start", async (_event, ctx) => {
+		resetSessionState(ctx);
 	});
 
-	pi.on("session_switch", async () => {
-		clearTouchedState();
+	pi.on("session_switch", async (_event, ctx) => {
+		resetSessionState(ctx);
+	});
+
+	pi.events.on(HANDOFF_SESSION_STARTED_EVENT, () => {
+		resetSessionState();
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
+		syncSessionState(ctx);
 		if (event.toolName !== "edit" && event.toolName !== "write") return;
 		const input = event.input as { path?: string };
 		noteTouchedPath(ctx.cwd, input.path);
 	});
 
 	pi.on("agent_end", async (_event, ctx) => {
+		syncSessionState(ctx);
 		if (!ctx.hasUI) return;
 
 		const roots = new Set<string>(touchedProjectRoots);

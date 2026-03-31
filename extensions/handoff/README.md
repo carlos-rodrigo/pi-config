@@ -30,9 +30,24 @@ The agent can call the `handoff` tool directly for autonomous session transfer (
 handoff({ goal: "Continue implementing phase 2 of the auth refactor" })
 ```
 
+When the tool is used, Pi automatically creates the new session after the current turn finishes.
+
+### Session query helper
+
+Handoff prompts include parent-session references. Use the `session_query` tool to inspect a previous session without reloading its whole transcript into context:
+
+```
+session_query({
+  sessionPath: "/full/path/to/session.jsonl",
+  question: "Which files changed and why?"
+})
+```
+
 ## How it works
 
 1. Gathers conversation history from the current session
 2. Sends it to the current model with your goal to generate a focused context-transfer prompt
-3. For the command: opens an editor so you can review/edit the generated prompt
-4. Creates a new session with the prompt ready to submit
+3. Wraps the prompt with parent-session references so the next session can use `session_query` when needed
+4. For `/handoff`: creates a new session via Pi's supported command flow, then leaves the prompt in the editor
+5. For the `handoff` tool: auto-switches to a fresh session after the current turn ends, then leaves the prompt in the editor
+6. Press Enter to submit the generated prompt in the new session

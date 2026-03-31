@@ -26,6 +26,7 @@ function createHarness(
 	const commands = new Map<string, { description: string; handler: (...args: any[]) => unknown }>();
 	const sendUserMessages: Array<{ content: string; options: any }> = [];
 	const execCalls: ExecCall[] = [];
+	const eventBusHandlers = new Map<string, ((data: unknown) => void)[]>();
 
 	const pi = {
 		on(name: string, handler: PiEventHandler) {
@@ -37,6 +38,19 @@ function createHarness(
 		sendUserMessage(content: string, options?: any) {
 			sendUserMessages.push({ content, options });
 		},
+		events: {
+			emit(name: string, data: unknown) {
+				for (const handler of eventBusHandlers.get(name) ?? []) {
+					handler(data);
+				}
+			},
+			on(name: string, handler: (data: unknown) => void) {
+				const handlers = eventBusHandlers.get(name) ?? [];
+				handlers.push(handler);
+				eventBusHandlers.set(name, handlers);
+				return () => {};
+			},
+		},
 		async exec(command: string, args: string[], options?: { cwd?: string; timeout?: number }) {
 			execCalls.push({ command, args, options });
 			if (execImpl) return execImpl(command, args, options);
@@ -46,10 +60,20 @@ function createHarness(
 
 	verifyExtension(pi as any);
 
-	return { eventHandlers, commands, sendUserMessages, execCalls };
+	return {
+		eventHandlers,
+		commands,
+		sendUserMessages,
+		execCalls,
+		emit(name: string, data?: unknown) {
+			for (const handler of eventBusHandlers.get(name) ?? []) {
+				handler(data);
+			}
+		},
+	};
 }
 
-function createCtx(cwd: string, options?: { idle?: boolean; hasUI?: boolean }) {
+function createCtx(cwd: string, options?: { idle?: boolean; hasUI?: boolean; sessionId?: string }) {
 	const notifications: Array<{ message: string; level: string }> = [];
 	const editorTexts: string[] = [];
 	const idle = options?.idle ?? true;
@@ -61,6 +85,11 @@ function createCtx(cwd: string, options?: { idle?: boolean; hasUI?: boolean }) {
 		ctx: {
 			cwd,
 			hasUI,
+			sessionManager: {
+				getSessionId() {
+					return options?.sessionId ?? "session-a";
+				},
+			},
 			isIdle() {
 				return idle;
 			},
@@ -152,6 +181,57 @@ test("verification failure message points the agent at the correct repo root", a
 	assert.match(sendUserMessages[0].content, /tests failed/);
 	assert.ok(sendUserMessages[0].content.includes(`cd '${fixture.root}' && bash scripts/verify.sh`));
 	assert.deepEqual(sendUserMessages[0].options, { deliverAs: "followUp" });
+});
+
+test("handoff session-start event clears pending verification work", async (t) => {
+	const fixture = makeTempProject();
+	t.after(() => fixture.cleanup());
+
+	fs.mkdirSync(path.join(fixture.root, "scripts"), { recursive: true });
+	fs.writeFileSync(path.join(fixture.root, "scripts", "verify.sh"), "#!/bin/bash\nexit 1\n", "utf8");
+
+	const { eventHandlers, execCalls, sendUserMessages, emit } = createHarness(async (command, args) => {
+		if (command === "bash" && args[0] === "scripts/verify.sh") {
+			return { stdout: "", stderr: "tests failed", code: 2, killed: false };
+		}
+		return { stdout: "", stderr: "fatal: not a git repository", code: 1, killed: false };
+	});
+	const toolCall = eventHandlers.get("tool_call");
+	const agentEnd = eventHandlers.get("agent_end");
+	assert.ok(toolCall);
+	assert.ok(agentEnd);
+
+	await toolCall({ toolName: "edit", input: { path: path.join(fixture.root, "feature.ts") } }, createCtx(fixture.root, { sessionId: "session-a" }).ctx as any);
+	emit("handoff:session_started", { mode: "tool" });
+	await agentEnd({}, createCtx(fixture.root, { sessionId: "session-a" }).ctx as any);
+
+	assert.equal(execCalls.some((call) => call.command === "bash" && call.args[0] === "scripts/verify.sh"), false);
+	assert.equal(sendUserMessages.length, 0);
+});
+
+test("session id drift clears touched paths even if no lifecycle event fired", async (t) => {
+	const fixture = makeTempProject();
+	t.after(() => fixture.cleanup());
+
+	fs.mkdirSync(path.join(fixture.root, "scripts"), { recursive: true });
+	fs.writeFileSync(path.join(fixture.root, "scripts", "verify.sh"), "#!/bin/bash\nexit 1\n", "utf8");
+
+	const { eventHandlers, execCalls, sendUserMessages } = createHarness(async (command, args) => {
+		if (command === "bash" && args[0] === "scripts/verify.sh") {
+			return { stdout: "", stderr: "tests failed", code: 2, killed: false };
+		}
+		return { stdout: "", stderr: "fatal: not a git repository", code: 1, killed: false };
+	});
+	const toolCall = eventHandlers.get("tool_call");
+	const agentEnd = eventHandlers.get("agent_end");
+	assert.ok(toolCall);
+	assert.ok(agentEnd);
+
+	await toolCall({ toolName: "edit", input: { path: path.join(fixture.root, "feature.ts") } }, createCtx(fixture.root, { sessionId: "session-a" }).ctx as any);
+	await agentEnd({}, createCtx(fixture.root, { sessionId: "session-b" }).ctx as any);
+
+	assert.equal(execCalls.some((call) => call.command === "bash" && call.args[0] === "scripts/verify.sh"), false);
+	assert.equal(sendUserMessages.length, 0);
 });
 
 test("/setup-verify scaffolds a node template, queues refinement, and marks the repo for verification", async (t) => {

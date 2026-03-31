@@ -17,6 +17,7 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { HANDOFF_SESSION_STARTED_EVENT } from "../handoff/events.ts";
 
 const CAUTION_PCT = 30;
 const HANDOFF_PCT = 45;
@@ -46,15 +47,76 @@ export function getZoneStatus(pct: number, theme: { fg(color: string, text: stri
 
 export default function (pi: ExtensionAPI) {
 	let handoffFired = false;
+	let lastSessionId: string | undefined;
+	let currentCtx:
+		| {
+				ui: {
+					theme: { fg(color: string, text: string): string };
+					setStatus: (key: string, value: string | undefined) => void;
+				};
+				getContextUsage: () => any;
+				sessionManager: { getSessionId(): string };
+		  }
+		| undefined;
 
-	function updateStatus(ctx: { ui: { theme: { fg(color: string, text: string): string }; setStatus: (key: string, value: string | undefined) => void }; getContextUsage: () => any }) {
+	function setStatus(
+		ctx: {
+			ui: {
+				theme: { fg(color: string, text: string): string };
+				setStatus: (key: string, value: string | undefined) => void;
+			};
+		},
+		pct: number,
+	) {
+		ctx.ui.setStatus("dumb-zone", getZoneStatus(pct, ctx.ui.theme));
+	}
+
+	function updateStatus(ctx: { ui: { theme: { fg(color: string, text: string): string }; setStatus: (key: string, value: string | undefined) => void }; getContextUsage: () => any; sessionManager: { getSessionId(): string } }) {
+		currentCtx = ctx;
 		const usage = ctx.getContextUsage();
 		const pct = usage ? getContextPercent(usage) : 0;
-		ctx.ui.setStatus("dumb-zone", getZoneStatus(pct, ctx.ui.theme));
+		setStatus(ctx, pct);
+	}
+
+	function resetSessionState(
+		ctx?: {
+			ui: {
+				theme: { fg(color: string, text: string): string };
+				setStatus: (key: string, value: string | undefined) => void;
+			};
+			getContextUsage: () => any;
+			sessionManager: { getSessionId(): string };
+		},
+		options?: { freshSession?: boolean },
+	) {
+		handoffFired = false;
+		if (ctx) {
+			currentCtx = ctx;
+			lastSessionId = ctx.sessionManager.getSessionId();
+			if (options?.freshSession) {
+				setStatus(ctx, 0);
+				return;
+			}
+			updateStatus(ctx);
+			return;
+		}
+
+		if (options?.freshSession && currentCtx) {
+			setStatus(currentCtx, 0);
+		}
+	}
+
+	function syncSessionState(ctx: { sessionManager: { getSessionId(): string } }) {
+		const sessionId = ctx.sessionManager.getSessionId();
+		if (lastSessionId !== undefined && lastSessionId !== sessionId) {
+			handoffFired = false;
+		}
+		lastSessionId = sessionId;
 	}
 
 	// Check after every turn
 	pi.on("turn_end", async (_event, ctx) => {
+		syncSessionState(ctx);
 		updateStatus(ctx);
 
 		if (handoffFired) return;
@@ -87,11 +149,13 @@ export default function (pi: ExtensionAPI) {
 
 	// Also update on agent end (final reading)
 	pi.on("agent_end", async (_event, ctx) => {
+		syncSessionState(ctx);
 		updateStatus(ctx);
 	});
 
 	// Recalculate when the model changes (different context window size).
 	pi.on("model_select", async (_event, ctx) => {
+		syncSessionState(ctx);
 		const usage = ctx.getContextUsage();
 		const pct = usage ? getContextPercent(usage) : 0;
 
@@ -103,12 +167,14 @@ export default function (pi: ExtensionAPI) {
 
 	// Reset on new/resumed session and immediately repopulate the legend.
 	pi.on("session_switch", async (_event, ctx) => {
-		handoffFired = false;
-		updateStatus(ctx);
+		resetSessionState(ctx);
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		handoffFired = false;
-		updateStatus(ctx);
+		resetSessionState(ctx);
+	});
+
+	pi.events.on(HANDOFF_SESSION_STARTED_EVENT, () => {
+		resetSessionState(undefined, { freshSession: true });
 	});
 }
