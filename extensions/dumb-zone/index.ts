@@ -7,11 +7,11 @@
  *
  * Thresholds (model-specific):
  *
- *   Default models:
+ *   Default models (incl. Opus 4.5):
  *     🟢  0–40%  — smart (green)
  *     🔴 40%+    — dumb (red) → auto-triggers handoff
  *
- *   Large context models (Opus 4.5, Sonnet 4.6):
+ *   Large context models (Opus 4.6, Sonnet 4.6):
  *     🟢  0–20%  — smart (green)
  *     🔴 20%+    — dumb (red) → auto-triggers handoff
  *
@@ -27,7 +27,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { HANDOFF_SESSION_STARTED_EVENT } from "../handoff/events.ts";
 
 // Model-specific thresholds: large-context models get stricter limits
-const LARGE_CONTEXT_MODELS = ["claude-opus-4-5", "claude-sonnet-4-6"];
+const LARGE_CONTEXT_MODELS = ["claude-opus-4-6", "claude-sonnet-4-6"];
 
 const THRESHOLDS = {
 	default: 40,

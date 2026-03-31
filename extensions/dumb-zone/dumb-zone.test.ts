@@ -79,10 +79,17 @@ test("getZoneLabel uses model-specific thresholds (default: 40% handoff)", () =>
 });
 
 test("getZoneLabel uses stricter thresholds for large context models (20% handoff)", () => {
-	assert.equal(getZoneLabel(10, "claude-opus-4-5"), "smart");
-	assert.equal(getZoneLabel(19, "claude-opus-4-5"), "smart");
+	assert.equal(getZoneLabel(10, "claude-opus-4-6"), "smart");
+	assert.equal(getZoneLabel(19, "claude-opus-4-6"), "smart");
 	assert.equal(getZoneLabel(20, "claude-sonnet-4-6"), "dumb");
-	assert.equal(getZoneLabel(25, "claude-opus-4-5"), "dumb");
+	assert.equal(getZoneLabel(25, "claude-opus-4-6"), "dumb");
+});
+
+test("getZoneLabel uses default threshold for Opus 4.5 (40% handoff)", () => {
+	assert.equal(getZoneLabel(10, "claude-opus-4-5"), "smart");
+	assert.equal(getZoneLabel(39, "claude-opus-4-5"), "smart");
+	assert.equal(getZoneLabel(40, "claude-opus-4-5"), "dumb");
+	assert.equal(getZoneLabel(50, "claude-opus-4-5"), "dumb");
 });
 
 test("getZoneStatus returns a single colored label for the active zone", () => {
@@ -97,8 +104,12 @@ test("getZoneStatus returns a single colored label for the active zone", () => {
 	assert.equal(getZoneStatus(50, theme), "<error>dumb</error>");
 
 	// Large context models: 20% handoff
-	assert.equal(getZoneStatus(10, theme, "claude-opus-4-5"), "<success>smart</success>");
-	assert.equal(getZoneStatus(25, theme, "claude-opus-4-5"), "<error>dumb</error>");
+	assert.equal(getZoneStatus(10, theme, "claude-opus-4-6"), "<success>smart</success>");
+	assert.equal(getZoneStatus(25, theme, "claude-opus-4-6"), "<error>dumb</error>");
+
+	// Opus 4.5 uses default 40% handoff
+	assert.equal(getZoneStatus(35, theme, "claude-opus-4-5"), "<success>smart</success>");
+	assert.equal(getZoneStatus(45, theme, "claude-opus-4-5"), "<error>dumb</error>");
 });
 
 test("turn_end updates status and triggers handoff once at threshold", async () => {
