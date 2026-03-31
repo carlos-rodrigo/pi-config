@@ -72,21 +72,17 @@ test("getContextPercent prefers provided percent and falls back to token ratio",
 });
 
 test("getZoneLabel uses model-specific thresholds (default: 40% handoff)", () => {
-	// Default thresholds: caution=25, handoff=40
 	assert.equal(getZoneLabel(10), "smart");
-	assert.equal(getZoneLabel(24), "smart");
-	assert.equal(getZoneLabel(25), "caution");
-	assert.equal(getZoneLabel(39), "caution");
+	assert.equal(getZoneLabel(39), "smart");
 	assert.equal(getZoneLabel(40), "dumb");
+	assert.equal(getZoneLabel(50), "dumb");
 });
 
 test("getZoneLabel uses stricter thresholds for large context models (20% handoff)", () => {
-	// Large context model thresholds: caution=12, handoff=20
 	assert.equal(getZoneLabel(10, "claude-opus-4-5"), "smart");
-	assert.equal(getZoneLabel(11, "claude-opus-4-5"), "smart");
-	assert.equal(getZoneLabel(12, "claude-opus-4-5"), "caution");
-	assert.equal(getZoneLabel(19, "claude-sonnet-4-6"), "caution");
+	assert.equal(getZoneLabel(19, "claude-opus-4-5"), "smart");
 	assert.equal(getZoneLabel(20, "claude-sonnet-4-6"), "dumb");
+	assert.equal(getZoneLabel(25, "claude-opus-4-5"), "dumb");
 });
 
 test("getZoneStatus returns a single colored label for the active zone", () => {
@@ -96,14 +92,12 @@ test("getZoneStatus returns a single colored label for the active zone", () => {
 		},
 	};
 
-	// Default model thresholds: caution=25, handoff=40
+	// Default: 40% handoff
 	assert.equal(getZoneStatus(10, theme), "<success>smart</success>");
-	assert.equal(getZoneStatus(30, theme), "<syntaxNumber>caution</syntaxNumber>");
 	assert.equal(getZoneStatus(50, theme), "<error>dumb</error>");
 
-	// Large context model thresholds: caution=12, handoff=20
+	// Large context models: 20% handoff
 	assert.equal(getZoneStatus(10, theme, "claude-opus-4-5"), "<success>smart</success>");
-	assert.equal(getZoneStatus(15, theme, "claude-sonnet-4-6"), "<syntaxNumber>caution</syntaxNumber>");
 	assert.equal(getZoneStatus(25, theme, "claude-opus-4-5"), "<error>dumb</error>");
 });
 

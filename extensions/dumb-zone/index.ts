@@ -8,17 +8,15 @@
  * Thresholds (model-specific):
  *
  *   Default models:
- *     🟢  0–25%  — smart (green)
- *     🟡 25–40%  — caution (orange) — user can /handoff manually
+ *     🟢  0–40%  — smart (green)
  *     🔴 40%+    — dumb (red) → auto-triggers handoff
  *
  *   Large context models (Opus 4.5, Sonnet 4.6):
- *     🟢  0–12%  — smart (green)
- *     🟡 12–20%  — caution (orange)
+ *     🟢  0–20%  — smart (green)
  *     🔴 20%+    — dumb (red) → auto-triggers handoff
  *
  * The bordered editor appends the single active zone label to the
- * context readout, e.g. `31% of 272k . $3.36 - caution`.
+ * context readout, e.g. `31% of 272k . $3.36 - smart`.
  *
  * Updates on: turn_end, agent_end, model_select, workflow:mode, session events.
  *
@@ -32,11 +30,11 @@ import { HANDOFF_SESSION_STARTED_EVENT } from "../handoff/events.ts";
 const LARGE_CONTEXT_MODELS = ["claude-opus-4-5", "claude-sonnet-4-6"];
 
 const THRESHOLDS = {
-	default: { caution: 25, handoff: 40 },
-	largeContext: { caution: 12, handoff: 20 },
+	default: 40,
+	largeContext: 20,
 } as const;
 
-function getThresholds(modelId?: string): { caution: number; handoff: number } {
+function getHandoffThreshold(modelId?: string): number {
 	if (modelId && LARGE_CONTEXT_MODELS.some((m) => modelId.includes(m))) {
 		return THRESHOLDS.largeContext;
 	}
@@ -49,16 +47,14 @@ export function getContextPercent(usage: { percent?: number; tokens: number; con
 		: Math.round((usage.tokens / usage.contextWindow) * 100);
 }
 
-export function getZoneLabel(pct: number, modelId?: string): "smart" | "caution" | "dumb" {
-	const { caution, handoff } = getThresholds(modelId);
+export function getZoneLabel(pct: number, modelId?: string): "smart" | "dumb" {
+	const handoff = getHandoffThreshold(modelId);
 	if (pct >= handoff) return "dumb";
-	if (pct >= caution) return "caution";
 	return "smart";
 }
 
 const ZONE_COLORS: Record<string, string> = {
 	smart: "success",
-	caution: "syntaxNumber",
 	dumb: "error",
 };
 
@@ -151,7 +147,7 @@ export default function (pi: ExtensionAPI) {
 
 		const pct = getContextPercent(usage);
 
-		const { handoff } = getThresholds(currentModelId);
+		const handoff = getHandoffThreshold(currentModelId);
 		if (pct >= handoff) {
 			handoffFired = true;
 
@@ -187,7 +183,7 @@ export default function (pi: ExtensionAPI) {
 		const pct = usage ? getContextPercent(usage) : 0;
 
 		// Reset handoff gate when new model drops below threshold
-		const { handoff } = getThresholds(currentModelId);
+		const handoff = getHandoffThreshold(currentModelId);
 		if (pct < handoff) handoffFired = false;
 
 		updateStatus(ctx);
