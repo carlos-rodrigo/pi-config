@@ -5,13 +5,22 @@
  * enters the "dumb zone" — where reasoning quality degrades due to
  * context length.
  *
- * Thresholds:
- *   🟢  0–30%  — smart (green)
- *   🟡 30–45%  — caution (orange) — user can /handoff manually
- *   🔴 45%+    — dumb (red) → auto-triggers handoff
+ * Thresholds (model-specific):
+ *
+ *   Default models:
+ *     🟢  0–25%  — smart (green)
+ *     🟡 25–40%  — caution (orange) — user can /handoff manually
+ *     🔴 40%+    — dumb (red) → auto-triggers handoff
+ *
+ *   Large context models (Opus 4.5, Sonnet 4.6):
+ *     🟢  0–12%  — smart (green)
+ *     🟡 12–20%  — caution (orange)
+ *     🔴 20%+    — dumb (red) → auto-triggers handoff
  *
  * The bordered editor appends the single active zone label to the
- * context readout, e.g. `31% of 272k . $3.36 - smart`.
+ * context readout, e.g. `31% of 272k . $3.36 - caution`.
+ *
+ * Updates on: turn_end, agent_end, model_select, workflow:mode, session events.
  *
  * Based on: https://www.humanlayer.dev/blog/skill-issue-harness-engineering-for-coding-agents
  */
@@ -19,8 +28,20 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { HANDOFF_SESSION_STARTED_EVENT } from "../handoff/events.ts";
 
-const CAUTION_PCT = 30;
-const HANDOFF_PCT = 45;
+// Model-specific thresholds: large-context models get stricter limits
+const LARGE_CONTEXT_MODELS = ["claude-opus-4-5", "claude-sonnet-4-6"];
+
+const THRESHOLDS = {
+	default: { caution: 25, handoff: 40 },
+	largeContext: { caution: 12, handoff: 20 },
+} as const;
+
+function getThresholds(modelId?: string): { caution: number; handoff: number } {
+	if (modelId && LARGE_CONTEXT_MODELS.some((m) => modelId.includes(m))) {
+		return THRESHOLDS.largeContext;
+	}
+	return THRESHOLDS.default;
+}
 
 export function getContextPercent(usage: { percent?: number; tokens: number; contextWindow: number }): number {
 	return typeof usage.percent === "number"
@@ -28,9 +49,10 @@ export function getContextPercent(usage: { percent?: number; tokens: number; con
 		: Math.round((usage.tokens / usage.contextWindow) * 100);
 }
 
-export function getZoneLabel(pct: number): "smart" | "caution" | "dumb" {
-	if (pct >= HANDOFF_PCT) return "dumb";
-	if (pct >= CAUTION_PCT) return "caution";
+export function getZoneLabel(pct: number, modelId?: string): "smart" | "caution" | "dumb" {
+	const { caution, handoff } = getThresholds(modelId);
+	if (pct >= handoff) return "dumb";
+	if (pct >= caution) return "caution";
 	return "smart";
 }
 
@@ -40,14 +62,15 @@ const ZONE_COLORS: Record<string, string> = {
 	dumb: "error",
 };
 
-export function getZoneStatus(pct: number, theme: { fg(color: string, text: string): string }): string {
-	const label = getZoneLabel(pct);
+export function getZoneStatus(pct: number, theme: { fg(color: string, text: string): string }, modelId?: string): string {
+	const label = getZoneLabel(pct, modelId);
 	return theme.fg(ZONE_COLORS[label], label);
 }
 
 export default function (pi: ExtensionAPI) {
 	let handoffFired = false;
 	let lastSessionId: string | undefined;
+	let currentModelId: string | undefined;
 	let currentCtx:
 		| {
 				ui: {
@@ -56,6 +79,7 @@ export default function (pi: ExtensionAPI) {
 				};
 				getContextUsage: () => any;
 				sessionManager: { getSessionId(): string };
+				model?: { id: string };
 		  }
 		| undefined;
 
@@ -68,11 +92,12 @@ export default function (pi: ExtensionAPI) {
 		},
 		pct: number,
 	) {
-		ctx.ui.setStatus("dumb-zone", getZoneStatus(pct, ctx.ui.theme));
+		ctx.ui.setStatus("dumb-zone", getZoneStatus(pct, ctx.ui.theme, currentModelId));
 	}
 
-	function updateStatus(ctx: { ui: { theme: { fg(color: string, text: string): string }; setStatus: (key: string, value: string | undefined) => void }; getContextUsage: () => any; sessionManager: { getSessionId(): string } }) {
+	function updateStatus(ctx: { ui: { theme: { fg(color: string, text: string): string }; setStatus: (key: string, value: string | undefined) => void }; getContextUsage: () => any; sessionManager: { getSessionId(): string }; model?: { id: string } }) {
 		currentCtx = ctx;
+		if (ctx.model?.id) currentModelId = ctx.model.id;
 		const usage = ctx.getContextUsage();
 		const pct = usage ? getContextPercent(usage) : 0;
 		setStatus(ctx, pct);
@@ -126,7 +151,8 @@ export default function (pi: ExtensionAPI) {
 
 		const pct = getContextPercent(usage);
 
-		if (pct >= HANDOFF_PCT) {
+		const { handoff } = getThresholds(currentModelId);
+		if (pct >= handoff) {
 			handoffFired = true;
 
 			pi.sendMessage(
@@ -154,15 +180,22 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// Recalculate when the model changes (different context window size).
-	pi.on("model_select", async (_event, ctx) => {
+	pi.on("model_select", async (event, ctx) => {
 		syncSessionState(ctx);
+		if (event.model?.id) currentModelId = event.model.id;
 		const usage = ctx.getContextUsage();
 		const pct = usage ? getContextPercent(usage) : 0;
 
 		// Reset handoff gate when new model drops below threshold
-		if (pct < HANDOFF_PCT) handoffFired = false;
+		const { handoff } = getThresholds(currentModelId);
+		if (pct < handoff) handoffFired = false;
 
 		updateStatus(ctx);
+	});
+
+	// Update status when workflow mode changes (different model may be selected).
+	pi.events.on("workflow:mode", () => {
+		if (currentCtx) updateStatus(currentCtx);
 	});
 
 	// Reset on new/resumed session and immediately repopulate the legend.

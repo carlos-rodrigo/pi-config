@@ -71,11 +71,22 @@ test("getContextPercent prefers provided percent and falls back to token ratio",
 	assert.equal(getContextPercent({ tokens: 450, contextWindow: 1000 }), 45);
 });
 
-test("getZoneLabel uses aggressive 45 percent handoff threshold", () => {
+test("getZoneLabel uses model-specific thresholds (default: 40% handoff)", () => {
+	// Default thresholds: caution=25, handoff=40
 	assert.equal(getZoneLabel(10), "smart");
-	assert.equal(getZoneLabel(30), "caution");
-	assert.equal(getZoneLabel(44), "caution");
-	assert.equal(getZoneLabel(45), "dumb");
+	assert.equal(getZoneLabel(24), "smart");
+	assert.equal(getZoneLabel(25), "caution");
+	assert.equal(getZoneLabel(39), "caution");
+	assert.equal(getZoneLabel(40), "dumb");
+});
+
+test("getZoneLabel uses stricter thresholds for large context models (20% handoff)", () => {
+	// Large context model thresholds: caution=12, handoff=20
+	assert.equal(getZoneLabel(10, "claude-opus-4-5"), "smart");
+	assert.equal(getZoneLabel(11, "claude-opus-4-5"), "smart");
+	assert.equal(getZoneLabel(12, "claude-opus-4-5"), "caution");
+	assert.equal(getZoneLabel(19, "claude-sonnet-4-6"), "caution");
+	assert.equal(getZoneLabel(20, "claude-sonnet-4-6"), "dumb");
 });
 
 test("getZoneStatus returns a single colored label for the active zone", () => {
@@ -85,9 +96,15 @@ test("getZoneStatus returns a single colored label for the active zone", () => {
 		},
 	};
 
+	// Default model thresholds: caution=25, handoff=40
 	assert.equal(getZoneStatus(10, theme), "<success>smart</success>");
-	assert.equal(getZoneStatus(35, theme), "<syntaxNumber>caution</syntaxNumber>");
+	assert.equal(getZoneStatus(30, theme), "<syntaxNumber>caution</syntaxNumber>");
 	assert.equal(getZoneStatus(50, theme), "<error>dumb</error>");
+
+	// Large context model thresholds: caution=12, handoff=20
+	assert.equal(getZoneStatus(10, theme, "claude-opus-4-5"), "<success>smart</success>");
+	assert.equal(getZoneStatus(15, theme, "claude-sonnet-4-6"), "<syntaxNumber>caution</syntaxNumber>");
+	assert.equal(getZoneStatus(25, theme, "claude-opus-4-5"), "<error>dumb</error>");
 });
 
 test("turn_end updates status and triggers handoff once at threshold", async () => {
@@ -95,7 +112,8 @@ test("turn_end updates status and triggers handoff once at threshold", async () 
 	const turnEnd = eventHandlers.get("turn_end");
 	assert.ok(turnEnd);
 
-	const { statuses, ctx } = createCtx({ percent: 45 });
+	// Default handoff threshold is 40%
+	const { statuses, ctx } = createCtx({ percent: 40 });
 
 	await turnEnd!({}, ctx as any);
 	await turnEnd!({}, ctx as any);
@@ -160,11 +178,13 @@ test("model_select resets handoff gate when new model drops below threshold", as
 	assert.ok(turnEnd);
 	assert.ok(modelSelect);
 
+	// Start above default 40% threshold
 	const dumb = createCtx({ percent: 50, sessionId: "session-a" });
 	await turnEnd!({}, dumb.ctx as any);
 	assert.equal(sentMessages.length, 1);
 
-	const biggerModel = createCtx({ percent: 20, sessionId: "session-a" });
+	// Switch to model with larger context that drops below threshold
+	const biggerModel = createCtx({ percent: 15, sessionId: "session-a" });
 	await modelSelect!({}, biggerModel.ctx as any);
 	assert.deepEqual(biggerModel.statuses.at(-1), { key: "dumb-zone", value: "smart" });
 
@@ -179,11 +199,13 @@ test("model_select does not reset handoff gate when still above threshold", asyn
 	assert.ok(turnEnd);
 	assert.ok(modelSelect);
 
+	// Start above default 40% threshold
 	const dumb = createCtx({ percent: 50, sessionId: "session-a" });
 	await turnEnd!({}, dumb.ctx as any);
 	assert.equal(sentMessages.length, 1);
 
-	const stillDumb = createCtx({ percent: 46, sessionId: "session-a" });
+	// Still above 40% threshold after model switch
+	const stillDumb = createCtx({ percent: 42, sessionId: "session-a" });
 	await modelSelect!({}, stillDumb.ctx as any);
 	await turnEnd!({}, stillDumb.ctx as any);
 
@@ -202,4 +224,18 @@ test("session id drift resets the gate even without lifecycle events", async () 
 	const sessionB = createCtx({ percent: 50, sessionId: "session-b" });
 	await turnEnd!({}, sessionB.ctx as any);
 	assert.equal(sentMessages.length, 2);
+});
+
+test("workflow:mode event updates status immediately", async () => {
+	const { eventHandlers, emit } = createHarness();
+	const turnEnd = eventHandlers.get("turn_end");
+	assert.ok(turnEnd);
+
+	const { statuses, ctx } = createCtx({ percent: 30, sessionId: "session-a" });
+	await turnEnd!({}, ctx as any);
+	const initialStatusCount = statuses.length;
+
+	// Emitting workflow:mode should trigger status update
+	emit("workflow:mode", { mode: "fast" });
+	assert.ok(statuses.length > initialStatusCount);
 });
