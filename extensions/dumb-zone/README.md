@@ -10,6 +10,12 @@ Monitors context window usage and forces a session handoff before the agent ente
 | 0–20% | Smart | `smart` (green) | None |
 | 20%+ | Dumb | `dumb` (red) | Auto-triggers handoff |
 
+**Opus 4.5:**
+| Context % | Zone | Footer label | Action |
+|-----------|------|--------------|--------|
+| 0–40% | Smart | `smart` (green) | None |
+| 40%+ | Dumb | `dumb` (red) | Auto-triggers handoff |
+
 **All other models:**
 | Context % | Zone | Footer label | Action |
 |-----------|------|--------------|--------|

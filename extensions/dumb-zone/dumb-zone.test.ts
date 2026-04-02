@@ -85,6 +85,13 @@ test("getZoneLabel uses stricter thresholds for large context models (20% handof
 	assert.equal(getZoneLabel(25, "claude-opus-4-6"), "dumb");
 });
 
+test("getZoneLabel uses 40% threshold for Opus 4.5", () => {
+	assert.equal(getZoneLabel(10, "claude-opus-4-5"), "smart");
+	assert.equal(getZoneLabel(39, "claude-opus-4-5"), "smart");
+	assert.equal(getZoneLabel(40, "claude-opus-4-5"), "dumb");
+	assert.equal(getZoneLabel(50, "claude-opus-4-5"), "dumb");
+});
+
 
 
 test("getZoneStatus returns a single colored label for the active zone", () => {

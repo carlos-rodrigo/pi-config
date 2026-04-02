@@ -11,6 +11,10 @@
  *     🟢  0–20%  — smart (green)
  *     🔴 20%+    — dumb (red) → auto-triggers handoff
  *
+ *   Opus 4.5:
+ *     🟢  0–40%  — smart (green)
+ *     🔴 40%+    — dumb (red) → auto-triggers handoff
+ *
  *   All other models:
  *     🟢  0–100% — smart (green)
  *     🔴 >100%   — dumb (disabled)
@@ -26,17 +30,22 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { HANDOFF_SESSION_STARTED_EVENT } from "../handoff/events.ts";
 
-// Model-specific thresholds: large-context models get stricter limits
+// Model-specific thresholds
 const LARGE_CONTEXT_MODELS = ["claude-opus-4-6", "claude-sonnet-4-6"];
+const OPUS_4_5_MODELS = ["claude-opus-4-5"];
 
 const THRESHOLDS = {
 	default: 101,
 	largeContext: 20,
+	opus45: 40,
 } as const;
 
 function getHandoffThreshold(modelId?: string): number {
 	if (modelId && LARGE_CONTEXT_MODELS.some((m) => modelId.includes(m))) {
 		return THRESHOLDS.largeContext;
+	}
+	if (modelId && OPUS_4_5_MODELS.some((m) => modelId.includes(m))) {
+		return THRESHOLDS.opus45;
 	}
 	return THRESHOLDS.default;
 }
