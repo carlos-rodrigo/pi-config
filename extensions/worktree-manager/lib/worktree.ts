@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -376,7 +377,37 @@ export async function createFeatureWorktree(
 		};
 	}
 
+	// Copy root-level context files (.md, .env) to the new worktree
+	await copyRootContextFiles(repo.gitRoot, worktreePath);
+
 	return { ok: true, slug, branch, worktreePath, repoContext: repo };
+}
+
+/**
+ * Copy root-level context files (.md, .env) from source to target directory.
+ * These files provide context but aren't tracked in worktrees.
+ */
+async function copyRootContextFiles(sourceDir: string, targetDir: string): Promise<void> {
+	try {
+		const entries = await fsp.readdir(sourceDir, { withFileTypes: true });
+		const contextFiles = entries.filter((entry) => {
+			if (!entry.isFile()) return false;
+			const name = entry.name.toLowerCase();
+			return name.endsWith(".md") || name.startsWith(".env");
+		});
+
+		for (const file of contextFiles) {
+			const sourcePath = path.join(sourceDir, file.name);
+			const targetPath = path.join(targetDir, file.name);
+
+			// Don't overwrite if already exists (git might have checked it out)
+			if (!fs.existsSync(targetPath)) {
+				await fsp.copyFile(sourcePath, targetPath);
+			}
+		}
+	} catch {
+		// Non-fatal: worktree still works without the copied files
+	}
 }
 
 export async function ensureFeatureBranchFromMain(
