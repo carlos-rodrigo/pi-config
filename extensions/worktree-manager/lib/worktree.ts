@@ -377,26 +377,25 @@ export async function createFeatureWorktree(
 		};
 	}
 
-	// Copy root-level context files (.md, .env) to the new worktree
-	await copyRootContextFiles(repo.gitRoot, worktreePath);
+	// Copy .env files (gitignored) to the new worktree
+	await copyEnvFiles(repo.gitRoot, worktreePath);
 
 	return { ok: true, slug, branch, worktreePath, repoContext: repo };
 }
 
 /**
- * Copy root-level context files (.md, .env) from source to target directory.
- * These files provide context but aren't tracked in worktrees.
+ * Copy .env files from source to target directory.
+ * These are typically gitignored so they don't appear in worktrees.
  */
-async function copyRootContextFiles(sourceDir: string, targetDir: string): Promise<void> {
+async function copyEnvFiles(sourceDir: string, targetDir: string): Promise<void> {
 	try {
 		const entries = await fsp.readdir(sourceDir, { withFileTypes: true });
-		const contextFiles = entries.filter((entry) => {
+		const envFiles = entries.filter((entry) => {
 			if (!entry.isFile()) return false;
-			const name = entry.name.toLowerCase();
-			return name.endsWith(".md") || name.startsWith(".env");
+			return entry.name.toLowerCase().startsWith(".env");
 		});
 
-		for (const file of contextFiles) {
+		for (const file of envFiles) {
 			const sourcePath = path.join(sourceDir, file.name);
 			const targetPath = path.join(targetDir, file.name);
 
