@@ -71,11 +71,11 @@ test("getContextPercent prefers provided percent and falls back to token ratio",
 	assert.equal(getContextPercent({ tokens: 450, contextWindow: 1000 }), 45);
 });
 
-test("getZoneLabel uses model-specific thresholds (default: 40% handoff)", () => {
+test("getZoneLabel uses default threshold (101% = effectively disabled)", () => {
 	assert.equal(getZoneLabel(10), "smart");
-	assert.equal(getZoneLabel(39), "smart");
-	assert.equal(getZoneLabel(40), "dumb");
-	assert.equal(getZoneLabel(50), "dumb");
+	assert.equal(getZoneLabel(50), "smart");
+	assert.equal(getZoneLabel(100), "smart");
+	assert.equal(getZoneLabel(101), "dumb");
 });
 
 test("getZoneLabel uses stricter thresholds for large context models (20% handoff)", () => {
@@ -85,12 +85,7 @@ test("getZoneLabel uses stricter thresholds for large context models (20% handof
 	assert.equal(getZoneLabel(25, "claude-opus-4-6"), "dumb");
 });
 
-test("getZoneLabel uses default threshold for Opus 4.5 (40% handoff)", () => {
-	assert.equal(getZoneLabel(10, "claude-opus-4-5"), "smart");
-	assert.equal(getZoneLabel(39, "claude-opus-4-5"), "smart");
-	assert.equal(getZoneLabel(40, "claude-opus-4-5"), "dumb");
-	assert.equal(getZoneLabel(50, "claude-opus-4-5"), "dumb");
-});
+
 
 test("getZoneStatus returns a single colored label for the active zone", () => {
 	const theme = {
@@ -99,17 +94,15 @@ test("getZoneStatus returns a single colored label for the active zone", () => {
 		},
 	};
 
-	// Default: 40% handoff
+	// Default: 101% (effectively disabled)
 	assert.equal(getZoneStatus(10, theme), "<success>smart</success>");
-	assert.equal(getZoneStatus(50, theme), "<error>dumb</error>");
+	assert.equal(getZoneStatus(100, theme), "<success>smart</success>");
 
 	// Large context models: 20% handoff
 	assert.equal(getZoneStatus(10, theme, "claude-opus-4-6"), "<success>smart</success>");
 	assert.equal(getZoneStatus(25, theme, "claude-opus-4-6"), "<error>dumb</error>");
 
-	// Opus 4.5 uses default 40% handoff
-	assert.equal(getZoneStatus(35, theme, "claude-opus-4-5"), "<success>smart</success>");
-	assert.equal(getZoneStatus(45, theme, "claude-opus-4-5"), "<error>dumb</error>");
+
 });
 
 test("turn_end updates status and triggers handoff once at threshold", async () => {
@@ -117,8 +110,9 @@ test("turn_end updates status and triggers handoff once at threshold", async () 
 	const turnEnd = eventHandlers.get("turn_end");
 	assert.ok(turnEnd);
 
-	// Default handoff threshold is 40%
-	const { statuses, ctx } = createCtx({ percent: 40 });
+	// Default handoff threshold is 101% (effectively disabled), so use a large-context model
+	const { statuses, ctx } = createCtx({ percent: 20 });
+	(ctx as any).model = { id: "claude-opus-4-6" };
 
 	await turnEnd!({}, ctx as any);
 	await turnEnd!({}, ctx as any);
@@ -136,9 +130,10 @@ test("session_switch resets handoff state and immediately restores the legend", 
 	assert.ok(turnEnd);
 	assert.ok(sessionSwitch);
 
-	const { statuses, ctx } = createCtx({ percent: 50 });
+	const { statuses, ctx } = createCtx({ percent: 25 });
+	(ctx as any).model = { id: "claude-opus-4-6" };
 
-	await turnEnd!({}, ctx as any);
+	await turnEnd!({ model: { id: "claude-opus-4-6" } }, ctx as any);
 	assert.equal(sentMessages.length, 1);
 
 	await sessionSwitch!({}, ctx as any);
@@ -153,9 +148,10 @@ test("handoff session-start event resets the gate and marks the fresh session as
 	const turnEnd = eventHandlers.get("turn_end");
 	assert.ok(turnEnd);
 
-	const { statuses, ctx } = createCtx({ percent: 50, sessionId: "session-a" });
+	const { statuses, ctx } = createCtx({ percent: 25, sessionId: "session-a" });
+	(ctx as any).model = { id: "claude-opus-4-6" };
 
-	await turnEnd!({}, ctx as any);
+	await turnEnd!({ model: { id: "claude-opus-4-6" } }, ctx as any);
 	assert.equal(sentMessages.length, 1);
 
 	emit(HANDOFF_SESSION_STARTED_EVENT, { mode: "tool" });
@@ -183,9 +179,10 @@ test("model_select resets handoff gate when new model drops below threshold", as
 	assert.ok(turnEnd);
 	assert.ok(modelSelect);
 
-	// Start above default 40% threshold
-	const dumb = createCtx({ percent: 50, sessionId: "session-a" });
-	await turnEnd!({}, dumb.ctx as any);
+	// Start above 20% threshold with large-context model
+	const dumb = createCtx({ percent: 25, sessionId: "session-a" });
+	(dumb.ctx as any).model = { id: "claude-opus-4-6" };
+	await turnEnd!({ model: { id: "claude-opus-4-6" } }, dumb.ctx as any);
 	assert.equal(sentMessages.length, 1);
 
 	// Switch to model with larger context that drops below threshold
@@ -204,15 +201,17 @@ test("model_select does not reset handoff gate when still above threshold", asyn
 	assert.ok(turnEnd);
 	assert.ok(modelSelect);
 
-	// Start above default 40% threshold
-	const dumb = createCtx({ percent: 50, sessionId: "session-a" });
-	await turnEnd!({}, dumb.ctx as any);
+	// Start above 20% threshold with large-context model
+	const dumb = createCtx({ percent: 25, sessionId: "session-a" });
+	(dumb.ctx as any).model = { id: "claude-opus-4-6" };
+	await turnEnd!({ model: { id: "claude-opus-4-6" } }, dumb.ctx as any);
 	assert.equal(sentMessages.length, 1);
 
-	// Still above 40% threshold after model switch
-	const stillDumb = createCtx({ percent: 42, sessionId: "session-a" });
-	await modelSelect!({}, stillDumb.ctx as any);
-	await turnEnd!({}, stillDumb.ctx as any);
+	// Still above 20% threshold after model switch
+	const stillDumb = createCtx({ percent: 22, sessionId: "session-a" });
+	(stillDumb.ctx as any).model = { id: "claude-opus-4-6" };
+	await modelSelect!({ model: { id: "claude-opus-4-6" } }, stillDumb.ctx as any);
+	await turnEnd!({ model: { id: "claude-opus-4-6" } }, stillDumb.ctx as any);
 
 	assert.equal(sentMessages.length, 1);
 });
@@ -222,12 +221,14 @@ test("session id drift resets the gate even without lifecycle events", async () 
 	const turnEnd = eventHandlers.get("turn_end");
 	assert.ok(turnEnd);
 
-	const sessionA = createCtx({ percent: 50, sessionId: "session-a" });
-	await turnEnd!({}, sessionA.ctx as any);
+	const sessionA = createCtx({ percent: 25, sessionId: "session-a" });
+	(sessionA.ctx as any).model = { id: "claude-opus-4-6" };
+	await turnEnd!({ model: { id: "claude-opus-4-6" } }, sessionA.ctx as any);
 	assert.equal(sentMessages.length, 1);
 
-	const sessionB = createCtx({ percent: 50, sessionId: "session-b" });
-	await turnEnd!({}, sessionB.ctx as any);
+	const sessionB = createCtx({ percent: 25, sessionId: "session-b" });
+	(sessionB.ctx as any).model = { id: "claude-opus-4-6" };
+	await turnEnd!({ model: { id: "claude-opus-4-6" } }, sessionB.ctx as any);
 	assert.equal(sentMessages.length, 2);
 });
 

@@ -7,13 +7,13 @@
  *
  * Thresholds (model-specific):
  *
- *   Default models (incl. Opus 4.5):
- *     🟢  0–40%  — smart (green)
- *     🔴 40%+    — dumb (red) → auto-triggers handoff
- *
  *   Large context models (Opus 4.6, Sonnet 4.6):
  *     🟢  0–20%  — smart (green)
  *     🔴 20%+    — dumb (red) → auto-triggers handoff
+ *
+ *   All other models:
+ *     🟢  0–100% — smart (green)
+ *     🔴 >100%   — dumb (disabled)
  *
  * The bordered editor appends the single active zone label to the
  * context readout, e.g. `31% of 272k . $3.36 - smart`.
@@ -30,7 +30,7 @@ import { HANDOFF_SESSION_STARTED_EVENT } from "../handoff/events.ts";
 const LARGE_CONTEXT_MODELS = ["claude-opus-4-6", "claude-sonnet-4-6"];
 
 const THRESHOLDS = {
-	default: 40,
+	default: 101,
 	largeContext: 20,
 } as const;
 

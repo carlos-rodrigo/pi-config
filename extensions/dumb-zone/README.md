@@ -4,17 +4,17 @@ Monitors context window usage and forces a session handoff before the agent ente
 
 ## How it works
 
-**Default models (incl. Opus 4.5):**
-| Context % | Zone | Footer label | Action |
-|-----------|------|--------------|--------|
-| 0–40% | Smart | `smart` (green) | None |
-| 40%+ | Dumb | `dumb` (red) | Auto-triggers handoff |
-
 **Large context models (Opus 4.6, Sonnet 4.6):**
 | Context % | Zone | Footer label | Action |
 |-----------|------|--------------|--------|
 | 0–20% | Smart | `smart` (green) | None |
 | 20%+ | Dumb | `dumb` (red) | Auto-triggers handoff |
+
+**All other models:**
+| Context % | Zone | Footer label | Action |
+|-----------|------|--------------|--------|
+| 0–100% | Smart | `smart` (green) | None |
+| >100% | Dumb | `dumb` (red) | Disabled |
 
 The bordered editor appends the single active zone label to the raw usage readout, e.g. `31% of 272k . $3.36 - smart`.
 
