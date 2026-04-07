@@ -8,9 +8,11 @@
  *
  * Prompts follow best practices for agent collaboration:
  * - Directive, not questions ("Fix X" not "Why isn't X working?")
- * - Include feedback loops when applicable ("Run tests after", "Verify by checking X")
+ * - Include feedback loops when applicable — prefer E2E verification over "run tests"
  * - Reference specific files/patterns when available
  * - Give definition of done so the agent can self-verify
+ * - Devil's advocate: prefer real inputs from docs/API samples over agent-generated test data
+ * - E2E bias: suggest hitting real boundaries (curl, CLI) not just unit tests
  *
  * Acceptance:
  * - Right arrow → accepts the full suggestion
@@ -317,15 +319,16 @@ Based on the recent conversation, suggest ONE actionable next-step prompt for th
 Good prompts for coding agents are:
 1. DIRECTIVE — Give direction, not questions. "Fix the auth bug in login.ts" beats "Why isn't login working?"
 2. SPECIFIC — Reference exact files, functions, patterns. "Follow the pattern in src/api/messages.ts" beats "Make it consistent"
-3. FEEDBACK-LOOPABLE — Include how the agent should verify its work. "Run the tests after" or "Check the output by running X"
+3. FEEDBACK-LOOPABLE — Include how the agent should verify its work. Prefer E2E verification over "run tests"
 4. SCOPED — One clear task with a definition of done, not open-ended exploration
 5. CONTEXTUAL — Mention constraints, patterns to follow, things to avoid
+6. DEVIL'S ADVOCATE — When suggesting verification, prefer real inputs (from docs, API samples) over agent-generated test data. Challenge the implementation from the outside.
 
 ## Structure
 
 A great prompt has up to 3 parts (combine naturally into 1-2 sentences):
 - WHAT to do (always required)
-- HOW to verify / definition of done (include when there's a clear verification step)
+- HOW to verify / definition of done (prefer E2E: "curl the endpoint with sample payload", "run the CLI with real input" over just "run tests")
 - WHAT to reference or follow (include when specific files/patterns are relevant)
 
 Keep it concise: 10-40 words. One or two sentences max.
@@ -337,7 +340,7 @@ Keep it concise: 10-40 words. One or two sentences max.
 - Must be a natural next step from what JUST happened
 - Stay in the user's voice; do NOT write as the assistant
 - Do NOT suggest tangential work, new features, or improvements unless the user was exploring that
-- When a task was just completed, suggest verification (run tests, check output, try the feature)
+- When a task was just completed, suggest E2E verification (curl the endpoint, run CLI with real input, check actual output) not just "run tests"
 - When debugging, suggest the next concrete debugging action, not more investigation
 - When tests are failing, suggest fixing them with a specific approach
 - When the user was told to do something manually, suggest that manual step
@@ -356,32 +359,35 @@ function getPhaseGuidance(phase: ConversationPhase): string {
 		case "debugging":
 			return `The conversation is in a DEBUGGING phase.
 - Suggest creating a reproducible test case if none exists
-- Suggest targeted fixes with verification: "Fix X, then run the failing test to confirm"
+- Suggest targeted fixes with E2E verification: "Fix X, then curl the endpoint with the failing payload"
 - If the cause is unclear, suggest isolating the issue: "Add logging to X to trace the value of Y"
+- Prefer real-world reproduction: "Test with the actual BitFreighter webhook payload from their docs"
 - Prefer: "Fix the collision detection in physics.ts and run the headless CLI to verify" over "Why is it broken?"`;
 		case "testing":
 			return `The conversation is in a TESTING phase.
-- Suggest running specific test suites or adding missing test cases
-- Include verification: "Run the full test suite and fix any failures"
-- If tests pass, suggest edge cases or moving to the next step
-- Prefer: "Add edge case tests for empty input and null values, then run the suite" over "Write more tests"`;
+- Suggest E2E verification that hits real boundaries (HTTP endpoints, CLI, actual DB), not just unit tests
+- Unit tests written by the agent can share blind spots with the code — suggest testing with real fixtures from docs/samples
+- If tests pass, suggest edge case verification with real inputs: "Try the endpoint with edge case payloads from the API docs"
+- Prefer: "Test the webhook handler with fixtures/bitfreighter/sample.json from their docs" over "Write more tests"`;
 		case "building":
 			return `The conversation is in a BUILDING phase.
 - Suggest the next implementation step with a clear deliverable
-- Include a way to verify: "Implement X, then run the tests" or "Build X following the pattern in Y"
+- Include E2E verification: "Implement X, then curl it with a sample payload" or "Build X, verify with real input"
 - Reference specific files or patterns when available
-- Prefer: "Add the notification endpoint following src/api/messages.ts, run API tests after" over "Build notifications"`;
+- When integration work, suggest: "Get a sample payload from the API docs and save to fixtures/ for testing"
+- Prefer: "Add the webhook endpoint, test with curl using the sample payload from BitFreighter docs" over "Build webhook"`;
 		case "shipping":
 			return `The conversation is in a SHIPPING phase.
-- Suggest review, commit, or deployment steps
-- Include pre-ship checks: "Run the full test suite and linter before pushing"
+- Before shipping, suggest devil's advocate verification: test with real inputs the agent didn't generate
+- Include pre-ship checks: "Verify with a real payload from docs, then run full test suite"
 - If review is done, suggest the concrete ship action
-- Prefer: "Run tests and linter, then create the PR with a summary of changes" over "Ship it"`;
+- Prefer: "Test the integration with sample payloads from their API docs, then create the PR" over "Ship it"`;
 		case "planning":
 			return `The conversation is in a PLANNING phase.
 - Suggest clarifying requirements, defining scope, or documenting decisions
-- If planning is done, suggest transitioning to implementation
-- Prefer: "Define the API contract for the notification endpoint and save to design.md" over "Let's plan more"`;
+- For integrations, suggest: "Get sample payloads from their API docs and save to fixtures/"
+- If planning is done, suggest transitioning to implementation with verification strategy
+- Prefer: "Define the webhook contract and save a sample payload from BitFreighter docs to fixtures/" over "Let's plan more"`;
 	}
 }
 
@@ -417,16 +423,18 @@ Rewrite the user's draft to follow best practices for agent collaboration, while
 
 1. DIRECTIVE — Rewrite questions as instructions. "Why isn't X working?" → "Fix X in file.ts"
 2. SPECIFIC — Add file paths, function names, or patterns from the conversation when relevant
-3. FEEDBACK-LOOPABLE — Add a verification step if one is missing: "then run the tests", "verify by checking X"
+3. FEEDBACK-LOOPABLE — Add E2E verification if missing. Prefer "curl the endpoint with sample payload" over just "run tests"
 4. SCOPED — Keep it focused on one task. If the draft is already scoped, don't expand it
 5. CONTEXTUAL — Add relevant constraints or references the user likely meant but didn't spell out
+6. DEVIL'S ADVOCATE — When adding verification, prefer real inputs (from docs, API samples, fixtures) over agent-generated test data
 
 ## Rules
 
 - PRESERVE the user's intent — do NOT change what they want done, only improve how they say it
 - Keep improvements proportional — a short draft becomes a better short prompt, not a paragraph
 - If the draft is already good, make only minor improvements or return it as-is
-- Add verification/feedback steps only when there's a natural one (tests, build, check output)
+- Add verification/feedback steps only when there's a natural one — prefer E2E (curl, CLI with real input) over just "run tests"
+- If the task involves integration, suggest verification with real fixtures from docs/API samples
 - Reference specific files or commands from conversation context when they're relevant to the task
 - Treat baseline AGENTS/system guidance as already implied; don't add generic process boilerplate unless it is explicitly requested
 - Do NOT add new requirements, features, or scope the user didn't ask for

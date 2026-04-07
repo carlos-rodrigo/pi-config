@@ -30,6 +30,16 @@ After the agent finishes responding, a gray suggestion appears inside the editor
 3. The suggestion appears as gray ghost text in the editor (rendered by `bordered-editor`)
 4. Uses the same API key already configured in pi — no extra setup
 
+### Devil's Advocate & E2E Verification
+
+Suggestions follow a "devil's advocate" approach to verification:
+
+- **E2E bias**: Prefer verification that hits real boundaries (curl the endpoint, run CLI with real input) over just "run tests"
+- **Fixtures from reality**: Suggest using real inputs from docs/API samples, not agent-generated test data
+- **Challenge the implementation**: Verification should prove the code works to someone who didn't write it
+
+This addresses the blind spot problem: when an agent writes code AND writes unit tests, both can share the same misconception.
+
 ## Interaction
 
 | Input | What happens |
