@@ -270,6 +270,44 @@ function isLikelyBaselineRestatement(text: string): boolean {
 
 export type ConversationPhase = "debugging" | "testing" | "building" | "shipping" | "planning";
 
+/**
+ * Detect if the assistant just completed an implementation without mentioning verification.
+ * This triggers aggressive verification suggestions (devil's advocate mode).
+ */
+export function detectUnverifiedImplementation(conversationContext: string): boolean {
+	const lower = conversationContext.toLowerCase();
+
+	// Get the last assistant message
+	const lastAssistantMatch = conversationContext.match(/Assistant:\s*([\s\S]*?)(?:User:|$)/gi);
+	if (!lastAssistantMatch || lastAssistantMatch.length === 0) return false;
+
+	const lastAssistant = lastAssistantMatch[lastAssistantMatch.length - 1].toLowerCase();
+
+	// Implementation signals - agent claims to have done something
+	const implementationSignals = [
+		"created", "added", "implemented", "updated", "fixed", "changed",
+		"modified", "wrote", "built", "refactored", "moved", "renamed",
+		"deleted", "removed", "done", "completed", "finished",
+		"i've ", "i have ", "here's the", "here is the",
+		"changes made", "committed", "pushed"
+	];
+
+	// Verification signals - agent mentions testing/verification
+	const verificationSignals = [
+		"test", "verify", "verified", "verification", "curl", "checked",
+		"confirmed", "passing", "passed", "ran ", "running", "output",
+		"result", "response", "returns", "works", "working",
+		"validated", "validation", "e2e", "end-to-end",
+		"tried", "tested"
+	];
+
+	const hasImplementation = implementationSignals.some(s => lastAssistant.includes(s));
+	const hasVerification = verificationSignals.some(s => lastAssistant.includes(s));
+
+	// Implementation without verification = needs devil's advocate suggestion
+	return hasImplementation && !hasVerification;
+}
+
 export function buildSuggestionPrompt(
 	conversationContext: string,
 	workflowMode?: string,
@@ -277,6 +315,7 @@ export function buildSuggestionPrompt(
 	commands?: string[],
 	phase?: ConversationPhase,
 	baselineGuidelines?: string[],
+	unverifiedImplementation?: boolean,
 ): string {
 	const modeHint = workflowMode ? `\n- Current agent mode: ${workflowMode}` : "";
 	const modeGuidance =
@@ -347,7 +386,23 @@ Keep it concise: 10-40 words. One or two sentences max.
 - Assume baseline AGENTS/system guidelines are already enforced by the coding agent
 - Do NOT restate generic process defaults (e.g. "follow AGENTS", "run/feed the loop") unless it is the specific blocking action now
 - Prefer delta guidance: what concrete next action should happen now${modeHint}${modeGuidance}
-- Return ONLY the prompt text. No quotes, no explanation, no markdown.${phaseGuidance}
+- Return ONLY the prompt text. No quotes, no explanation, no markdown.${phaseGuidance}${unverifiedImplementation ? `
+
+<verification_gap>
+IMPORTANT: The agent just completed an implementation but did NOT mention verification.
+Your suggestion MUST be a verification prompt. Do not suggest more implementation.
+
+Suggest E2E verification that:
+- Hits a real boundary (curl endpoint, run CLI, check DB) — not just "run tests"
+- Uses real inputs from docs/API samples if this is an integration
+- Would catch bugs that unit tests might miss (the blind spot problem)
+- A person who didn't write the code could run to verify it works
+
+Examples:
+- "Verify the webhook handler by curling it with the sample payload from BitFreighter docs"
+- "Test the export by running the CLI with a real data file and checking the output"
+- "Check the API returns correct data by curling /api/users and comparing to the DB"
+</verification_gap>` : ""}
 
 <recent_conversation>
 ${conversationContext}
@@ -578,6 +633,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 	const commands = extractCommands(conversationContext);
 	const phase = detectPhase(conversationContext);
 	const baselineGuidelines = extractBaselineGuidelines(ctx.getSystemPrompt());
+	const unverifiedImplementation = detectUnverifiedImplementation(conversationContext);
 
 	const controller = new AbortController();
 	pendingController = controller;
@@ -590,6 +646,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 			commands,
 			phase,
 			baselineGuidelines,
+			unverifiedImplementation,
 		);
 		const prompt = revisionHint
 			? `${basePrompt}\n\n<revision_request>\n${revisionHint}\n</revision_request>`

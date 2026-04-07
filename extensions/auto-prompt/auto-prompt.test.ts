@@ -9,6 +9,7 @@ import {
 	extractBaselineGuidelines,
 	extractAssistantOutput,
 	detectPhase,
+	detectUnverifiedImplementation,
 	type ConversationPhase,
 } from "./index.ts";
 
@@ -387,5 +388,64 @@ test("buildImprovementPrompt omits file and command sections when not provided",
 
 	assert.doesNotMatch(prompt, /files_in_conversation/i);
 	assert.doesNotMatch(prompt, /commands_in_conversation/i);
+});
+
+// --- detectUnverifiedImplementation ---
+
+test("detectUnverifiedImplementation returns true when assistant implemented but didn't verify", () => {
+	const ctx = "User: Add the webhook handler.\n\nAssistant: I've created the webhook handler in src/webhooks/bitfreighter.ts. The endpoint accepts POST requests and parses the payload.";
+	assert.equal(detectUnverifiedImplementation(ctx), true);
+});
+
+test("detectUnverifiedImplementation returns false when assistant mentions verification", () => {
+	const ctx = "User: Add the webhook handler.\n\nAssistant: I've created the webhook handler. I tested it by curling the endpoint and it returns 200.";
+	assert.equal(detectUnverifiedImplementation(ctx), false);
+});
+
+test("detectUnverifiedImplementation returns false when assistant mentions tests passing", () => {
+	const ctx = "User: Fix the bug.\n\nAssistant: Fixed the null check in auth.ts. All tests are passing now.";
+	assert.equal(detectUnverifiedImplementation(ctx), false);
+});
+
+test("detectUnverifiedImplementation returns false for non-implementation responses", () => {
+	const ctx = "User: How should we approach this?\n\nAssistant: I think we should start by defining the API contract.";
+	assert.equal(detectUnverifiedImplementation(ctx), false);
+});
+
+test("detectUnverifiedImplementation detects done/completed without verification", () => {
+	const ctx = "User: Refactor the auth module.\n\nAssistant: Done! I've refactored the auth module to use the new pattern.";
+	assert.equal(detectUnverifiedImplementation(ctx), true);
+});
+
+// --- buildSuggestionPrompt with unverifiedImplementation ---
+
+test("buildSuggestionPrompt includes verification_gap guidance when unverifiedImplementation is true", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Add endpoint.\n\nAssistant: Done, created the endpoint.",
+		undefined,
+		undefined,
+		undefined,
+		"building",
+		undefined,
+		true,
+	);
+
+	assert.match(prompt, /verification_gap/i);
+	assert.match(prompt, /MUST be a verification prompt/i);
+	assert.match(prompt, /blind spot problem/i);
+});
+
+test("buildSuggestionPrompt omits verification_gap when unverifiedImplementation is false", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Add endpoint.\n\nAssistant: Done, all tests passing.",
+		undefined,
+		undefined,
+		undefined,
+		"building",
+		undefined,
+		false,
+	);
+
+	assert.doesNotMatch(prompt, /verification_gap/i);
 });
 

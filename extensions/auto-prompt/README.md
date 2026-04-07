@@ -40,6 +40,18 @@ Suggestions follow a "devil's advocate" approach to verification:
 
 This addresses the blind spot problem: when an agent writes code AND writes unit tests, both can share the same misconception.
 
+### Unverified Implementation Detection
+
+The extension detects when the agent just completed an implementation **without mentioning verification**. When this happens:
+
+1. The suggestion is **forced to be a verification prompt** (not more implementation)
+2. Suggests E2E verification that hits real boundaries
+3. Reminds about the blind spot problem
+
+Example: If the agent says "Done! I've created the webhook handler" without mentioning testing, the suggestion will be something like:
+
+> Verify the webhook handler by curling it with a sample payload from the BitFreighter docs
+
 ## Interaction
 
 | Input | What happens |
