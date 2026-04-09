@@ -53,6 +53,7 @@ let enabled = true;
 let pendingController: AbortController | null = null;
 let currentCtx: ExtensionContext | undefined;
 let configuredModel: { provider: string; id: string } = { ...PRIMARY_MODEL };
+let statusClearTimer: ReturnType<typeof setTimeout> | null = null;
 
 // --- Helpers ---
 
@@ -79,6 +80,14 @@ function extractTextFromContent(content: unknown): string {
 export function extractAssistantOutput(content: unknown): string {
 	if (!Array.isArray(content)) return "";
 	return extractTextFromContent(content).trim();
+}
+
+export function normalizeComparablePromptText(text: string): string {
+	return text.replace(/\s+/g, " ").trim();
+}
+
+export function hasMeaningfulPromptChange(original: string, improved: string): boolean {
+	return normalizeComparablePromptText(original) !== normalizeComparablePromptText(improved);
 }
 
 function buildConversationContext(ctx: ExtensionContext, maxMessages = 5): string {
@@ -370,7 +379,7 @@ A great prompt has up to 3 parts (combine naturally into 1-2 sentences):
 - HOW to verify / definition of done (prefer E2E: "curl the endpoint with sample payload", "run the CLI with real input" over just "run tests")
 - WHAT to reference or follow (include when specific files/patterns are relevant)
 
-Keep it concise: 10-40 words. One or two sentences max.
+Keep it concise: 10-40 words. One or two sentences max. Never exceed 200 characters.
 
 ## Rules
 
@@ -386,7 +395,8 @@ Keep it concise: 10-40 words. One or two sentences max.
 - Assume baseline AGENTS/system guidelines are already enforced by the coding agent
 - Do NOT restate generic process defaults (e.g. "follow AGENTS", "run/feed the loop") unless it is the specific blocking action now
 - Prefer delta guidance: what concrete next action should happen now${modeHint}${modeGuidance}
-- Return ONLY the prompt text. No quotes, no explanation, no markdown.${phaseGuidance}${unverifiedImplementation ? `
+- Return ONLY the prompt text. No quotes, no explanation, no markdown.
+- Hard limit: 200 characters maximum.${phaseGuidance}${unverifiedImplementation ? `
 
 <verification_gap>
 IMPORTANT: The agent just completed an implementation but did NOT mention verification.
@@ -565,21 +575,50 @@ function ensureCompletionSucceeded(response: { stopReason: string; errorMessage?
 	}
 }
 
-function startImproveLoadingStatus(ctx: ExtensionContext): () => void {
+function clearAutoPromptTransientStatus(): void {
+	if (statusClearTimer) {
+		clearTimeout(statusClearTimer);
+		statusClearTimer = null;
+	}
+}
+
+function setAutoPromptStatus(ctx: ExtensionContext, text: string | undefined): void {
+	clearAutoPromptTransientStatus();
+	ctx.ui.setStatus("auto-prompt", text);
+}
+
+function showTransientAutoPromptStatus(ctx: ExtensionContext, text: string, durationMs = 2500): void {
+	clearAutoPromptTransientStatus();
+	ctx.ui.setStatus("auto-prompt", text);
+	const timer = setTimeout(() => {
+		if (statusClearTimer === timer) {
+			statusClearTimer = null;
+		}
+		ctx.ui.setStatus("auto-prompt", undefined);
+	}, durationMs);
+	statusClearTimer = timer;
+}
+
+function formatAutoPromptError(err: unknown): string {
+	const reason = err instanceof Error ? err.message : "Unknown error";
+	return reason.length > 120 ? `${reason.slice(0, 117)}...` : reason;
+}
+
+function startLoadingStatus(ctx: ExtensionContext, label: string): () => void {
 	const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 	const startedAt = Date.now();
 	let idx = 0;
 
-	ctx.ui.setStatus("auto-prompt", "Improving prompt…");
+	setAutoPromptStatus(ctx, label);
 	const timer = setInterval(() => {
 		const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
-		ctx.ui.setStatus("auto-prompt", `${frames[idx % frames.length]} Improving prompt… ${elapsed}s`);
+		setAutoPromptStatus(ctx, `${frames[idx % frames.length]} ${label} ${elapsed}s`);
 		idx += 1;
 	}, 120);
 
 	return () => {
 		clearInterval(timer);
-		ctx.ui.setStatus("auto-prompt", undefined);
+		setAutoPromptStatus(ctx, undefined);
 	};
 }
 
@@ -662,7 +701,10 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 		return extractAssistantOutput(response.content);
 	};
 
+	let stopLoading: (() => void) | null = null;
+
 	try {
+		stopLoading = startLoadingStatus(ctx, "Suggesting next prompt…");
 		let suggestion = await requestSuggestion();
 
 		// Don't emit if cancelled while waiting
@@ -676,13 +718,41 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 
 		if (controller.signal.aborted) return;
 
-		if (suggestion && suggestion.length > 0 && suggestion.length < 200) {
-			pi.events.emit("auto-prompt:suggest", { text: suggestion });
+		if (!suggestion) {
+			stopLoading();
+			stopLoading = null;
+			showTransientAutoPromptStatus(ctx, "No suggestion generated");
+			return;
 		}
+
+		if (suggestion.length >= 200) {
+			stopLoading();
+			stopLoading = null;
+			showTransientAutoPromptStatus(ctx, "Suggestion skipped — too long");
+			return;
+		}
+
+		if (ctx.ui.getEditorText().length > 0) {
+			stopLoading();
+			stopLoading = null;
+			showTransientAutoPromptStatus(ctx, "Suggestion ready — clear the draft to view it");
+			return;
+		}
+
+		stopLoading();
+		stopLoading = null;
+		pi.events.emit("auto-prompt:suggest", { text: suggestion });
 	} catch (err: unknown) {
 		if (err instanceof Error && err.name === "AbortError") return;
-		// Silently fail — don't break the user's flow
+		if (stopLoading) {
+			stopLoading();
+			stopLoading = null;
+		}
+		const shortReason = formatAutoPromptError(err);
+		showTransientAutoPromptStatus(ctx, "Auto Prompt failed");
+		ctx.ui.notify(`Auto Prompt failed: ${shortReason}`, "warning");
 	} finally {
+		if (stopLoading) stopLoading();
 		if (pendingController === controller) {
 			pendingController = null;
 		}
@@ -726,7 +796,7 @@ async function improveCurrentDraft(pi: ExtensionAPI, ctx: ExtensionContext, expl
 	let stopLoading: (() => void) | null = null;
 
 	try {
-		stopLoading = startImproveLoadingStatus(ctx);
+		stopLoading = startLoadingStatus(ctx, "Improving prompt…");
 		const prompt = buildImprovementPrompt(
 			draft,
 			conversationContext,
@@ -769,12 +839,12 @@ async function improveCurrentDraft(pi: ExtensionAPI, ctx: ExtensionContext, expl
 			return;
 		}
 
+		const changed = hasMeaningfulPromptChange(draft, improved);
 		ctx.ui.setEditorText(improved);
-		ctx.ui.notify("Prompt improved", "success");
+		ctx.ui.notify(changed ? "Prompt improved" : "Prompt already looked good — no meaningful changes", changed ? "success" : "info");
 	} catch (err: unknown) {
 		if (err instanceof Error && err.name === "AbortError") return;
-		const reason = err instanceof Error ? err.message : "Unknown error";
-		const shortReason = reason.length > 120 ? `${reason.slice(0, 117)}...` : reason;
+		const shortReason = formatAutoPromptError(err);
 		ctx.ui.notify(`Failed to improve prompt: ${shortReason}`, "warning");
 	} finally {
 		if (stopLoading) stopLoading();

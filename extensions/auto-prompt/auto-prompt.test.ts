@@ -8,6 +8,8 @@ import {
 	extractCommands,
 	extractBaselineGuidelines,
 	extractAssistantOutput,
+	normalizeComparablePromptText,
+	hasMeaningfulPromptChange,
 	detectPhase,
 	detectUnverifiedImplementation,
 	type ConversationPhase,
@@ -155,6 +157,15 @@ test("extractAssistantOutput falls back to thinking when text is unavailable", (
 	assert.equal(out, "Fallback response");
 });
 
+test("normalizeComparablePromptText collapses whitespace for no-op detection", () => {
+	assert.equal(normalizeComparablePromptText("  Fix   login\n\nnow  "), "Fix login now");
+});
+
+test("hasMeaningfulPromptChange ignores whitespace-only rewrites", () => {
+	assert.equal(hasMeaningfulPromptChange("Fix login now", "  Fix   login\nnow  "), false);
+	assert.equal(hasMeaningfulPromptChange("Fix login now", "Fix login now and verify it"), true);
+});
+
 // --- Phase detection ---
 
 test("detectPhase identifies debugging phase", () => {
@@ -295,13 +306,15 @@ test("buildSuggestionPrompt includes planning phase guidance", () => {
 
 // --- Word limit updated ---
 
-test("buildSuggestionPrompt allows 10-40 words for richer prompts", () => {
+test("buildSuggestionPrompt enforces concise suggestions under 200 characters", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Done.\n\nAssistant: Great.",
 	);
 
 	assert.match(prompt, /10-40 words/);
 	assert.match(prompt, /One or two sentences max/);
+	assert.match(prompt, /Never exceed 200 characters/);
+	assert.match(prompt, /Hard limit: 200 characters maximum/);
 });
 
 test("extractBaselineGuidelines captures AGENTS constraints", () => {

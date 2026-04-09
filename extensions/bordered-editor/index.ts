@@ -27,7 +27,17 @@ const ANSI_RESET = "\x1b[0m";
 const PADDING_X = 2;
 
 export function pickPrimaryExtensionStatus(statuses: ReadonlyMap<string, string>): string | null {
-	return statuses.get("dumb-zone") ?? statuses.values().next().value ?? null;
+	const highPriorityKeys = ["auto-prompt", "review"];
+	for (const key of highPriorityKeys) {
+		const status = statuses.get(key);
+		if (status) return status;
+	}
+
+	for (const [key, value] of statuses) {
+		if (key !== "dumb-zone" && key !== "workflow-mode") return value;
+	}
+
+	return statuses.get("dumb-zone") ?? statuses.get("workflow-mode") ?? statuses.values().next().value ?? null;
 }
 
 interface WorktreeEntry {
