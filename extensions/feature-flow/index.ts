@@ -10,6 +10,7 @@ import {
 	removeWorktree,
 	slugifyFeature,
 } from "./lib/worktree.js";
+import { buildKickoffPrompt } from "./prompt.ts";
 
 function stripWrappingQuotes(input: string): string {
 	let text = input.trim();
@@ -72,58 +73,6 @@ function featureHelpText(): string {
 	].join("\n");
 }
 
-function buildKickoffPrompt(input: {
-	brief: string;
-	slug: string;
-	branch: string;
-	workspacePath: string;
-	fallbackUsed: boolean;
-	fallbackReason?: string;
-}): string {
-	const fallbackSection = input.fallbackUsed
-		? [
-			"## Runtime Mode",
-			"Worktree creation failed, so this run is using single-working-copy fallback mode.",
-			input.fallbackReason ? `Reason: ${input.fallbackReason}` : "",
-		]
-				.filter(Boolean)
-				.join("\n")
-		: "";
-
-	return [
-		"You are starting a new feature workflow.",
-		"",
-		"## Feature Context",
-		`- Brief: ${input.brief}`,
-		`- Slug: ${input.slug}`,
-		`- Branch: ${input.branch}`,
-		`- Workspace: ${input.workspacePath}`,
-		fallbackSection,
-		"",
-		"## Required Workflow",
-		"1. Ask 3-5 clarifying questions with lettered options (A/B/C/...).",
-		`2. After answers, create PRD at .features/${input.slug}/prd.md (use the prd skill instructions).`,
-		"3. Open the generated PRD with open_file (mode: view), summarize it in chat, and ask for explicit approval (user can reply 'pro').",
-		`4. After PRD approval, create technical design at .features/${input.slug}/design.md (use design-solution skill).`,
-		"5. Open the generated design with open_file (mode: view), summarize it in chat, and ask for explicit approval (user can reply 'pro').",
-		`6. After design approval, create tasks under .features/${input.slug}/tasks/ (use simple-tasks skill).`,
-		"7. Summarize tasks in chat, confirm readiness, then proceed to implementation.",
-		"",
-		"## UX Rules",
-		"- Keep the workflow conversational and smooth.",
-		"- Automatically open generated PRD/design files with open_file; do not require manual /open navigation.",
-		"- Use short status updates and clear next actions.",
-		"",
-		"## Hard Gates",
-		"- Do not proceed to design before PRD approval.",
-		"- Do not proceed to tasks before design approval.",
-		"- Keep outputs concise and actionable.",
-		"",
-		"Start now with clarifying questions.",
-	]
-		.filter(Boolean)
-		.join("\n");
-}
 
 function formatFeatureList(items: Array<{ branch?: string; path: string; dirty: boolean; isMain: boolean }>): string {
 	if (items.length === 0) return "No feature worktrees found (branch prefix feat/).";

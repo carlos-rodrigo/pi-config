@@ -18,11 +18,17 @@ Agent-facing knowledge lives in `docs/`:
 ```
 docs/
 ├── playbooks/     ← curated how-to guides (auto-maintained)
-├── features/      ← feature specs (PRD, design) + verification workflows
+├── features/      ← durable feature docs when they are worth writing
 │   └── archive/   ← completed features
 ```
 
 Tasks are separate in `.features/{feature}/tasks/` (ephemeral, operational).
+
+Documentation is demand-driven, not mandatory:
+- write docs when they clarify scope, preserve a durable decision, capture reusable verification, or prevent repeated rediscovery
+- skip docs that only restate the code, the diff, or temporary execution notes
+- use `docs/playbooks/` for reusable procedures/gotchas
+- use `docs/features/{feature}/` for concise briefs, designs, or verification workflows only when they materially help future work
 
 Load relevant playbooks during research — don't read everything upfront.
 

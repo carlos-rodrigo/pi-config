@@ -323,8 +323,9 @@ test("extractBaselineGuidelines captures AGENTS constraints", () => {
 - Never ship behavior change without test update
 - Do not guess requirements
 
-## Development Workflow
-- Plan → Design → Create Tasks → Implement → Ship
+## Workflow
+- Clarify if needed → Implement → Verify → Ship
+- Explore → Plan → Implement → Verify → Ship
 `;
 
 	const rules = extractBaselineGuidelines(systemPrompt, 5);

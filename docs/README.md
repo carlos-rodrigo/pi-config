@@ -7,7 +7,7 @@
 ```
 docs/
 ├── playbooks/     ← curated how-to guides (auto-maintained by agents)
-├── features/      ← feature specs (PRD, design) + verification workflows
+├── features/      ← durable feature docs when they are worth writing
 │   └── archive/   ← completed features
 ```
 
@@ -19,7 +19,15 @@ Curated guides for building specific types of things. Each playbook covers patte
 
 ## Features (`features/`)
 
-Durable feature knowledge: PRD, design docs, and verification workflows. Persists after feature completes (moved to `archive/`).
+Durable feature knowledge when it materially helps future work: concise briefs/PRDs, technical designs, and verification workflows. Persists after feature completes (moved to `archive/`).
+
+Write feature docs when they:
+- stabilize scope or requirements,
+- preserve a durable technical decision,
+- capture reusable verification,
+- or prevent repeated rediscovery.
+
+Do not create feature docs by default for every change.
 
 **Tasks live separately** in `.features/{name}/tasks/` — operational, ephemeral, not documentation.
 
@@ -27,5 +35,5 @@ Durable feature knowledge: PRD, design docs, and verification workflows. Persist
 
 - Playbooks follow the template in each file (Overview → Patterns → Constraints → Gotchas)
 - Playbooks stay under 200 lines — split if growing beyond that
-- Features include `workflows/` with descriptions of how to verify each workflow
-- Agents update relevant playbooks when discovering new patterns during implementation
+- Feature `workflows/` should capture reusable verification flows, not one-off notes
+- Agents update relevant docs only when they discover durable, reusable knowledge during implementation

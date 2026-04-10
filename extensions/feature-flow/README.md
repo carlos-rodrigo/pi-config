@@ -25,7 +25,13 @@ pi install ./extensions/feature-flow
 1. Generate a concise slug from the brief (or use `--slug`), then let you confirm/edit it in interactive mode
 2. Create worktree `../<repo>-<slug>` on branch `feat/<slug>` (auto-adds numeric suffix if needed)
 3. Open a tmux split pane by default (or a new window with `--window`) and run Pi with an auto-generated kickoff prompt
-4. Kickoff prompt enforces: clarifying questions → PRD approval → design approval → tasks, and auto-opens generated PRD/design files for immediate review
+4. Kickoff prompt enforces a **lightweight-first workflow**:
+   - briefly clarify/explore,
+   - choose the lightest fitting path (direct implementation, investigate+plan, or full feature workflow),
+   - create docs only when they materially help,
+   - auto-open any PRD/design docs that are created for immediate review
+
+There is **no mandatory PRD → design → tasks sequence** anymore. The extension now encourages useful documentation on demand instead of strict ceremony.
 
 ## Fallback behavior
 

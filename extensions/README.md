@@ -39,7 +39,7 @@ pi install ./extensions/verify
 | [auto-prompt](auto-prompt/) | Inline ghost text prompt suggestions (fish-style) |
 | [bordered-editor](bordered-editor/) | Bordered input editor with model/context/git info |
 | [document-reviewer](document-reviewer/) | Markdown review sessions with browser UI |
-| [feature-flow](feature-flow/) | Feature orchestration with Git worktrees |
+| [feature-flow](feature-flow/) | Lightweight-first feature orchestration with Git worktrees and docs on demand |
 | [file-opener](file-opener/) | Syntax-highlighted file viewer with diff support |
 | [git-blame](git-blame/) | Interactive git blame overlay |
 | [handoff](handoff/) | `/handoff` command + LLM-callable `handoff` tool for session transfer |
