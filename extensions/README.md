@@ -26,6 +26,7 @@ pi install ./extensions/worktree-manager
 pi install ./extensions/feature-flow
 pi install ./extensions/document-reviewer
 pi install ./extensions/handoff
+pi install ./extensions/focused-context
 pi install ./extensions/lazygit
 pi install ./extensions/git-blame
 pi install ./extensions/subagent
@@ -41,6 +42,7 @@ pi install ./extensions/verify
 | [document-reviewer](document-reviewer/) | Markdown review sessions with browser UI |
 | [feature-flow](feature-flow/) | Lightweight-first feature orchestration with Git worktrees and docs on demand |
 | [file-opener](file-opener/) | Syntax-highlighted file viewer with diff support |
+| [focused-context](focused-context/) | Topic briefs, bounded recon, drift detection, and handoff/compaction continuity |
 | [git-blame](git-blame/) | Interactive git blame overlay |
 | [handoff](handoff/) | `/handoff` command + LLM-callable `handoff` tool for session transfer |
 | [lazygit](lazygit/) | LazyGit launcher via tmux |
