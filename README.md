@@ -20,6 +20,7 @@ cd pi-config
 
 pi install ./extensions/bordered-editor.ts
 pi install ./extensions/auto-prompt.ts
+pi install ./extensions/branch-switcher/index.ts
 pi install ./extensions/file-opener.ts
 pi install ./extensions/web-tools.ts
 pi install ./extensions/workflow-modes.ts
@@ -55,6 +56,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 ### [Extensions](extensions/)
 
 - **[bordered-editor](extensions/README.md#bordered-editor)** — Custom input box with rounded borders and embedded status info (model, context usage, cost, git branch).
+- **[branch-switcher](extensions/branch-switcher/)** — Interactive `/branch` command for switching local and remote-only git branches from pi.
 - **[file-opener](extensions/README.md#file-opener)** — Open files in a syntax-highlighted overlay modal or in nvim via tmux, with built-in diff support. Adds `/open` command and `open_file` tool.
 - **[web-tools](extensions/README.md#web-tools)** — Web search and page fetch tools for agents. Adds `websearch` and `webfetch` tools with Opencode-style provider choices.
 - **[worktree-manager](extensions/README.md#worktree-manager)** — Git worktree lifecycle manager with `/ws` commands and `worktree_manage` tool.

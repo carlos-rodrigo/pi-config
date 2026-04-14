@@ -42,6 +42,7 @@ Load relevant playbooks during research — don't read everything upfront.
 | `focused-context` | Topic briefs + bounded recon + drift-aware session continuity across handoff/compaction |
 | `workflow-modes` | Smart/Deep/Fast agent modes with model switching |
 | `auto-prompt` | Ghost-text suggestions after each turn |
+| `branch-switcher` | Interactive `/branch` command for switching git branches |
 | `document-reviewer` | Browser-based document and PR review with inline comments |
 | `web-tools` | Web search and fetch tools |
 | `lazygit` | LazyGit integration via tmux |

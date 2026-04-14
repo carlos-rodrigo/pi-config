@@ -19,6 +19,7 @@ Or run the install script for symlink-based local development:
 ```bash
 pi install ./extensions/bordered-editor
 pi install ./extensions/auto-prompt
+pi install ./extensions/branch-switcher
 pi install ./extensions/file-opener
 pi install ./extensions/web-tools
 pi install ./extensions/workflow-modes
@@ -39,6 +40,7 @@ pi install ./extensions/verify
 |-----------|-------------|
 | [auto-prompt](auto-prompt/) | Inline ghost text prompt suggestions (fish-style) |
 | [bordered-editor](bordered-editor/) | Bordered input editor with model/context/git info |
+| [branch-switcher](branch-switcher/) | Interactive git branch switching with local + remote-only branch support |
 | [document-reviewer](document-reviewer/) | Markdown review sessions with browser UI |
 | [feature-flow](feature-flow/) | Lightweight-first feature orchestration with Git worktrees and docs on demand |
 | [file-opener](file-opener/) | Syntax-highlighted file viewer with diff support |
