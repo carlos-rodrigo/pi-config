@@ -10,6 +10,9 @@ import {
 	extractAssistantOutput,
 	normalizeComparablePromptText,
 	hasMeaningfulPromptChange,
+	normalizeConfiguredModel,
+	extractAutoPromptErrorMessage,
+	shouldRetryAutoPromptWithFallback,
 	detectPhase,
 	detectUnverifiedImplementation,
 	type ConversationPhase,
@@ -164,6 +167,41 @@ test("normalizeComparablePromptText collapses whitespace for no-op detection", (
 test("hasMeaningfulPromptChange ignores whitespace-only rewrites", () => {
 	assert.equal(hasMeaningfulPromptChange("Fix login now", "  Fix   login\nnow  "), false);
 	assert.equal(hasMeaningfulPromptChange("Fix login now", "Fix login now and verify it"), true);
+});
+
+test("normalizeConfiguredModel migrates legacy unsupported codex mini model", () => {
+	assert.deepEqual(normalizeConfiguredModel({ provider: "openai-codex", id: "gpt-5.1-codex-mini" }), {
+		provider: "openai-codex",
+		id: "gpt-5.3-codex-spark",
+	});
+});
+
+test("normalizeConfiguredModel preserves supported models", () => {
+	assert.deepEqual(normalizeConfiguredModel({ provider: "anthropic", id: "claude-sonnet-4-6" }), {
+		provider: "anthropic",
+		id: "claude-sonnet-4-6",
+	});
+});
+
+test("extractAutoPromptErrorMessage unwraps JSON detail payloads", () => {
+	const err = new Error('{"detail":"The \'gpt-5.1-codex-mini\' model is not supported when using Codex with a ChatGPT account."}');
+	assert.equal(
+		extractAutoPromptErrorMessage(err),
+		"The 'gpt-5.1-codex-mini' model is not supported when using Codex with a ChatGPT account.",
+	);
+});
+
+test("shouldRetryAutoPromptWithFallback retries unsupported-model errors only", () => {
+	assert.equal(
+		shouldRetryAutoPromptWithFallback(
+			new Error('{"detail":"The \'gpt-5.1-codex-mini\' model is not supported when using Codex with a ChatGPT account."}'),
+		),
+		true,
+	);
+	assert.equal(
+		shouldRetryAutoPromptWithFallback(new Error("You have hit your ChatGPT usage limit.")),
+		false,
+	);
 });
 
 // --- Phase detection ---

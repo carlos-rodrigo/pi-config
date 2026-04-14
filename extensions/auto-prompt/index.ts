@@ -27,7 +27,7 @@
  *
  * Commands:
  *   /suggest          Toggle auto-suggestions on/off
- *   /suggest model    Change the suggestion model (e.g. /suggest model openai-codex/gpt-5.1-codex-mini)
+ *   /suggest model    Change the suggestion model (e.g. /suggest model openai-codex/gpt-5.3-codex-spark)
  *   /suggest now      Manually trigger a suggestion
  *   /improve          Manually improve the current editor text
  */
@@ -44,15 +44,21 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 
 // --- Configuration defaults ---
 
-const PRIMARY_MODEL = { provider: "openai-codex" as const, id: "gpt-5.1-codex-mini" as const };
-const FALLBACK_MODEL = { provider: "openai-codex" as const, id: "gpt-5.3-codex-spark" as const };
+type ModelSelection = { provider: string; id: string };
+
+const LEGACY_UNSUPPORTED_MODEL = {
+	provider: "openai-codex" as const,
+	id: "gpt-5.1-codex-mini" as const,
+};
+const PRIMARY_MODEL = { provider: "openai-codex" as const, id: "gpt-5.3-codex-spark" as const };
+const FALLBACK_MODEL = { provider: "openai-codex" as const, id: "gpt-5.3-codex" as const };
 
 // --- State ---
 
 let enabled = true;
 let pendingController: AbortController | null = null;
 let currentCtx: ExtensionContext | undefined;
-let configuredModel: { provider: string; id: string } = { ...PRIMARY_MODEL };
+let configuredModel: ModelSelection = { ...PRIMARY_MODEL };
 let statusClearTimer: ReturnType<typeof setTimeout> | null = null;
 
 // --- Helpers ---
@@ -515,7 +521,15 @@ ${conversationContext}
 </recent_conversation>${fileContext}${cmdContext}${baselineContext}`;
 }
 
-function resolveModel(config: { provider: string; id: string }): Model<Api> | null {
+function sameModelSelection(a: ModelSelection, b: ModelSelection): boolean {
+	return a.provider === b.provider && a.id === b.id;
+}
+
+export function normalizeConfiguredModel(config: ModelSelection): ModelSelection {
+	return sameModelSelection(config, LEGACY_UNSUPPORTED_MODEL) ? { ...PRIMARY_MODEL } : config;
+}
+
+function resolveModel(config: ModelSelection): Model<Api> | null {
 	if (!config.provider || !config.id) return null;
 
 	try {
@@ -528,8 +542,32 @@ function resolveModel(config: { provider: string; id: string }): Model<Api> | nu
 	}
 }
 
-function resolveModelSync(): Model<Api> | null {
-	return resolveModel(configuredModel) ?? resolveModel(FALLBACK_MODEL);
+function resolveModelSelections(): Model<Api>[] {
+	const resolved: Model<Api>[] = [];
+	const seen = new Set<string>();
+
+	for (const selection of [normalizeConfiguredModel(configuredModel), FALLBACK_MODEL]) {
+		const key = `${selection.provider}/${selection.id}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+
+		const model = resolveModel(selection);
+		if (model) resolved.push(model);
+	}
+
+	return resolved;
+}
+
+type ResolvedModelCandidate = { model: Model<Api>; apiKey: string };
+
+async function resolveRequestCandidates(ctx: ExtensionContext): Promise<ResolvedModelCandidate[]> {
+	const candidates: ResolvedModelCandidate[] = [];
+	for (const model of resolveModelSelections()) {
+		const apiKey = await ctx.modelRegistry.getApiKeyForProvider(model.provider);
+		if (!apiKey) continue;
+		candidates.push({ model, apiKey });
+	}
+	return candidates;
 }
 
 const AUTOPROMPT_SYSTEM_INSTRUCTIONS =
@@ -599,9 +637,51 @@ function showTransientAutoPromptStatus(ctx: ExtensionContext, text: string, dura
 	statusClearTimer = timer;
 }
 
+export function extractAutoPromptErrorMessage(err: unknown): string {
+	const raw = (err instanceof Error ? err.message : String(err)).trim();
+	if (!raw) return "Unknown error";
+
+	try {
+		const parsed = JSON.parse(raw);
+		if (typeof parsed?.detail === "string") return parsed.detail;
+		if (typeof parsed?.message === "string") return parsed.message;
+		if (typeof parsed?.error?.message === "string") return parsed.error.message;
+	} catch {
+		// Fall through to raw error text.
+	}
+
+	return raw;
+}
+
+export function shouldRetryAutoPromptWithFallback(err: unknown): boolean {
+	const reason = extractAutoPromptErrorMessage(err);
+	return /model/i.test(reason) && /(not supported|unsupported|not found|unknown|unavailable)/i.test(reason);
+}
+
 function formatAutoPromptError(err: unknown): string {
-	const reason = err instanceof Error ? err.message : "Unknown error";
+	const reason = extractAutoPromptErrorMessage(err);
 	return reason.length > 120 ? `${reason.slice(0, 117)}...` : reason;
+}
+
+async function runWithModelFallback<T>(
+	candidates: ResolvedModelCandidate[],
+	task: (candidate: ResolvedModelCandidate) => Promise<T>,
+): Promise<T> {
+	let lastError: unknown;
+
+	for (let i = 0; i < candidates.length; i++) {
+		try {
+			return await task(candidates[i]);
+		} catch (err) {
+			if (err instanceof Error && err.name === "AbortError") throw err;
+			lastError = err;
+			if (i === candidates.length - 1 || !shouldRetryAutoPromptWithFallback(err)) {
+				throw err;
+			}
+		}
+	}
+
+	throw lastError ?? new Error("Model request failed");
 }
 
 function startLoadingStatus(ctx: ExtensionContext, label: string): () => void {
@@ -634,16 +714,16 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 
 	cancelPending();
 
-	const model = resolveModelSync();
-	if (!model) {
+	const availableModels = resolveModelSelections();
+	if (availableModels.length === 0) {
 		ctx.ui.notify("Auto Prompt: no model available, suggestions disabled", "warning");
 		enabled = false;
 		pi.appendEntry("auto-prompt", { enabled });
 		return;
 	}
 
-	const apiKey = await ctx.modelRegistry.getApiKeyForProvider(model.provider);
-	if (!apiKey) {
+	const requestCandidates = await resolveRequestCandidates(ctx);
+	if (requestCandidates.length === 0) {
 		ctx.ui.notify("Auto Prompt: no API key available, suggestions disabled", "warning");
 		enabled = false;
 		pi.appendEntry("auto-prompt", { enabled });
@@ -691,12 +771,15 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 			? `${basePrompt}\n\n<revision_request>\n${revisionHint}\n</revision_request>`
 			: basePrompt;
 
-		const response = await complete(
-			model,
-			buildCompletionContext(prompt),
-			buildCompletionOptions(model, apiKey, controller.signal),
-		);
-		ensureCompletionSucceeded(response);
+		const response = await runWithModelFallback(requestCandidates, async ({ model, apiKey }) => {
+			const response = await complete(
+				model,
+				buildCompletionContext(prompt),
+				buildCompletionOptions(model, apiKey, controller.signal),
+			);
+			ensureCompletionSucceeded(response);
+			return response;
+		});
 
 		return extractAssistantOutput(response.content);
 	};
@@ -771,14 +854,14 @@ async function improveCurrentDraft(pi: ExtensionAPI, ctx: ExtensionContext, expl
 	cancelPending();
 	pi.events.emit("auto-prompt:clear", {});
 
-	const model = resolveModelSync();
-	if (!model) {
+	const availableModels = resolveModelSelections();
+	if (availableModels.length === 0) {
 		ctx.ui.notify("Auto Prompt: no model available", "warning");
 		return;
 	}
 
-	const apiKey = await ctx.modelRegistry.getApiKeyForProvider(model.provider);
-	if (!apiKey) {
+	const requestCandidates = await resolveRequestCandidates(ctx);
+	if (requestCandidates.length === 0) {
 		ctx.ui.notify("Auto Prompt: no API key available", "warning");
 		return;
 	}
@@ -805,12 +888,15 @@ async function improveCurrentDraft(pi: ExtensionAPI, ctx: ExtensionContext, expl
 			phase,
 			baselineGuidelines,
 		);
-		const response = await complete(
-			model,
-			buildCompletionContext(prompt),
-			buildCompletionOptions(model, apiKey, controller.signal),
-		);
-		ensureCompletionSucceeded(response);
+		const response = await runWithModelFallback(requestCandidates, async ({ model, apiKey }) => {
+			const response = await complete(
+				model,
+				buildCompletionContext(prompt),
+				buildCompletionOptions(model, apiKey, controller.signal),
+			);
+			ensureCompletionSucceeded(response);
+			return response;
+		});
 
 		if (controller.signal.aborted) return;
 
@@ -818,12 +904,15 @@ async function improveCurrentDraft(pi: ExtensionAPI, ctx: ExtensionContext, expl
 
 		if (!improved) {
 			const retryPrompt = `Rewrite this draft into one concise, actionable prompt for a coding agent. Preserve intent. Return only the rewritten prompt text.\n\nDraft: ${draft}`;
-			const retryResponse = await complete(
-				model,
-				buildCompletionContext(retryPrompt),
-				buildCompletionOptions(model, apiKey, controller.signal),
-			);
-			ensureCompletionSucceeded(retryResponse);
+			const retryResponse = await runWithModelFallback(requestCandidates, async ({ model, apiKey }) => {
+				const retryResponse = await complete(
+					model,
+					buildCompletionContext(retryPrompt),
+					buildCompletionOptions(model, apiKey, controller.signal),
+				);
+				ensureCompletionSucceeded(retryResponse);
+				return retryResponse;
+			});
 
 			if (controller.signal.aborted) return;
 			improved = extractAssistantOutput(retryResponse.content);
@@ -897,7 +986,7 @@ export default function (pi: ExtensionAPI) {
 			};
 			if (e.type === "custom" && e.customType === "auto-prompt") {
 				if (e.data?.enabled !== undefined) enabled = e.data.enabled;
-				if (e.data?.model) configuredModel = e.data.model;
+				if (e.data?.model) configuredModel = normalizeConfiguredModel(e.data.model);
 			}
 		}
 	});
@@ -953,8 +1042,17 @@ export default function (pi: ExtensionAPI) {
 					ctx.ui.notify("Usage: /suggest model <provider>/<model-id>", "warning");
 					return;
 				}
-				configuredModel = { provider: parts[0], id: parts[1] };
+				const requestedModel: ModelSelection = { provider: parts[0], id: parts[1] };
+				const normalizedModel = normalizeConfiguredModel(requestedModel);
+				configuredModel = normalizedModel;
 				pi.appendEntry("auto-prompt", { enabled, model: configuredModel });
+				if (!sameModelSelection(requestedModel, normalizedModel)) {
+					ctx.ui.notify(
+						`${requestedModel.provider}/${requestedModel.id} is not supported with ChatGPT Codex login. Using ${configuredModel.provider}/${configuredModel.id} instead.`,
+						"warning",
+					);
+					return;
+				}
 				ctx.ui.notify(`Auto Prompt model set to ${configuredModel.provider}/${configuredModel.id}`, "info");
 				return;
 			}

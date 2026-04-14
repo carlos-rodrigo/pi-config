@@ -24,7 +24,7 @@ After the agent finishes responding, a gray suggestion appears inside the editor
 
 ## How it works
 
-1. After `agent_end`, calls an LLM (default GPT-5.1 Codex Mini, fallback GPT-5.3 Codex Spark) with the last few messages
+1. After `agent_end`, calls an LLM (default GPT-5.3 Codex Spark, fallback GPT-5.3 Codex) with the last few messages
 2. The LLM returns one short suggested next-step prompt the user can send to move the work forward
    (it treats AGENTS/system workflow rules as baseline context, so suggestions focus on concrete next-step deltas instead of repeating generic process reminders)
 3. The suggestion appears as gray ghost text in the editor (rendered by `bordered-editor`)
@@ -70,13 +70,13 @@ Example: If the agent says "Done! I've created the webhook handler" without ment
 | `/suggest` | Toggle auto-suggestions on/off |
 | `/suggest now` | Manually trigger a suggestion |
 | `/suggest model` | Show current suggestion model |
-| `/suggest model <provider>/<id>` | Change model (e.g. `/suggest model openai-codex/gpt-5.1-codex-mini`) |
+| `/suggest model <provider>/<id>` | Change model (e.g. `/suggest model openai-codex/gpt-5.3-codex-spark`) |
 | `/improve [text]` | Improve the current editor text (or explicit text argument) using the same prompt-quality principles |
 
 ## Configuration
 
-- **Default model:** `openai-codex/gpt-5.1-codex-mini`
-- **Fallback model:** `openai-codex/gpt-5.3-codex-spark` (if primary unavailable)
+- **Default model:** `openai-codex/gpt-5.3-codex-spark`
+- **Fallback model:** `openai-codex/gpt-5.3-codex` (if primary unavailable or unsupported)
 - State (enabled/disabled, model) persists across session restarts
 - Agent mode context (smart/deep/fast) is included in the suggestion prompt for relevance
 
