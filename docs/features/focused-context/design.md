@@ -336,7 +336,7 @@ Responsibilities:
 - select bounded sources
 - assemble helper-model prompt
 - return compact topic slice
-- support manual `/brief-refresh` and agent `brief_ensure`
+- support manual `/brief-new`, `/brief-refresh`, `/brief-capture`, and agent `brief_ensure`
 
 ### Module: Drift Monitor
 
@@ -363,11 +363,12 @@ Responsibilities:
 V1 manual controls:
 - `/brief` — show the active brief and freshness summary
 - `/brief-pin <topic>` — pin a topic for this session
-- `/brief-refresh [topic]` — force refresh of the active or named topic
+- `/brief-new <topic>` — create a new brief for a topic
+- `/brief-refresh` — force refresh of the current brief
+- `/brief-capture [topic]` — infer the current work topic from session lineage and capture a brief from existing work history
 - `/brief-list` — list available topics and freshness state
 
-No `/brief-new` in v1.
-Creation happens through ensure/refresh.
+Creation happens through `/brief-new` for manual flows, `/brief-capture` for recovery from existing session history, and `brief_ensure` for agent-driven ensure/refresh.
 
 ### Tool
 
@@ -474,8 +475,9 @@ This slice should let a user:
 ### Acceptance criteria
 
 - [ ] Project-local and global briefs are both discoverable, with local override
-- [ ] `/brief`, `/brief-pin`, `/brief-refresh`, and `/brief-list` work end-to-end
-- [ ] Refresh can create a missing brief
+- [ ] `/brief`, `/brief-pin`, `/brief-new`, `/brief-refresh`, `/brief-capture`, and `/brief-list` work end-to-end
+- [ ] `/brief-new` can create a missing brief
+- [ ] `/brief-capture` can recover a brief topic from session lineage and build or refresh the brief from prior work history
 - [ ] Refresh preserves `## Manual Notes`
 - [ ] Active topic and freshness status survive reloads via extension state
 

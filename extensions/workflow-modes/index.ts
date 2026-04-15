@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 
 type AgentMode = "smart" | "deep" | "fast";
-
+type ModelLike = { provider?: string; id?: string; model?: string } | undefined;
 
 const MODE_LABEL: Record<AgentMode, string> = {
 	smart: "Smart",
@@ -43,6 +43,35 @@ export function normalizeMode(raw: string | undefined): AgentMode | undefined {
 	return undefined;
 }
 
+function getModeFlag(pi: ExtensionAPI): AgentMode | undefined {
+	return normalizeMode(
+		(pi.getFlag("workflow-mode") as string | undefined) ?? (pi.getFlag("mode") as string | undefined),
+	);
+}
+
+function hasExplicitStartupOverrides(argv: string[] = process.argv.slice(2)): boolean {
+	const hasFlag = (name: string) => argv.some((arg) => arg === name || arg.startsWith(`${name}=`));
+	return hasFlag("--model") || hasFlag("--models") || hasFlag("--thinking");
+}
+
+function getModelId(model: ModelLike): string | undefined {
+	if (!model) return undefined;
+	return model.id ?? model.model;
+}
+
+function inferModeFromModel(model: ModelLike): AgentMode | undefined {
+	const modelId = getModelId(model);
+	if (!model?.provider || !modelId) return undefined;
+
+	for (const [mode, profile] of Object.entries(MODE_PROFILE) as [AgentMode, ModeProfile][]) {
+		if (profile.models.some((candidate) => candidate.provider === model.provider && candidate.model === modelId)) {
+			return mode;
+		}
+	}
+
+	return undefined;
+}
+
 export default function (pi: ExtensionAPI) {
 	let currentMode: AgentMode = "smart";
 	let currentCtx: ExtensionContext | undefined;
@@ -57,13 +86,18 @@ export default function (pi: ExtensionAPI) {
 		return [...new Set(pi.getAllTools().map((tool) => tool.name))];
 	}
 
+	function syncModeState(ctx: ExtensionContext): void {
+		pi.setActiveTools(getActiveToolsForMode());
+		updateStatus(ctx);
+		pi.events.emit("workflow:mode", { mode: currentMode });
+	}
+
 	async function applyMode(
 		mode: AgentMode,
 		ctx: ExtensionContext,
 		options?: { persist?: boolean; notify?: boolean },
 	): Promise<void> {
 		currentMode = mode;
-		pi.setActiveTools(getActiveToolsForMode());
 
 		const profile = MODE_PROFILE[mode];
 		let selectedModelCandidate: ModeModelCandidate | undefined;
@@ -98,8 +132,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		pi.setThinkingLevel(profile.thinking);
-		updateStatus(ctx);
-		pi.events.emit("workflow:mode", { mode });
+		syncModeState(ctx);
 
 		if (options?.persist !== false) {
 			pi.appendEntry("workflow-mode", { mode });
@@ -129,7 +162,7 @@ export default function (pi: ExtensionAPI) {
 		return undefined;
 	}
 
-	pi.registerFlag("mode", {
+	pi.registerFlag("workflow-mode", {
 		description: "Start in agent mode (smart | deep | fast)",
 		type: "string",
 	});
@@ -204,10 +237,17 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
 
-		const flagMode = normalizeMode(pi.getFlag("mode") as string | undefined);
+		const flagMode = getModeFlag(pi);
 		const restoredMode = restoreModeFromSession(ctx);
-		const mode = flagMode ?? restoredMode ?? currentMode;
+		const inferredMode = inferModeFromModel(ctx.model as ModelLike);
 
+		if (hasExplicitStartupOverrides() && !flagMode) {
+			currentMode = inferredMode ?? currentMode;
+			syncModeState(ctx);
+			return;
+		}
+
+		const mode = flagMode ?? restoredMode ?? inferredMode ?? currentMode;
 		await applyMode(mode, ctx, { persist: false, notify: false });
 	});
 

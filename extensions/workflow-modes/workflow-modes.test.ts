@@ -8,7 +8,12 @@ import workflowModesExtension, { normalizeMode } from "./index.ts";
 type ShortcutHandler = { description: string; handler: (...args: any[]) => unknown };
 type PiEventHandler = (...args: any[]) => unknown;
 
-function createPiHarness(options?: { flagMode?: string; tools?: Array<{ name: string }>; entries?: any[] }) {
+function createPiHarness(options?: {
+	workflowMode?: string;
+	legacyFlagMode?: string;
+	tools?: Array<{ name: string }>;
+	entries?: any[];
+}) {
 	const shortcuts = new Map<string, ShortcutHandler>();
 	const commands = new Map<string, { description: string; handler: (...args: any[]) => unknown }>();
 	const eventHandlers = new Map<string, PiEventHandler>();
@@ -62,13 +67,19 @@ function createPiHarness(options?: { flagMode?: string; tools?: Array<{ name: st
 			},
 			appendEntry() {},
 			getFlag(name: string) {
-				return name === "mode" ? options?.flagMode : undefined;
+				if (name === "workflow-mode") return options?.workflowMode;
+				if (name === "mode") return options?.legacyFlagMode;
+				return undefined;
 			},
 		},
 	};
 }
 
-function createContext(options?: { availableModels?: Set<string> }) {
+function createContext(options?: {
+	availableModels?: Set<string>;
+	entries?: any[];
+	currentModel?: { provider: string; id: string };
+}) {
 	const notifications: Array<{ message: string; level: string }> = [];
 	const statuses: Array<{ key: string; value: string }> = [];
 
@@ -93,6 +104,7 @@ function createContext(options?: { availableModels?: Set<string> }) {
 					return undefined;
 				},
 			},
+			model: options?.currentModel,
 			modelRegistry: {
 				find(provider: string, model: string) {
 					const key = `${provider}/${model}`;
@@ -102,7 +114,7 @@ function createContext(options?: { availableModels?: Set<string> }) {
 			},
 			sessionManager: {
 				getEntries() {
-					return [];
+					return options?.entries ?? [];
 				},
 			},
 		},
@@ -225,8 +237,8 @@ test("/mode command accepts aliases and rejects unknown values", async () => {
 	assert.match(notifications.at(-1)?.message ?? "", /Unknown mode\. Use: smart, deep, or fast/i);
 });
 
-test("session_start applies flag mode and keeps edit/write tools active", async () => {
-	const { pi, eventHandlers, getActiveTools, getSelectedModel, getThinkingLevel } = createPiHarness({ flagMode: "fast" });
+test("session_start applies workflow-mode flag and keeps edit/write tools active", async () => {
+	const { pi, eventHandlers, getActiveTools, getSelectedModel, getThinkingLevel } = createPiHarness({ workflowMode: "fast" });
 	const { ctx } = createContext();
 
 	workflowModesExtension(pi as any);
@@ -240,6 +252,51 @@ test("session_start applies flag mode and keeps edit/write tools active", async 
 	assert.ok(getActiveTools().includes("edit"));
 	assert.ok(getActiveTools().includes("write"));
 	assert.ok(getActiveTools().includes("open_file"));
+});
+
+test("session_start preserves explicit CLI model selection", async () => {
+	const originalArgv = process.argv;
+	process.argv = [originalArgv[0] ?? "node", originalArgv[1] ?? "test", "--model", "openai-codex/gpt-5.4"];
+
+	try {
+		const { pi, eventHandlers, getActiveTools, getSelectedModel, getThinkingLevel } = createPiHarness();
+		const { ctx } = createContext({ currentModel: { provider: "openai-codex", id: "gpt-5.4" } });
+
+		workflowModesExtension(pi as any);
+
+		const sessionStart = eventHandlers.get("session_start");
+		assert.ok(sessionStart);
+		await sessionStart?.({}, ctx as any);
+
+		assert.equal(getSelectedModel(), undefined);
+		assert.equal(getThinkingLevel(), undefined);
+		assert.ok(getActiveTools().includes("edit"));
+		assert.ok(getActiveTools().includes("write"));
+		assert.ok(getActiveTools().includes("open_file"));
+	} finally {
+		process.argv = originalArgv;
+	}
+});
+
+test("session_start workflow-mode flag overrides explicit CLI model selection", async () => {
+	const originalArgv = process.argv;
+	process.argv = [originalArgv[0] ?? "node", originalArgv[1] ?? "test", "--model", "openai-codex/gpt-5.4"];
+
+	try {
+		const { pi, eventHandlers, getSelectedModel, getThinkingLevel } = createPiHarness({ workflowMode: "fast" });
+		const { ctx } = createContext({ currentModel: { provider: "openai-codex", id: "gpt-5.4" } });
+
+		workflowModesExtension(pi as any);
+
+		const sessionStart = eventHandlers.get("session_start");
+		assert.ok(sessionStart);
+		await sessionStart?.({}, ctx as any);
+
+		assert.deepEqual(getSelectedModel(), { provider: "anthropic", model: "claude-sonnet-4-6" });
+		assert.equal(getThinkingLevel(), "off");
+	} finally {
+		process.argv = originalArgv;
+	}
 });
 
 test("legacy workflow behavior hooks are removed", () => {

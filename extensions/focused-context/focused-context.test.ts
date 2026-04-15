@@ -4,6 +4,8 @@ import {mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync} from "node:
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 
+import {SessionManager} from "@mariozechner/pi-coding-agent";
+
 import focusedContextExtension, {
 	buildFocusedCompactionSummary,
 	createFocusedContextExtension,
@@ -11,7 +13,7 @@ import focusedContextExtension, {
 	renderBriefEnsureText,
 	serializeCompactionMessages,
 } from "./index.ts";
-import {collectRefreshSources, renderBriefDocument, refreshBrief, resolveRefreshModel} from "./brief-engine.ts";
+import {collectRefreshSources, renderBriefDocument, refreshBrief, resolveRefreshModel, type RefreshSource} from "./brief-engine.ts";
 import {computeStaleReasons, hasRepeatedExplorationLoop} from "./drift-monitor.ts";
 import {renderLatestHandoffSource} from "./handoff-link.ts";
 import {HANDOFF_SESSION_STARTED_EVENT} from "../handoff/events.ts";
@@ -27,6 +29,37 @@ function makeTempDir() {
 function writeBrief(dir: string, name: string, content: string) {
 	mkdirSync(dir, {recursive: true});
 	writeFileSync(join(dir, name), content, "utf8");
+}
+
+function makeMessages() {
+	return {
+		user(text: string) {
+			return {
+				role: "user" as const,
+				content: text,
+				timestamp: Date.now(),
+			};
+		},
+		assistant(text: string) {
+			return {
+				role: "assistant" as const,
+				content: [{type: "text" as const, text}],
+				api: "anthropic-messages" as const,
+				provider: "anthropic",
+				model: "test-model",
+				usage: {
+					input: 1,
+					output: 1,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 2,
+					cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0},
+				},
+				stopReason: "stop" as const,
+				timestamp: Date.now(),
+			};
+		},
+	};
 }
 
 function sampleBrief(
@@ -79,6 +112,7 @@ function createHarness(options?: {
 	const eventHandlers = new Map<string, EventHandler>();
 	const tools = new Map<string, any>();
 	const appendEntries: Array<{customType: string; data: unknown}> = [];
+	const sentMessages: Array<{message: unknown; options: unknown}> = [];
 	const eventBusHandlers = new Map<string, ((data: unknown) => unknown)[]>();
 
 	const extension = options?.deps ? createFocusedContextExtension(options.deps) : focusedContextExtension;
@@ -94,6 +128,9 @@ function createHarness(options?: {
 		},
 		appendEntry(customType: string, data: unknown) {
 			appendEntries.push({customType, data});
+		},
+		sendMessage(message: unknown, options?: unknown) {
+			sentMessages.push({message, options});
 		},
 		events: {
 			on(name: string, handler: (data: unknown) => unknown) {
@@ -116,7 +153,7 @@ function createHarness(options?: {
 		}
 	}
 
-	return {commands, eventHandlers, tools, appendEntries, emitEvent};
+	return {commands, eventHandlers, tools, appendEntries, sentMessages, emitEvent};
 }
 
 async function flushUiTimers() {
@@ -133,6 +170,7 @@ function createCtx(
 		sessionFile?: string;
 		getBranch?: () => any[];
 		getLeafId?: () => string;
+		sessionManager?: any;
 	},
 ) {
 	const editorTexts: string[] = [];
@@ -173,23 +211,25 @@ function createCtx(
 					},
 				},
 			},
-			sessionManager: {
-				getEntries() {
-					return options?.entries ?? [];
-				},
-				getSessionId() {
-					return options?.sessionId ?? "session-1";
-				},
-				getSessionFile() {
-					return options?.sessionFile;
-				},
-				getBranch() {
-					return options?.getBranch ? options.getBranch() : [];
-				},
-				getLeafId() {
-					return options?.getLeafId ? options.getLeafId() : "leaf-1";
-				},
-			},
+			sessionManager:
+				options?.sessionManager ??
+				({
+					getEntries() {
+						return options?.entries ?? [];
+					},
+					getSessionId() {
+						return options?.sessionId ?? "session-1";
+					},
+					getSessionFile() {
+						return options?.sessionFile;
+					},
+					getBranch() {
+						return options?.getBranch ? options.getBranch() : [];
+					},
+					getLeafId() {
+						return options?.getLeafId ? options.getLeafId() : "leaf-1";
+					},
+				} as any),
 		},
 	};
 }
@@ -500,33 +540,397 @@ test("/brief-pin persists canonical topic state and updates status", async (t) =
 	assert.match(notifications.at(-1)?.message ?? "", /Pinned brief topic: billing/);
 });
 
-test("/brief-refresh uses the refresh engine result and updates the active topic state", async () => {
+test("/brief-pin supports fuzzy topic lookup", async (t) => {
 	const projectDir = makeTempDir();
-	const {commands, appendEntries} = createHarness({
+	t.after(() => rmSync(projectDir, {recursive: true, force: true}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "branch-switcher.md", sampleBrief("branch-switcher", "Branch Switcher", {aliases: ["branch"]}));
+
+	const {commands, appendEntries} = createHarness();
+	const {ctx, editorTexts, statuses, notifications} = createCtx(projectDir);
+	const command = commands.get("brief-pin");
+	assert.ok(command);
+
+	await command.handler("branch sw", ctx as any);
+
+	assert.deepEqual(appendEntries.at(-1), {
+		customType: "focused-context",
+		data: {activeTopic: "branch-switcher", pinnedTopic: "branch-switcher"},
+	});
+	assert.deepEqual(statuses.at(-1), {key: "focused-context", value: "brief:branch-switcher · fresh"});
+	assert.equal(editorTexts.length, 0);
+	assert.match(notifications.at(-1)?.message ?? "", /Pinned brief topic: branch-switcher/);
+});
+
+test("/brief-pin shows matching briefs when a fuzzy query is ambiguous", async (t) => {
+	const projectDir = makeTempDir();
+	t.after(() => rmSync(projectDir, {recursive: true, force: true}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "billing-api.md", sampleBrief("billing-api", "Billing API", {aliases: ["bill"]}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "billing-admin.md", sampleBrief("billing-admin", "Billing Admin", {aliases: ["bill"]}));
+
+	const {commands, appendEntries} = createHarness();
+	const {ctx, editorTexts, statuses, notifications} = createCtx(projectDir);
+	const command = commands.get("brief-pin");
+	assert.ok(command);
+
+	await command.handler("bill", ctx as any);
+
+	assert.equal(appendEntries.length, 0);
+	assert.equal(statuses.length, 0);
+	assert.match(editorTexts.at(-1) ?? "", /billing-api/);
+	assert.match(editorTexts.at(-1) ?? "", /billing-admin/);
+	assert.match(notifications.at(-1)?.message ?? "", /Ambiguous brief query: bill/);
+});
+
+test("/brief-new creates a brief for a new topic and updates the active topic state", async () => {
+	const projectDir = makeTempDir();
+	const refreshCalls: Array<{topic: string; hasBrief: boolean}> = [];
+	const {commands, appendEntries, sentMessages} = createHarness({
 		deps: {
-			refreshBriefForTopic: async ({topic}) => ({
-				ok: true,
-				created: true,
-				usedModel: "google/gemini-2.5-flash",
-				modelSource: "helper",
-				brief: parseBriefDocument(sampleBrief(topic, "Billing"), join(projectDir, ".pi", "briefs", `${topic}.md`), "project")!,
-			}),
+			refreshBriefForTopic: async ({topic, brief}) => {
+				refreshCalls.push({topic, hasBrief: Boolean(brief)});
+				return {
+					ok: true,
+					created: true,
+					usedModel: "google/gemini-2.5-flash",
+					modelSource: "helper",
+					brief: parseBriefDocument(sampleBrief(topic, "Billing"), join(projectDir, ".pi", "briefs", `${topic}.md`), "project")!,
+				};
+			},
 		},
 	});
 	const {ctx, editorTexts, notifications, statuses} = createCtx(projectDir);
+	const command = commands.get("brief-new");
+	assert.ok(command);
+
+	await command.handler("billing", ctx as any);
+
+	assert.deepEqual(refreshCalls, [{topic: "billing", hasBrief: false}]);
+	assert.deepEqual(appendEntries.at(-1), {
+		customType: "focused-context",
+		data: {activeTopic: "billing", pinnedTopic: undefined},
+	});
+	assert.equal(editorTexts.length, 0);
+	assert.deepEqual(statuses.at(-1), {key: "focused-context", value: "brief:billing · fresh"});
+	assert.equal((sentMessages.at(-1)?.message as any)?.customType, "focused-context");
+	assert.match((sentMessages.at(-1)?.message as any)?.content ?? "", /Created brief for billing\. Use \/brief to view it\./);
+	assert.match(notifications.at(-1)?.message ?? "", /Created brief for billing using google\/gemini-2.5-flash/);
+	rmSync(projectDir, {recursive: true, force: true});
+});
+
+test("/brief-new avoids duplicate briefs for fuzzy human topic input", async (t) => {
+	const projectDir = makeTempDir();
+	t.after(() => rmSync(projectDir, {recursive: true, force: true}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "branch-switcher.md", sampleBrief("branch-switcher", "Branch Switcher"));
+
+	let refreshCalls = 0;
+	const {commands} = createHarness({
+		deps: {
+			refreshBriefForTopic: async () => {
+				refreshCalls += 1;
+				throw new Error("refresh should not be called");
+			},
+		},
+	});
+	const {ctx, editorTexts, notifications} = createCtx(projectDir);
+	const command = commands.get("brief-new");
+	assert.ok(command);
+
+	await command.handler("Branch Switcher", ctx as any);
+
+	assert.equal(refreshCalls, 0);
+	assert.match(editorTexts.at(-1) ?? "", /# Brief: Branch Switcher/);
+	assert.match(notifications.at(-1)?.message ?? "", /Brief already exists for branch-switcher/);
+});
+
+test("/brief-refresh refreshes the current brief", async () => {
+	const projectDir = makeTempDir();
+	writeBrief(join(projectDir, ".pi", "briefs"), "billing.md", sampleBrief("billing", "Billing"));
+	const refreshCalls: Array<{topic: string; hasBrief: boolean}> = [];
+	const {commands, appendEntries, sentMessages} = createHarness({
+		deps: {
+			refreshBriefForTopic: async ({topic, brief}) => {
+				refreshCalls.push({topic, hasBrief: Boolean(brief)});
+				return {
+					ok: true,
+					created: false,
+					usedModel: "google/gemini-2.5-flash",
+					modelSource: "helper",
+					brief: parseBriefDocument(
+						sampleBrief(topic, "Billing", {updatedAt: "2026-04-12T00:00:00Z"}),
+						join(projectDir, ".pi", "briefs", `${topic}.md`),
+						"project",
+					)!,
+				};
+			},
+		},
+	});
+	const {ctx, editorTexts, notifications, statuses} = createCtx(projectDir);
+	const pinCommand = commands.get("brief-pin");
+	const refreshCommand = commands.get("brief-refresh");
+	assert.ok(pinCommand);
+	assert.ok(refreshCommand);
+
+	await pinCommand.handler("billing", ctx as any);
+	await refreshCommand.handler("", ctx as any);
+
+	assert.deepEqual(refreshCalls, [{topic: "billing", hasBrief: true}]);
+	assert.deepEqual(appendEntries.at(-1), {
+		customType: "focused-context",
+		data: {activeTopic: "billing", pinnedTopic: "billing"},
+	});
+	assert.equal(editorTexts.length, 0);
+	assert.deepEqual(statuses.at(-1), {key: "focused-context", value: "brief:billing · fresh"});
+	assert.equal((sentMessages.at(-1)?.message as any)?.customType, "focused-context");
+	assert.match((sentMessages.at(-1)?.message as any)?.content ?? "", /Refreshed brief for billing\. Use \/brief to view it\./);
+	assert.match(notifications.at(-1)?.message ?? "", /Refreshed brief for billing using google\/gemini-2.5-flash/);
+	rmSync(projectDir, {recursive: true, force: true});
+});
+
+test("/brief-refresh rejects topic arguments and points users to /brief-new", async () => {
+	const projectDir = makeTempDir();
+	const {commands} = createHarness();
+	const {ctx, notifications} = createCtx(projectDir);
 	const command = commands.get("brief-refresh");
 	assert.ok(command);
 
 	await command.handler("billing", ctx as any);
 
+	assert.match(notifications.at(-1)?.message ?? "", /Usage: \/brief-refresh/);
+	assert.match(notifications.at(-1)?.message ?? "", /brief-new/);
+	rmSync(projectDir, {recursive: true, force: true});
+});
+
+test("/brief-refresh clears stale:H after rebuilding the brief for the new topic", async (t) => {
+	const projectDir = makeTempDir();
+	t.after(() => rmSync(projectDir, {recursive: true, force: true}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "billing.md", sampleBrief("billing", "Billing"));
+	writeBrief(join(projectDir, ".pi", "briefs"), "auth.md", sampleBrief("auth", "Auth"));
+
+	const {commands, eventHandlers, tools} = createHarness({
+		deps: {
+			refreshBriefForTopic: async ({topic}) => ({
+				ok: true,
+				created: false,
+				usedModel: "google/gemini-2.5-flash",
+				modelSource: "helper",
+				brief: parseBriefDocument(sampleBrief(topic, topic === "auth" ? "Auth" : "Billing"), join(projectDir, ".pi", "briefs", `${topic}.md`), "project")!,
+			}),
+		},
+	});
+	const sessionStart = eventHandlers.get("session_start");
+	const refreshCommand = commands.get("brief-refresh");
+	const ensureTool = tools.get("brief_ensure");
+	assert.ok(sessionStart);
+	assert.ok(refreshCommand);
+	assert.ok(ensureTool);
+	const {ctx, statuses} = createCtx(projectDir, {
+		entries: [
+			{
+				type: "custom",
+				customType: "focused-context",
+				data: {activeTopic: "billing", pinnedTopic: undefined},
+			},
+		],
+	});
+
+	await sessionStart({}, ctx as any);
+	await ensureTool.execute(
+		"tool-call-1",
+		{task: "Switch over to auth cleanup", topic: "auth", refresh: "never"},
+		undefined,
+		undefined,
+		ctx as any,
+	);
+	assert.deepEqual(statuses.at(-1), {key: "focused-context", value: "brief:auth · stale:H · new-session?"});
+
+	await refreshCommand.handler("", ctx as any);
+
+	assert.deepEqual(statuses.at(-1), {key: "focused-context", value: "brief:auth · fresh"});
+});
+
+test("/brief-capture infers a topic from session lineage and builds a brief from captured history", async (t) => {
+	const projectDir = makeTempDir();
+	t.after(() => rmSync(projectDir, {recursive: true, force: true}));
+	const messages = makeMessages();
+
+	const grandparentSession = SessionManager.create(projectDir);
+	grandparentSession.appendMessage(messages.user("Start a branch switching extension for pi."));
+	grandparentSession.appendMessage(messages.assistant("We should add a /branch command and support remote-only branches."));
+	const grandparentFile = grandparentSession.getSessionFile();
+
+	const parentSession = SessionManager.create(projectDir);
+	parentSession.newSession({parentSession: grandparentFile});
+	parentSession.appendMessage(messages.user("Continue branch switching work and add tests."));
+	parentSession.appendMessage(messages.assistant("I updated extensions/branch-switcher/index.ts and added test coverage."));
+	const parentFile = parentSession.getSessionFile();
+
+	const currentSession = SessionManager.create(projectDir);
+	currentSession.newSession({parentSession: parentFile});
+	currentSession.appendMessage(messages.user("Finish the branch switching docs and verify the workflow."));
+	currentSession.appendMessage(messages.assistant("README and command behavior are aligned for branch switching."));
+
+	let capturedSources: RefreshSource[] = [];
+	let refreshedWith: {topic: string; hasBrief: boolean; sessionSources: RefreshSource[]} | undefined;
+	const {commands, appendEntries, sentMessages} = createHarness({
+		deps: {
+			captureTopicFromSessionHistory: async ({sessionSources}) => {
+				capturedSources = sessionSources;
+				return {ok: true, topic: "branch-switcher"};
+			},
+			refreshBriefForTopic: async ({topic, brief, sessionSources}) => {
+				refreshedWith = {topic, hasBrief: Boolean(brief), sessionSources: sessionSources ?? []};
+				return {
+					ok: true,
+					created: true,
+					usedModel: "google/gemini-2.5-flash",
+					modelSource: "helper",
+					brief: parseBriefDocument(sampleBrief(topic, "Branch Switcher"), join(projectDir, ".pi", "briefs", `${topic}.md`), "project")!,
+				};
+			},
+		},
+	});
+	const {ctx, editorTexts, notifications, statuses} = createCtx(projectDir, {
+		sessionManager: currentSession,
+	});
+	const command = commands.get("brief-capture");
+	assert.ok(command);
+
+	await command.handler("", ctx as any);
+
+	assert.deepEqual(capturedSources.map((source) => source.label), ["current-session", "parent-session", "ancestor-session-1"]);
+	assert.match(capturedSources[0]?.content ?? "", /Finish the branch switching docs/);
+	assert.match(capturedSources[1]?.content ?? "", /Continue branch switching work/);
+	assert.match(capturedSources[2]?.content ?? "", /Start a branch switching extension/);
+	assert.deepEqual(refreshedWith?.topic, "branch-switcher");
+	assert.deepEqual(refreshedWith?.hasBrief, false);
+	assert.deepEqual(refreshedWith?.sessionSources.map((source) => source.label), ["current-session", "parent-session", "ancestor-session-1"]);
+	assert.deepEqual(appendEntries.at(-1), {
+		customType: "focused-context",
+		data: {activeTopic: "branch-switcher", pinnedTopic: undefined},
+	});
+	assert.equal(editorTexts.length, 0);
+	assert.deepEqual(statuses.at(-1), {key: "focused-context", value: "brief:branch-switcher · fresh"});
+	assert.equal((sentMessages.at(-1)?.message as any)?.customType, "focused-context");
+	assert.match((sentMessages.at(-1)?.message as any)?.content ?? "", /Created brief for branch-switcher from session history\. Use \/brief to view it\./);
+	assert.match(notifications.at(-1)?.message ?? "", /Created brief for branch-switcher from session history using google\/gemini-2.5-flash/);
+});
+
+test("/brief-capture accepts an explicit topic and skips inference", async (t) => {
+	const projectDir = makeTempDir();
+	t.after(() => rmSync(projectDir, {recursive: true, force: true}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "billing.md", sampleBrief("billing", "Billing"));
+	const messages = makeMessages();
+	const sessionManager = SessionManager.create(projectDir);
+	sessionManager.appendMessage(messages.user("Keep working on the exporter and invoice summaries."));
+	sessionManager.appendMessage(messages.assistant("The billing exporter flow is stable now."));
+
+	let captureCalls = 0;
+	let refreshedWith: {topic: string; hasBrief: boolean} | undefined;
+	const {commands, appendEntries, sentMessages} = createHarness({
+		deps: {
+			captureTopicFromSessionHistory: async () => {
+				captureCalls += 1;
+				return {ok: true, topic: "wrong-topic"};
+			},
+			refreshBriefForTopic: async ({topic, brief}) => {
+				refreshedWith = {topic, hasBrief: Boolean(brief)};
+				return {
+					ok: true,
+					created: false,
+					usedModel: "google/gemini-2.5-flash",
+					modelSource: "helper",
+					brief: parseBriefDocument(sampleBrief(topic, "Billing"), join(projectDir, ".pi", "briefs", `${topic}.md`), "project")!,
+				};
+			},
+		},
+	});
+	const {ctx, notifications} = createCtx(projectDir, {sessionManager});
+	const command = commands.get("brief-capture");
+	assert.ok(command);
+
+	await command.handler("billing", ctx as any);
+
+	assert.equal(captureCalls, 0);
+	assert.deepEqual(refreshedWith, {topic: "billing", hasBrief: true});
 	assert.deepEqual(appendEntries.at(-1), {
 		customType: "focused-context",
 		data: {activeTopic: "billing", pinnedTopic: undefined},
 	});
-	assert.match(editorTexts.at(-1) ?? "", /# Brief: Billing/);
-	assert.deepEqual(statuses.at(-1), {key: "focused-context", value: "brief:billing · fresh"});
-	assert.match(notifications.at(-1)?.message ?? "", /Created brief for billing using google\/gemini-2.5-flash/);
-	rmSync(projectDir, {recursive: true, force: true});
+	assert.equal((sentMessages.at(-1)?.message as any)?.customType, "focused-context");
+	assert.match((sentMessages.at(-1)?.message as any)?.content ?? "", /Refreshed brief for billing from session history\. Use \/brief to view it\./);
+	assert.match(notifications.at(-1)?.message ?? "", /Refreshed brief for billing from session history/);
+});
+
+test("/brief-capture fuzzy-matches an explicit topic and reuses the canonical brief", async (t) => {
+	const projectDir = makeTempDir();
+	t.after(() => rmSync(projectDir, {recursive: true, force: true}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "branch-switcher.md", sampleBrief("branch-switcher", "Branch Switcher", {aliases: ["branch"]}));
+	const messages = makeMessages();
+	const sessionManager = SessionManager.create(projectDir);
+	sessionManager.appendMessage(messages.user("Keep refining the branch switching flow."));
+	sessionManager.appendMessage(messages.assistant("Branch switching behavior is almost done."));
+
+	let captureCalls = 0;
+	let refreshedWith: {topic: string; hasBrief: boolean} | undefined;
+	const {commands} = createHarness({
+		deps: {
+			captureTopicFromSessionHistory: async () => {
+				captureCalls += 1;
+				return {ok: true, topic: "wrong-topic"};
+			},
+			refreshBriefForTopic: async ({topic, brief}) => {
+				refreshedWith = {topic, hasBrief: Boolean(brief)};
+				return {
+					ok: true,
+					created: false,
+					usedModel: "google/gemini-2.5-flash",
+					modelSource: "helper",
+					brief: parseBriefDocument(sampleBrief(topic, "Branch Switcher"), join(projectDir, ".pi", "briefs", `${topic}.md`), "project")!,
+				};
+			},
+		},
+	});
+	const {ctx, notifications} = createCtx(projectDir, {sessionManager});
+	const command = commands.get("brief-capture");
+	assert.ok(command);
+
+	await command.handler("branch sw", ctx as any);
+
+	assert.equal(captureCalls, 0);
+	assert.deepEqual(refreshedWith, {topic: "branch-switcher", hasBrief: true});
+	assert.match(notifications.at(-1)?.message ?? "", /Refreshed brief for branch-switcher from session history/);
+});
+
+test("/brief-capture warns instead of guessing when an explicit topic query is ambiguous", async (t) => {
+	const projectDir = makeTempDir();
+	t.after(() => rmSync(projectDir, {recursive: true, force: true}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "billing-api.md", sampleBrief("billing-api", "Billing API", {aliases: ["bill"]}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "billing-admin.md", sampleBrief("billing-admin", "Billing Admin", {aliases: ["bill"]}));
+	const messages = makeMessages();
+	const sessionManager = SessionManager.create(projectDir);
+	sessionManager.appendMessage(messages.user("Keep working on billing."));
+	sessionManager.appendMessage(messages.assistant("There is still follow-up work."));
+
+	let refreshCalls = 0;
+	const {commands, appendEntries} = createHarness({
+		deps: {
+			refreshBriefForTopic: async () => {
+				refreshCalls += 1;
+				throw new Error("refresh should not be called");
+			},
+		},
+	});
+	const {ctx, editorTexts, notifications} = createCtx(projectDir, {sessionManager});
+	const command = commands.get("brief-capture");
+	assert.ok(command);
+
+	await command.handler("bill", ctx as any);
+
+	assert.equal(refreshCalls, 0);
+	assert.equal(appendEntries.length, 0);
+	assert.match(editorTexts.at(-1) ?? "", /billing-api/);
+	assert.match(editorTexts.at(-1) ?? "", /billing-admin/);
+	assert.match(notifications.at(-1)?.message ?? "", /Ambiguous brief query: bill/);
 });
 
 test("brief_ensure is registered, validates input, and returns structured errors", async () => {
@@ -595,6 +999,62 @@ test("brief_ensure reuses a fresh brief on if_stale without calling refresh", as
 		data: {activeTopic: "billing", pinnedTopic: undefined},
 	});
 	assert.deepEqual(statuses.at(-1), {key: "focused-context", value: "brief:billing · fresh"});
+});
+
+test("brief_ensure canonicalizes an explicit fuzzy topic to the existing brief", async (t) => {
+	const projectDir = makeTempDir();
+	t.after(() => rmSync(projectDir, {recursive: true, force: true}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "branch-switcher.md", sampleBrief("branch-switcher", "Branch Switcher"));
+
+	let refreshCalls = 0;
+	const {tools} = createHarness({
+		deps: {
+			refreshBriefForTopic: async () => {
+				refreshCalls += 1;
+				return {ok: false, error: "refresh should not be called"};
+			},
+		},
+	});
+	const tool = tools.get("brief_ensure");
+	assert.ok(tool);
+	const {ctx} = createCtx(projectDir);
+
+	const result = await tool.execute(
+		"tool-call-1",
+		{task: "Continue branch switching work", topic: "branch sw", refresh: "never"},
+		undefined,
+		undefined,
+		ctx as any,
+	);
+
+	assert.equal(refreshCalls, 0);
+	assert.equal(result.details.error, undefined);
+	assert.equal(result.details.action, "reused");
+	assert.equal(result.details.topic, "branch-switcher");
+	assert.match(result.content[0].text, /selected: branch-switcher/);
+});
+
+test("brief_ensure rejects an ambiguous explicit topic query", async (t) => {
+	const projectDir = makeTempDir();
+	t.after(() => rmSync(projectDir, {recursive: true, force: true}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "billing-api.md", sampleBrief("billing-api", "Billing API", {aliases: ["bill"]}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "billing-admin.md", sampleBrief("billing-admin", "Billing Admin", {aliases: ["bill"]}));
+
+	const {tools} = createHarness();
+	const tool = tools.get("brief_ensure");
+	assert.ok(tool);
+	const {ctx} = createCtx(projectDir);
+
+	const result = await tool.execute(
+		"tool-call-1",
+		{task: "Continue billing work", topic: "bill", refresh: "if_stale"},
+		undefined,
+		undefined,
+		ctx as any,
+	);
+
+	assert.equal(result.details.error, true);
+	assert.match(result.content[0].text, /Ambiguous brief query: bill/);
 });
 
 test("brief_ensure refreshes or creates a brief when policy requires it", async () => {
@@ -848,6 +1308,18 @@ test("repeated exploration loops recommend a fresh session only once per drift w
 	assert.equal(notifications.length, notificationCountAfterFirstRecommendation);
 });
 
+
+test("collectRefreshSources prefers explicit session sources when provided", async () => {
+	const sources = await collectRefreshSources({
+		cwd: "/tmp",
+		sessionText: "ignore this current session summary",
+		sessionSources: [{label: "parent-session", content: "Parent branch-switcher work history"}],
+	});
+
+	assert.equal(sources.length, 1);
+	assert.equal(sources[0].label, "parent-session");
+	assert.match(sources[0].content, /Parent branch-switcher work history/);
+});
 
 test("collectRefreshSources includes latest handoff context as an automatic bounded source", async () => {
 	const sources = await collectRefreshSources({
@@ -1106,6 +1578,98 @@ test("session_start restores pinned state from session entries and republishes s
 	await sessionStart({}, ctx as any);
 
 	assert.deepEqual(statuses.at(-1), {key: "focused-context", value: "brief:billing · fresh"});
+});
+
+test("/brief opens the active brief via the file opener flow", async (t) => {
+	const projectDir = makeTempDir();
+	const globalDir = makeTempDir();
+	const previousHome = process.env.HOME;
+	process.env.HOME = globalDir;
+	t.after(() => {
+		process.env.HOME = previousHome;
+		rmSync(projectDir, {recursive: true, force: true});
+		rmSync(globalDir, {recursive: true, force: true});
+	});
+	writeBrief(join(projectDir, ".pi", "briefs"), "billing.md", sampleBrief("billing", "Billing"));
+
+	let openedBriefPath: string | undefined;
+	const {commands, eventHandlers} = createHarness({
+		deps: {
+			openBriefFile: async (brief) => {
+				openedBriefPath = brief.path;
+			},
+		},
+	});
+	const sessionStart = eventHandlers.get("session_start");
+	assert.ok(sessionStart);
+	const {ctx, editorTexts, notifications} = createCtx(projectDir, {
+		entries: [
+			{
+				type: "custom",
+				customType: "focused-context",
+				data: {activeTopic: "billing", pinnedTopic: undefined},
+			},
+		],
+	});
+	const command = commands.get("brief");
+	assert.ok(command);
+
+	await sessionStart({}, ctx as any);
+	await command.handler("", ctx as any);
+
+	assert.match(openedBriefPath ?? "", /\.pi\/briefs\/billing\.md$/);
+	assert.equal(editorTexts.length, 0);
+	assert.match(notifications.at(-1)?.message ?? "", /Opened brief for billing/);
+});
+
+test("/brief supports fuzzy topic lookup without changing the active brief", async (t) => {
+	const projectDir = makeTempDir();
+	t.after(() => rmSync(projectDir, {recursive: true, force: true}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "branch-switcher.md", sampleBrief("branch-switcher", "Branch Switcher", {aliases: ["branch"]}));
+
+	let openedBriefPath: string | undefined;
+	const {commands} = createHarness({
+		deps: {
+			openBriefFile: async (brief) => {
+				openedBriefPath = brief.path;
+			},
+		},
+	});
+	const {ctx, editorTexts, notifications} = createCtx(projectDir);
+	const command = commands.get("brief");
+	assert.ok(command);
+
+	await command.handler("branch sw", ctx as any);
+
+	assert.match(openedBriefPath ?? "", /\.pi\/briefs\/branch-switcher\.md$/);
+	assert.equal(editorTexts.length, 0);
+	assert.match(notifications.at(-1)?.message ?? "", /Opened brief for branch-switcher/);
+});
+
+test("/brief shows matching briefs when a fuzzy query is ambiguous", async (t) => {
+	const projectDir = makeTempDir();
+	t.after(() => rmSync(projectDir, {recursive: true, force: true}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "billing-api.md", sampleBrief("billing-api", "Billing API", {aliases: ["bill"]}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "billing-admin.md", sampleBrief("billing-admin", "Billing Admin", {aliases: ["bill"]}));
+
+	let openedBriefPath: string | undefined;
+	const {commands} = createHarness({
+		deps: {
+			openBriefFile: async (brief) => {
+				openedBriefPath = brief.path;
+			},
+		},
+	});
+	const {ctx, editorTexts, notifications} = createCtx(projectDir);
+	const command = commands.get("brief");
+	assert.ok(command);
+
+	await command.handler("bill", ctx as any);
+
+	assert.equal(openedBriefPath, undefined);
+	assert.match(editorTexts.at(-1) ?? "", /billing-api/);
+	assert.match(editorTexts.at(-1) ?? "", /billing-admin/);
+	assert.match(notifications.at(-1)?.message ?? "", /Ambiguous brief query: bill/);
 });
 
 test("/brief shows a clear warning when no active topic is available", async () => {

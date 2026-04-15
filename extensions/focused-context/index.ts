@@ -1,4 +1,9 @@
+import {existsSync, readFileSync} from "node:fs";
+
+import {complete, type Message} from "@mariozechner/pi-ai";
 import {
+	SessionManager,
+	buildSessionContext,
 	convertToLlm,
 	serializeConversation,
 	type ExtensionAPI,
@@ -8,10 +13,13 @@ import {Type} from "@sinclair/typebox";
 
 import {HANDOFF_SESSION_STARTED_EVENT, type HandoffSessionStartedEvent} from "../handoff/events.ts";
 import {
+	describeModel,
 	extractSection,
 	refreshBrief,
+	resolveRefreshModel,
 	truncateText,
 	type RefreshBriefResult,
+	type RefreshSource,
 } from "./brief-engine.ts";
 import {
 	buildExplorationKey,
@@ -59,13 +67,25 @@ export type EnsureRefreshPolicy = "always" | "if_stale" | "never";
 
 type EnsureAction = "created" | "refreshed" | "reused";
 
+type CaptureTopicResult =
+	| {ok: true; topic: string}
+	| {ok: false; error: string};
+
 export type FocusedContextDeps = {
 	refreshBriefForTopic?: (params: {
 		ctx: ExtensionContext;
 		topic: string;
 		brief?: BriefRecord;
+		sessionSources?: RefreshSource[];
 		latestHandoffText?: string;
 	}) => Promise<RefreshBriefResult>;
+	captureTopicFromSessionHistory?: (params: {
+		ctx: ExtensionContext;
+		briefs: BriefRecord[];
+		sessionSources: RefreshSource[];
+		latestHandoffText?: string;
+	}) => Promise<CaptureTopicResult>;
+	openBriefFile?: (brief: BriefRecord, ctx: ExtensionContext) => Promise<void>;
 };
 
 const STATE_ENTRY_TYPE = "focused-context";
@@ -77,6 +97,18 @@ const COMPACTION_PREVIOUS_SUMMARY_MAX_CHARS = 2_000;
 const COMPACTION_RECENT_DELTA_MAX_CHARS = 3_000;
 const COMPACTION_HANDOFF_MAX_CHARS = 1_000;
 const COMPACTION_CUSTOM_INSTRUCTIONS_MAX_CHARS = 240;
+const CAPTURE_MAX_LINEAGE_SESSIONS = 4;
+const CAPTURE_SESSION_SOURCE_MAX_CHARS = 3_000;
+const CAPTURE_TOPIC_SYSTEM_PROMPT = `You infer a single durable focused-context topic from coding session history.
+Return ONLY JSON in one of these forms:
+{"topic":"kebab-case-topic"}
+{"error":"ambiguous"}
+
+Rules:
+- Prefer an existing topic when one clearly matches the session history.
+- Topic must be durable and specific: feature, subsystem, workflow, or module.
+- Use 1-4 words in lowercase kebab-case.
+- Do not return prose, markdown, explanations, or code fences.`;
 const TOPIC_STOPWORDS = new Set([
 	"a",
 	"an",
@@ -240,13 +272,293 @@ export function inferTopicFromTask(task: string, briefs: BriefRecord[]): string 
 	return deriveTopicFromTask(task);
 }
 
+function scoreBriefLookupCandidate(candidate: string, normalizedQuery: string, queryTokens: string[]): number {
+	let score = 0;
+	if (candidate === normalizedQuery) return 1000;
+	if (candidate.startsWith(normalizedQuery)) score = Math.max(score, 800);
+	else if (candidate.includes(normalizedQuery)) score = Math.max(score, 650);
+
+	const candidateTokens = candidate.split(/[-_\s]+/).filter(Boolean);
+	let exactMatches = 0;
+	let prefixMatches = 0;
+	let containsMatches = 0;
+
+	for (const token of queryTokens) {
+		if (candidateTokens.some((part) => part === token)) {
+			exactMatches += 1;
+			prefixMatches += 1;
+			containsMatches += 1;
+			continue;
+		}
+		if (candidateTokens.some((part) => part.startsWith(token))) {
+			prefixMatches += 1;
+			containsMatches += 1;
+			continue;
+		}
+		if (candidateTokens.some((part) => part.includes(token))) {
+			containsMatches += 1;
+		}
+	}
+
+	if (queryTokens.length > 0) {
+		if (exactMatches === queryTokens.length) score = Math.max(score, 760 + exactMatches * 10);
+		else if (prefixMatches === queryTokens.length) score = Math.max(score, 720 + prefixMatches * 10);
+		else if (containsMatches === queryTokens.length) score = Math.max(score, 660 + containsMatches * 10);
+	}
+
+	return score + exactMatches * 30 + (prefixMatches - exactMatches) * 18 + (containsMatches - prefixMatches) * 8;
+}
+
+function resolveBriefLookup(briefs: BriefRecord[], query: string): {brief?: BriefRecord; matches: BriefRecord[]} {
+	const normalizedQuery = normalizeTopicCandidate(query);
+	if (!normalizedQuery) return {matches: []};
+
+	const exactMatches = briefs.filter((brief) => brief.topic === normalizedQuery || brief.aliases.includes(normalizedQuery));
+	if (exactMatches.length === 1) return {brief: exactMatches[0], matches: exactMatches};
+	if (exactMatches.length > 1) return {matches: exactMatches};
+
+	const queryTokens = normalizedQuery.split("-").filter(Boolean);
+	const ranked = briefs
+		.map((brief) => ({
+			brief,
+			score: Math.max(brief.topic ? scoreBriefLookupCandidate(brief.topic, normalizedQuery, queryTokens) : 0, ...brief.aliases.map((alias) => scoreBriefLookupCandidate(alias, normalizedQuery, queryTokens))),
+		}))
+		.filter((entry) => entry.score > 0)
+		.sort((left, right) => right.score - left.score || left.brief.topic.localeCompare(right.brief.topic));
+
+	if (ranked.length === 0) return {matches: []};
+	if (ranked.length === 1 || ranked[0].score > ranked[1].score) return {brief: ranked[0].brief, matches: ranked.map((entry) => entry.brief)};
+	return {matches: ranked.filter((entry) => entry.score === ranked[0].score).map((entry) => entry.brief)};
+}
+
+function resolveRequestedTopicInput(briefs: BriefRecord[], query: string): {topic?: string; brief?: BriefRecord; matches: BriefRecord[]} {
+	const lookup = resolveBriefLookup(briefs, query);
+	if (lookup.brief) return {topic: lookup.brief.topic, brief: lookup.brief, matches: lookup.matches};
+	if (lookup.matches.length > 1) return {matches: lookup.matches};
+	const normalized = normalizeTopicCandidate(query);
+	return normalized ? {topic: normalized, matches: []} : {matches: []};
+}
+
+function normalizeTopicCandidate(value: string): string | undefined {
+	const normalized = value
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/-{2,}/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return normalized || undefined;
+}
+
+function getSessionHeader(sessionFile: string): {parentSession?: string} | null {
+	try {
+		if (!existsSync(sessionFile)) return null;
+		const content = readFileSync(sessionFile, "utf8");
+		const firstNewline = content.indexOf("\n");
+		const firstLine = (firstNewline === -1 ? content : content.slice(0, firstNewline)).trim();
+		if (!firstLine) return null;
+		const parsed = JSON.parse(firstLine) as {type?: string; parentSession?: string};
+		return parsed.type === "session" ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
+function serializeSessionMessages(messages: unknown[]): string {
+	if (messages.length === 0) return "";
+	try {
+		return serializeConversation(convertToLlm(messages as any));
+	} catch {
+		return "";
+	}
+}
+
+function getParentSessionFiles(currentSessionFile: string | undefined, fallbackParentSessionFile?: string): string[] {
+	const lineage: string[] = [];
+	const visited = new Set<string>();
+	let current = currentSessionFile ? getSessionHeader(currentSessionFile)?.parentSession : fallbackParentSessionFile;
+	if (!current && fallbackParentSessionFile) current = fallbackParentSessionFile;
+
+	while (current && !visited.has(current) && lineage.length < CAPTURE_MAX_LINEAGE_SESSIONS - 1) {
+		visited.add(current);
+		lineage.push(current);
+		current = getSessionHeader(current)?.parentSession;
+	}
+
+	return lineage;
+}
+
+function labelCapturedSession(index: number): string {
+	if (index === 0) return "parent-session";
+	return `ancestor-session-${index}`;
+}
+
+async function collectCaptureSessionSources(
+	ctx: ExtensionContext,
+	fallbackParentSessionFile?: string,
+): Promise<RefreshSource[]> {
+	const sessionSources: RefreshSource[] = [];
+	const rawSessionManager = ctx.sessionManager as ExtensionContext["sessionManager"] & {
+		buildSessionContext?: () => {messages: unknown[]};
+		getBranch?: () => unknown[];
+		getLeafId?: () => string;
+		getSessionFile?: () => string | undefined;
+	};
+
+	let currentSessionText = "";
+	if (rawSessionManager.buildSessionContext) {
+		try {
+			const built = rawSessionManager.buildSessionContext();
+			currentSessionText = serializeSessionMessages(built.messages ?? []);
+		} catch {
+			currentSessionText = "";
+		}
+	} else if (rawSessionManager.getBranch && rawSessionManager.getLeafId) {
+		try {
+			const built = buildSessionContext(rawSessionManager.getBranch(), rawSessionManager.getLeafId());
+			currentSessionText = serializeSessionMessages(built.messages ?? []);
+		} catch {
+			currentSessionText = "";
+		}
+	}
+
+	if (currentSessionText.trim()) {
+		sessionSources.push({
+			label: "current-session",
+			content: truncateText(currentSessionText, CAPTURE_SESSION_SOURCE_MAX_CHARS),
+			path: rawSessionManager.getSessionFile?.(),
+		});
+	}
+
+	const parentSessionFiles = getParentSessionFiles(rawSessionManager.getSessionFile?.(), fallbackParentSessionFile);
+	for (let i = 0; i < parentSessionFiles.length; i++) {
+		try {
+			const sessionManager = SessionManager.open(parentSessionFiles[i]);
+			const built = sessionManager.buildSessionContext();
+			const text = serializeSessionMessages(built.messages ?? []);
+			if (!text.trim()) continue;
+			sessionSources.push({
+				label: labelCapturedSession(i),
+				content: truncateText(text, CAPTURE_SESSION_SOURCE_MAX_CHARS),
+				path: parentSessionFiles[i],
+			});
+		} catch {
+			// Skip unreadable ancestor sessions.
+		}
+	}
+
+	return sessionSources;
+}
+
+function buildCaptureTopicPrompt(params: {
+	briefs: BriefRecord[];
+	sessionSources: RefreshSource[];
+	latestHandoffText?: string;
+}): string {
+	const briefHints =
+		params.briefs.length > 0
+			? params.briefs
+					.slice(0, 20)
+					.map((brief) => `- ${brief.topic}${brief.aliases.length > 0 ? ` (aliases: ${brief.aliases.join(", ")})` : ""}`)
+					.join("\n")
+			: "- none";
+	const sourceText = params.sessionSources.map((source) => `### ${source.label}\n${source.content}`).join("\n\n");
+	const handoffText = params.latestHandoffText?.trim()
+		? `\n\n### latest-handoff\n${truncateText(params.latestHandoffText, CAPTURE_SESSION_SOURCE_MAX_CHARS)}`
+		: "";
+	return [
+		"Infer the best focused-context topic for this work history.",
+		"",
+		"Known briefs:",
+		briefHints,
+		"",
+		"Session history:",
+		sourceText || "### current-session\nNo session history available.",
+		`${handoffText}`,
+	].join("\n");
+}
+
+function extractTextContent(content: unknown): string {
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((part): part is {type?: string; text?: string} => typeof part?.text === "string")
+		.map((part) => part.text!.trim())
+		.filter(Boolean)
+		.join("\n")
+		.trim();
+}
+
+async function inferCaptureTopicFromSessionHistory(params: {
+	ctx: ExtensionContext;
+	briefs: BriefRecord[];
+	sessionSources: RefreshSource[];
+	latestHandoffText?: string;
+}): Promise<CaptureTopicResult> {
+	const heuristicTopic = inferTopicFromTask(
+		[
+			...params.sessionSources.map((source) => source.content),
+			params.latestHandoffText ?? "",
+		].join("\n\n"),
+		params.briefs,
+	);
+	const resolved = await resolveRefreshModel(params.ctx);
+	if ("error" in resolved) {
+		return heuristicTopic
+			? {ok: true, topic: heuristicTopic}
+			: {ok: false, error: "Unable to infer a topic automatically. Use /brief-capture <topic>."};
+	}
+
+	try {
+		const response = await complete(
+			resolved.model as any,
+			{
+				systemPrompt: CAPTURE_TOPIC_SYSTEM_PROMPT,
+				messages: [
+					{
+						role: "user",
+						content: [{type: "text", text: buildCaptureTopicPrompt(params)}],
+						timestamp: Date.now(),
+					} satisfies Message,
+				],
+			},
+			{apiKey: resolved.apiKey},
+		);
+
+		if (response.stopReason === "error") {
+			return heuristicTopic
+				? {ok: true, topic: heuristicTopic}
+				: {ok: false, error: "Unable to infer a topic automatically. Use /brief-capture <topic>."};
+		}
+
+		const text = extractTextContent(response.content);
+		let parsedTopic: string | undefined;
+		try {
+			const parsed = JSON.parse(text) as {topic?: unknown; error?: unknown};
+			if (typeof parsed.topic === "string") parsedTopic = normalizeTopicCandidate(parsed.topic);
+		} catch {
+			parsedTopic = normalizeTopicCandidate(text.split(/\r?\n/, 1)[0] ?? "");
+		}
+
+		if (parsedTopic) return {ok: true, topic: parsedTopic};
+		if (heuristicTopic) return {ok: true, topic: heuristicTopic};
+		return {ok: false, error: `Unable to infer a single topic from session history using ${describeModel(resolved.model)}.`};
+	} catch {
+		return heuristicTopic
+			? {ok: true, topic: heuristicTopic}
+			: {ok: false, error: "Unable to infer a topic automatically. Use /brief-capture <topic>."};
+	}
+}
+
 export function resolveEnsureTopic(params: {
 	requestedTopic?: string;
 	task: string;
 	briefs: BriefRecord[];
 	state: FocusedContextState;
 }): string | undefined {
-	if (params.requestedTopic?.trim()) return normalizeTopic(params.requestedTopic);
+	if (params.requestedTopic?.trim()) {
+		const resolved = resolveRequestedTopicInput(params.briefs, params.requestedTopic);
+		if (!resolved.topic || resolved.matches.length > 1) return undefined;
+		return resolved.topic;
+	}
 	if (params.state.pinnedTopic) return params.state.pinnedTopic;
 	if (params.state.activeTopic) return params.state.activeTopic;
 	return inferTopicFromTask(params.task, params.briefs);
@@ -399,8 +711,24 @@ export function buildFocusedCompactionDetails(params: {
 export function createFocusedContextExtension(deps: FocusedContextDeps = {}) {
 	const runRefresh =
 		deps.refreshBriefForTopic ??
-		((params: {ctx: ExtensionContext; topic: string; brief?: BriefRecord; latestHandoffText?: string}) =>
-			refreshBrief(params));
+		((params: {
+			ctx: ExtensionContext;
+			topic: string;
+			brief?: BriefRecord;
+			sessionSources?: RefreshSource[];
+			latestHandoffText?: string;
+		}) => refreshBrief(params));
+	const runCaptureTopic = deps.captureTopicFromSessionHistory ?? ((params: {
+		ctx: ExtensionContext;
+		briefs: BriefRecord[];
+		sessionSources: RefreshSource[];
+		latestHandoffText?: string;
+	}) => inferCaptureTopicFromSessionHistory(params));
+	const openBriefFile = deps.openBriefFile ?? (async (brief: BriefRecord, ctx: ExtensionContext) => {
+		const content = readFileSync(brief.path, "utf8");
+		const fileOpener = await import("../file-opener/index.ts");
+		await fileOpener.openFileOverlay(brief.path, content, ctx);
+	});
 
 	return function focusedContextExtension(pi: ExtensionAPI) {
 		let currentState: FocusedContextState = {};
@@ -457,6 +785,7 @@ export function createFocusedContextExtension(deps: FocusedContextDeps = {}) {
 				driftState.turnsSinceRefresh = 0;
 				driftState.recentExplorationKeys = [];
 				driftState.changedHotPaths = [];
+				driftState.topicTransitionCount = 0;
 				driftState.lastRecommendationKey = undefined;
 			}
 		}
@@ -532,15 +861,35 @@ export function createFocusedContextExtension(deps: FocusedContextDeps = {}) {
 			);
 		}
 
-		async function showBrief(ctx: ExtensionContext): Promise<void> {
-			const brief = await resolveActiveBrief(ctx);
+		async function showBrief(rawQuery: string, ctx: ExtensionContext): Promise<void> {
+			const query = rawQuery.trim();
+			const briefs = query ? await loadAvailableBriefs(ctx) : undefined;
+			const lookup = query && briefs ? resolveBriefLookup(briefs, query) : undefined;
+			const brief = lookup?.brief ?? (query ? undefined : await resolveActiveBrief(ctx));
 			if (!brief) {
+				if (query) {
+					if (lookup && lookup.matches.length > 1 && ctx.hasUI) ctx.ui.setEditorText(formatBriefList(lookup.matches, currentState));
+					else if (briefs && ctx.hasUI) ctx.ui.setEditorText(formatBriefList(briefs, currentState));
+					ctx.ui.notify(
+						lookup && lookup.matches.length > 1
+							? `Ambiguous brief query: ${query}. Be more specific.`
+							: `No brief matched: ${query}. Use /brief-list to browse topics.`,
+						"warning",
+					);
+					return;
+				}
 				ctx.ui.notify("No active brief. Use /brief-list and /brief-pin <topic> first.", "warning");
 				return;
 			}
 
-			if (ctx.hasUI) ctx.ui.setEditorText(formatBriefView(brief));
-			ctx.ui.notify(`Loaded brief for ${brief.topic}`, "info");
+			if (!ctx.hasUI) {
+				ctx.ui.setEditorText(formatBriefView(brief));
+				ctx.ui.notify(`Loaded brief for ${brief.topic}`, "info");
+				return;
+			}
+
+			await openBriefFile(brief, ctx);
+			ctx.ui.notify(`Opened brief for ${brief.topic}`, "info");
 		}
 
 		async function pinBrief(rawTopic: string, ctx: ExtensionContext): Promise<void> {
@@ -551,10 +900,17 @@ export function createFocusedContextExtension(deps: FocusedContextDeps = {}) {
 			}
 
 			const briefs = await loadAvailableBriefs(ctx);
-			const brief = findBriefByTopicOrAlias(briefs, topic);
+			const lookup = resolveBriefLookup(briefs, topic);
+			const brief = lookup.brief;
 			if (!brief) {
-				if (ctx.hasUI) ctx.ui.setEditorText(formatBriefList(briefs, currentState));
-				ctx.ui.notify(`Unknown brief topic: ${topic}`, "warning");
+				if (lookup.matches.length > 1 && ctx.hasUI) ctx.ui.setEditorText(formatBriefList(lookup.matches, currentState));
+				else if (ctx.hasUI) ctx.ui.setEditorText(formatBriefList(briefs, currentState));
+				ctx.ui.notify(
+					lookup.matches.length > 1
+						? `Ambiguous brief query: ${topic}. Be more specific.`
+						: `No brief matched: ${topic}. Use /brief-list to browse topics.`,
+					"warning",
+				);
 				return;
 			}
 
@@ -570,20 +926,76 @@ export function createFocusedContextExtension(deps: FocusedContextDeps = {}) {
 			ctx.ui.notify(`Pinned brief topic: ${brief.topic}`, "info");
 		}
 
-		async function refreshTopic(rawTopic: string, ctx: ExtensionContext): Promise<void> {
+		async function createTopic(rawTopic: string, ctx: ExtensionContext): Promise<void> {
 			const requested = rawTopic.trim();
-			const briefs = await loadAvailableBriefs(ctx);
-			const existing = findBriefByTopicOrAlias(briefs, requested || currentState.activeTopic || currentState.pinnedTopic);
-			const topic = existing?.topic ?? (requested ? normalizeTopic(requested) : undefined);
+			if (!requested) {
+				ctx.ui.notify("Usage: /brief-new <topic>", "warning");
+				return;
+			}
 
-			if (!topic) {
-				ctx.ui.notify("No active brief to refresh. Use /brief-refresh <topic> or pin a topic first.", "warning");
+			const briefs = await loadAvailableBriefs(ctx);
+			const resolved = resolveRequestedTopicInput(briefs, requested);
+			if (resolved.matches.length > 1 && !resolved.brief) {
+				if (ctx.hasUI) ctx.ui.setEditorText(formatBriefList(resolved.matches, currentState));
+				ctx.ui.notify(`Ambiguous brief query: ${requested}. Be more specific.`, "warning");
+				return;
+			}
+			if (resolved.brief) {
+				if (ctx.hasUI) ctx.ui.setEditorText(formatBriefView(resolved.brief));
+				ctx.ui.notify(`Brief already exists for ${resolved.brief.topic}. Use /brief-refresh to update it.`, "warning");
+				return;
+			}
+			if (!resolved.topic) {
+				ctx.ui.notify("Usage: /brief-new <topic>", "warning");
 				return;
 			}
 
 			const result = await runRefresh({
 				ctx,
-				topic,
+				topic: resolved.topic,
+				latestHandoffText: renderLatestHandoffSource(currentState.latestHandoff),
+			});
+			if (!result.ok) {
+				ctx.ui.notify(`Focused Context refresh failed: ${result.error}`, "warning");
+				return;
+			}
+
+			noteTopicSelection(result.brief.topic, {resetWindow: true});
+			persistState({
+				activeTopic: result.brief.topic,
+				pinnedTopic: undefined,
+				latestHandoff: currentState.latestHandoff,
+			});
+			await updateStatus(ctx, result.brief);
+			postBriefActionMessage(
+				`${result.created ? "Created" : "Refreshed"} brief for ${result.brief.topic}. Use /brief to view it.`,
+				{action: result.created ? "created" : "refreshed", topic: result.brief.topic, path: result.brief.path},
+			);
+			ctx.ui.notify(
+				`${result.created ? "Created" : "Refreshed"} brief for ${result.brief.topic} using ${result.usedModel}`,
+				"info",
+			);
+		}
+
+		async function refreshTopic(rawTopic: string, ctx: ExtensionContext): Promise<void> {
+			if (rawTopic.trim()) {
+				ctx.ui.notify(
+					"Usage: /brief-refresh (refreshes the current brief). Use /brief-new <topic> to create a new brief.",
+					"warning",
+				);
+				return;
+			}
+
+			const briefs = await loadAvailableBriefs(ctx);
+			const existing = findBriefByTopicOrAlias(briefs, currentState.pinnedTopic ?? currentState.activeTopic);
+			if (!existing) {
+				ctx.ui.notify("No active brief to refresh. Use /brief-new <topic> or /brief-pin <topic> first.", "warning");
+				return;
+			}
+
+			const result = await runRefresh({
+				ctx,
+				topic: existing.topic,
 				brief: existing,
 				latestHandoffText: renderLatestHandoffSource(currentState.latestHandoff),
 			});
@@ -598,10 +1010,82 @@ export function createFocusedContextExtension(deps: FocusedContextDeps = {}) {
 				pinnedTopic: currentState.pinnedTopic,
 				latestHandoff: currentState.latestHandoff,
 			});
-			if (ctx.hasUI) ctx.ui.setEditorText(formatBriefView(result.brief));
 			await updateStatus(ctx, result.brief);
+			postBriefActionMessage(
+				`Refreshed brief for ${result.brief.topic}. Use /brief to view it.`,
+				{action: "refreshed", topic: result.brief.topic, path: result.brief.path},
+			);
+			ctx.ui.notify(`Refreshed brief for ${result.brief.topic} using ${result.usedModel}`, "info");
+		}
+
+		async function captureTopicHistory(rawTopic: string, ctx: ExtensionContext): Promise<void> {
+			const briefs = await loadAvailableBriefs(ctx);
+			const latestHandoffText = renderLatestHandoffSource(currentState.latestHandoff);
+			const sessionSources = await collectCaptureSessionSources(ctx, currentState.latestHandoff?.previousSessionFile);
+			if (sessionSources.length === 0 && !latestHandoffText?.trim()) {
+				ctx.ui.notify(
+					"No session history available to capture. Use /brief-new <topic> to create a brief manually.",
+					"warning",
+				);
+				return;
+			}
+
+			const requested = rawTopic.trim();
+			let topic: string | undefined;
+			let existing: BriefRecord | undefined;
+			if (requested) {
+				const resolved = resolveRequestedTopicInput(briefs, requested);
+				if (resolved.matches.length > 1 && !resolved.brief) {
+					if (ctx.hasUI) ctx.ui.setEditorText(formatBriefList(resolved.matches, currentState));
+					ctx.ui.notify(`Ambiguous brief query: ${requested}. Be more specific.`, "warning");
+					return;
+				}
+				topic = resolved.topic;
+				existing = resolved.brief;
+				if (!topic) {
+					ctx.ui.notify("Usage: /brief-capture [topic]", "warning");
+					return;
+				}
+			} else {
+				const captured = await runCaptureTopic({
+					ctx,
+					briefs,
+					sessionSources,
+					latestHandoffText,
+				});
+				if (!captured.ok) {
+					ctx.ui.notify(`${captured.error} Use /brief-capture <topic> to override.`, "warning");
+					return;
+				}
+				topic = captured.topic;
+				existing = findBriefByTopicOrAlias(briefs, topic);
+			}
+
+			const result = await runRefresh({
+				ctx,
+				topic: existing?.topic ?? topic,
+				brief: existing,
+				sessionSources,
+				latestHandoffText,
+			});
+			if (!result.ok) {
+				ctx.ui.notify(`Focused Context capture failed: ${result.error}`, "warning");
+				return;
+			}
+
+			noteTopicSelection(result.brief.topic, {resetWindow: true});
+			persistState({
+				activeTopic: result.brief.topic,
+				pinnedTopic: currentState.pinnedTopic === result.brief.topic ? currentState.pinnedTopic : undefined,
+				latestHandoff: currentState.latestHandoff,
+			});
+			await updateStatus(ctx, result.brief);
+			postBriefActionMessage(
+				`${result.created ? "Created" : "Refreshed"} brief for ${result.brief.topic} from session history. Use /brief to view it.`,
+				{action: result.created ? "created" : "refreshed", topic: result.brief.topic, path: result.brief.path, source: "session-history"},
+			);
 			ctx.ui.notify(
-				`${result.created ? "Created" : "Refreshed"} brief for ${result.brief.topic} using ${result.usedModel}`,
+				`${result.created ? "Created" : "Refreshed"} brief for ${result.brief.topic} from session history using ${result.usedModel}`,
 				"info",
 			);
 		}
@@ -616,7 +1100,11 @@ export function createFocusedContextExtension(deps: FocusedContextDeps = {}) {
 			| {ok: false; error: string}
 		> {
 			const briefs = await loadAvailableBriefs(params.ctx);
-			const topic = resolveEnsureTopic({
+			const explicit = params.requestedTopic?.trim() ? resolveRequestedTopicInput(briefs, params.requestedTopic) : undefined;
+			if (explicit && explicit.matches.length > 1 && !explicit.brief) {
+				return {ok: false, error: `Ambiguous brief query: ${params.requestedTopic!.trim()}. Be more specific.`};
+			}
+			const topic = explicit?.topic ?? resolveEnsureTopic({
 				requestedTopic: params.requestedTopic,
 				task: params.task,
 				briefs,
@@ -626,7 +1114,7 @@ export function createFocusedContextExtension(deps: FocusedContextDeps = {}) {
 				return {ok: false, error: "Unable to resolve a topic. Pass `topic` explicitly or pin a brief first."};
 			}
 
-			const existing = findBriefByTopicOrAlias(briefs, topic);
+			const existing = explicit?.brief ?? findBriefByTopicOrAlias(briefs, topic);
 			if (!shouldRefreshBrief(existing, params.policy)) {
 				return {ok: true, brief: existing!, action: "reused", freshness: getFreshnessLabel(existing)};
 			}
@@ -694,6 +1182,15 @@ export function createFocusedContextExtension(deps: FocusedContextDeps = {}) {
 			await updateStatus(ctx, ensured.brief);
 		}
 
+		function postBriefActionMessage(content: string, details: Record<string, unknown>): void {
+			pi.sendMessage({
+				customType: "focused-context",
+				content,
+				display: true,
+				details,
+			});
+		}
+
 		async function restoreAndSync(ctx: ExtensionContext): Promise<void> {
 			rememberCarryoverSnapshot();
 			currentCtx = ctx;
@@ -712,23 +1209,37 @@ export function createFocusedContextExtension(deps: FocusedContextDeps = {}) {
 		});
 
 		pi.registerCommand("brief-pin", {
-			description: "Pin the active focused-context brief topic (usage: /brief-pin <topic>)",
+			description: "Pin the active focused-context brief topic (usage: /brief-pin <topic-or-query>)",
 			handler: async (args, ctx) => {
 				await pinBrief(args, ctx);
 			},
 		});
 
+		pi.registerCommand("brief-new", {
+			description: "Create a focused-context brief for a topic (usage: /brief-new <topic>)",
+			handler: async (args, ctx) => {
+				await createTopic(args, ctx);
+			},
+		});
+
 		pi.registerCommand("brief-refresh", {
-			description: "Refresh the active focused-context brief or create one for a topic (usage: /brief-refresh [topic])",
+			description: "Refresh the current focused-context brief (usage: /brief-refresh)",
 			handler: async (args, ctx) => {
 				await refreshTopic(args, ctx);
 			},
 		});
 
+		pi.registerCommand("brief-capture", {
+			description: "Capture a brief from the current session history (usage: /brief-capture [topic])",
+			handler: async (args, ctx) => {
+				await captureTopicHistory(args, ctx);
+			},
+		});
+
 		pi.registerCommand("brief", {
-			description: "Show the active focused-context brief",
-			handler: async (_args, ctx) => {
-				await showBrief(ctx);
+			description: "Show the active focused-context brief or open a topic via /brief <query>",
+			handler: async (args, ctx) => {
+				await showBrief(args, ctx);
 			},
 		});
 

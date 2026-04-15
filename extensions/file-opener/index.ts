@@ -7,7 +7,7 @@ import { Type } from "@sinclair/typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execSync } from "node:child_process";
-import { diffLines, Change } from "diff";
+import { diffLines, type Change } from "diff";
 
 function getGitOriginalContent(filePath: string): string | undefined {
   try {
@@ -456,6 +456,50 @@ async function isInsideTmux(): Promise<boolean> {
   return !!process.env.TMUX;
 }
 
+export async function openFileOverlay(
+  resolved: string,
+  content: string,
+  ctx: { hasUI: boolean; cwd: string; ui: any },
+  startInDiffMode: boolean = false,
+  onEdit?: () => Promise<void> | void,
+) {
+  await ctx.ui.custom<void>(
+    (tui: any, theme: Theme, _kb: any, done: (v: void) => void) => {
+      const viewer = new FileViewerComponent(
+        resolved,
+        content,
+        theme,
+        () => done(),
+        onEdit
+          ? () => {
+              Promise.resolve(onEdit())
+                .catch(() => {})
+                .finally(() => done());
+            }
+          : undefined,
+        startInDiffMode,
+      );
+      return {
+        render: (w: number) => viewer.render(w),
+        invalidate: () => viewer.invalidate(),
+        handleInput: (data: string) => {
+          viewer.handleInput(data);
+          tui.requestRender();
+        },
+      };
+    },
+    {
+      overlay: true,
+      overlayOptions: {
+        anchor: "center" as const,
+        width: MODAL_WIDTH_PERCENT,
+        minWidth: FALLBACK_MODAL_WIDTH,
+        maxHeight: MODAL_HEIGHT_PERCENT,
+      },
+    },
+  );
+}
+
 // ── Extension entry point ──────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
@@ -497,7 +541,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       const content = fs.readFileSync(resolved, "utf-8");
-      await showFileOverlay(resolved, content, ctx, diffMode);
+      await openFileOverlay(resolved, content, ctx, diffMode);
     },
   });
 
@@ -569,7 +613,11 @@ export default function (pi: ExtensionAPI) {
       const startInDiff = params.mode === "diff";
 
       if (ctx.hasUI) {
-        await showFileOverlay(resolved, content, ctx, startInDiff);
+        await openFileOverlay(resolved, content, ctx, startInDiff, async () => {
+          if (await isInsideTmux()) {
+            await pi.exec("bash", ["-c", `tmux split-window -h "nvim '${resolved}'"`]);
+          }
+        });
       }
 
       const modeText = startInDiff ? "diff" : "view";
@@ -625,45 +673,6 @@ export default function (pi: ExtensionAPI) {
       return new Text(text, 0, 0);
     },
   });
-
-  // ── Shared overlay display ───────────────────────────────────────────────
-
-  async function showFileOverlay(resolved: string, content: string, ctx: { hasUI: boolean; cwd: string; ui: any }, startInDiffMode: boolean = false) {
-    await ctx.ui.custom<void>(
-      (tui: any, theme: Theme, _kb: any, done: (v: void) => void) => {
-        const viewer = new FileViewerComponent(
-          resolved,
-          content,
-          theme,
-          () => done(),
-          async () => {
-            if (await isInsideTmux()) {
-              await pi.exec("bash", ["-c", `tmux split-window -h "nvim '${resolved}'"`]);
-              done();
-            }
-          },
-          startInDiffMode,
-        );
-        return {
-          render: (w: number) => viewer.render(w),
-          invalidate: () => viewer.invalidate(),
-          handleInput: (data: string) => {
-            viewer.handleInput(data);
-            tui.requestRender();
-          },
-        };
-      },
-      {
-        overlay: true,
-        overlayOptions: {
-          anchor: "center" as const,
-          width: MODAL_WIDTH_PERCENT,
-          minWidth: FALLBACK_MODAL_WIDTH,
-          maxHeight: MODAL_HEIGHT_PERCENT,
-        },
-      },
-    );
-  }
 
   // ── Nvim helper ──────────────────────────────────────────────────────────
 

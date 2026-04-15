@@ -135,8 +135,9 @@ Pi sessions get expensive and less reliable when work stays in one long thread. 
 **Then** I can use a small set of commands and see whether the current brief is fresh or stale
 
 **Acceptance Criteria:**
-- [ ] V1 includes `/brief`, `/brief-pin`, `/brief-refresh`, and `/brief-list`
-- [ ] V1 does not require a separate `/brief-new`; creation can happen through the ensure/refresh path
+- [ ] V1 includes `/brief`, `/brief-pin`, `/brief-new`, `/brief-refresh`, `/brief-capture`, and `/brief-list`
+- [ ] V1 provides a dedicated `/brief-new` command for manual brief creation while `brief_ensure` still handles agent-driven create/refresh
+- [ ] V1 provides `/brief-capture [topic]` to recover the topic from current session lineage and bootstrap a brief from work already done
 - [ ] The system exposes freshness state and active topic in a lightweight status surface
 - [ ] Briefs track staleness based on time/usage drift, relevant file changes, repeated rereads, and handoff/task transitions
 
@@ -156,7 +157,7 @@ Pi sessions get expensive and less reliable when work stays in one long thread. 
 - FR-12: The system must preserve active brief context through compaction and handoff flows.
 - FR-13: The system must integrate with `dumb-zone`, `handoff`, and `session-query` in v1.
 - FR-14: The system must use a cheaper helper model for brief generation/refresh by default, with graceful fallback.
-- FR-15: The system must provide `/brief`, `/brief-pin`, `/brief-refresh`, and `/brief-list` manual controls.
+- FR-15: The system must provide `/brief`, `/brief-pin`, `/brief-new`, `/brief-refresh`, `/brief-capture`, and `/brief-list` manual controls.
 
 ## Modules
 

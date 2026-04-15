@@ -13,6 +13,8 @@ export interface BranchRecord {
 export interface ResolveBranchResult {
 	branch?: BranchRecord;
 	error?: string;
+	matches?: BranchRecord[];
+	level?: "warning" | "error";
 }
 
 const LIST_BRANCH_ARGS = [
@@ -68,22 +70,97 @@ export function formatBranchList(branches: BranchRecord[]): string {
 	return ["Branches:", ...branches.map((branch) => `- ${formatBranchChoice(branch)}`)].join("\n");
 }
 
+function normalizeLookupValue(value: string): string {
+	return value
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/-{2,}/g, "-")
+		.replace(/^-+|-+$/g, "");
+}
+
+function scoreLookupCandidate(candidate: string, normalizedQuery: string, queryTokens: string[]): number {
+	const normalizedCandidate = normalizeLookupValue(candidate);
+	if (!normalizedCandidate) return 0;
+	if (normalizedCandidate === normalizedQuery) return 1000;
+
+	let score = 0;
+	if (normalizedCandidate.startsWith(normalizedQuery)) score = Math.max(score, 800);
+	else if (normalizedCandidate.includes(normalizedQuery)) score = Math.max(score, 650);
+
+	const candidateTokens = normalizedCandidate.split("-").filter(Boolean);
+	let exactMatches = 0;
+	let prefixMatches = 0;
+	let containsMatches = 0;
+
+	for (const token of queryTokens) {
+		if (candidateTokens.some((part) => part === token)) {
+			exactMatches += 1;
+			prefixMatches += 1;
+			containsMatches += 1;
+			continue;
+		}
+		if (candidateTokens.some((part) => part.startsWith(token))) {
+			prefixMatches += 1;
+			containsMatches += 1;
+			continue;
+		}
+		if (candidateTokens.some((part) => part.includes(token))) {
+			containsMatches += 1;
+		}
+	}
+
+	if (queryTokens.length > 0) {
+		if (exactMatches === queryTokens.length) score = Math.max(score, 760 + exactMatches * 10);
+		else if (prefixMatches === queryTokens.length) score = Math.max(score, 720 + prefixMatches * 10);
+		else if (containsMatches === queryTokens.length) score = Math.max(score, 660 + containsMatches * 10);
+		else if (score === 0) return 0;
+	}
+
+	return score + exactMatches * 30 + (prefixMatches - exactMatches) * 18 + (containsMatches - prefixMatches) * 8;
+}
+
 export function resolveRequestedBranch(input: string, branches: BranchRecord[]): ResolveBranchResult {
 	const query = input.trim();
-	if (!query) return { error: "No branch specified" };
+	if (!query) return { error: "No branch specified", level: "error", matches: [] };
 
 	const exact = branches.find((branch) => branch.shortName === query || branch.ref === query);
-	if (exact) return { branch: exact };
+	if (exact) return { branch: exact, matches: [exact] };
 
 	const remoteMatches = branches.filter((branch) => branch.kind === "remote" && branch.localName === query);
-	if (remoteMatches.length === 1) return { branch: remoteMatches[0] };
+	if (remoteMatches.length === 1) return { branch: remoteMatches[0], matches: remoteMatches };
 	if (remoteMatches.length > 1) {
 		return {
 			error: `Ambiguous remote branch '${query}': ${remoteMatches.map((branch) => branch.shortName).join(", ")}`,
+			matches: remoteMatches,
+			level: "warning",
 		};
 	}
 
-	return { error: `Branch not found: ${query}` };
+	const normalizedQuery = normalizeLookupValue(query);
+	if (!normalizedQuery) return { error: "No branch specified", level: "error", matches: [] };
+	const queryTokens = normalizedQuery.split("-").filter(Boolean);
+	const ranked = getVisibleBranches(branches)
+		.map((branch) => ({
+			branch,
+			score: Math.max(scoreLookupCandidate(branch.shortName, normalizedQuery, queryTokens), scoreLookupCandidate(branch.localName, normalizedQuery, queryTokens)),
+		}))
+		.filter((entry) => entry.score > 0)
+		.sort((left, right) => right.score - left.score || left.branch.shortName.localeCompare(right.branch.shortName));
+
+	if (ranked.length === 0) {
+		return { error: `Branch not found: ${query}`, level: "error", matches: [] };
+	}
+	if (ranked.length === 1 || ranked[0].score > ranked[1].score) {
+		return { branch: ranked[0].branch, matches: ranked.map((entry) => entry.branch) };
+	}
+
+	const matches = ranked.filter((entry) => entry.score === ranked[0].score).map((entry) => entry.branch);
+	return {
+		error: `Ambiguous branch query '${query}': ${matches.map((branch) => branch.shortName).join(", ")}`,
+		matches,
+		level: "warning",
+	};
 }
 
 export function buildSwitchArgs(branch: BranchRecord): string[] {
@@ -153,7 +230,10 @@ export default function branchSwitcherExtension(pi: ExtensionAPI) {
 			} else {
 				const resolved = resolveRequestedBranch(requested, branches);
 				if (!resolved.branch) {
-					ctx.ui.notify(resolved.error ?? "Branch not found", "error");
+					if (ctx.hasUI && resolved.matches && resolved.matches.length > 0) {
+						ctx.ui.setEditorText(formatBranchList(resolved.matches));
+					}
+					ctx.ui.notify(resolved.error ?? "Branch not found", resolved.level ?? "error");
 					return;
 				}
 				target = resolved.branch;

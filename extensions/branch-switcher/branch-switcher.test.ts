@@ -103,6 +103,20 @@ test("resolveRequestedBranch matches a unique remote by its local branch name", 
 	assert.equal(result.error, undefined);
 });
 
+test("resolveRequestedBranch supports fuzzy matches", () => {
+	const result = resolveRequestedBranch("remote on", parseBranchList(sampleBranchOutput()));
+	assert.equal(result.branch?.shortName, "origin/feature/remote-only");
+	assert.equal(result.error, undefined);
+});
+
+test("resolveRequestedBranch reports ambiguous fuzzy matches", () => {
+	const result = resolveRequestedBranch("feature", parseBranchList(sampleBranchOutput()));
+	assert.equal(result.branch, undefined);
+	assert.match(result.error ?? "", /Ambiguous branch query 'feature'/);
+	assert.equal(result.level, "warning");
+	assert.deepEqual(result.matches?.map((branch) => branch.shortName), ["feature/login", "origin/feature/remote-only"]);
+});
+
 test("buildSwitchArgs uses tracking for remote branches", () => {
 	const remoteBranch = resolveRequestedBranch("origin/feature/remote-only", parseBranchList(sampleBranchOutput())).branch;
 	assert.ok(remoteBranch);
@@ -155,6 +169,62 @@ test("/branch switches to a unique remote branch with --track", async () => {
 		args: ["-C", "/repo", "switch", "--track", "origin/feature/remote-only"],
 	});
 	assert.deepEqual(context.notifications.at(-1), { message: "Switched to feature/remote-only", level: "info" });
+});
+
+test("/branch supports fuzzy branch lookup", async () => {
+	const harness = createPiHarness([
+		{ code: 0, stdout: sampleBranchOutput(), stderr: "" },
+		{ code: 0, stdout: "", stderr: "" },
+	]);
+	branchSwitcherExtension(harness.pi as any);
+	const context = createContext();
+	const command = harness.commands.get("branch");
+	assert.ok(command);
+
+	await command.handler("remote on", context.ctx as any);
+
+	assert.deepEqual(harness.execCalls[1], {
+		command: "git",
+		args: ["-C", "/repo", "switch", "--track", "origin/feature/remote-only"],
+	});
+	assert.deepEqual(context.notifications.at(-1), { message: "Switched to feature/remote-only", level: "info" });
+});
+
+test("/branch shows matching branches when a fuzzy query is ambiguous", async () => {
+	const harness = createPiHarness([{ code: 0, stdout: sampleBranchOutput(), stderr: "" }]);
+	branchSwitcherExtension(harness.pi as any);
+	const context = createContext();
+	const command = harness.commands.get("branch");
+	assert.ok(command);
+
+	await command.handler("feature", context.ctx as any);
+
+	assert.equal(harness.execCalls.length, 1);
+	assert.equal(context.editorWrites[0], formatBranchList([
+		parseBranchList(sampleBranchOutput())[1]!,
+		parseBranchList(sampleBranchOutput())[3]!,
+	]));
+	assert.deepEqual(context.notifications.at(-1), {
+		message: "Ambiguous branch query 'feature': feature/login, origin/feature/remote-only",
+		level: "warning",
+	});
+});
+
+test("/branch does not overwrite the editor when a query has no matches", async () => {
+	const harness = createPiHarness([{ code: 0, stdout: sampleBranchOutput(), stderr: "" }]);
+	branchSwitcherExtension(harness.pi as any);
+	const context = createContext();
+	const command = harness.commands.get("branch");
+	assert.ok(command);
+
+	await command.handler("definitely-not-a-branch", context.ctx as any);
+
+	assert.equal(harness.execCalls.length, 1);
+	assert.equal(context.editorWrites.length, 0);
+	assert.deepEqual(context.notifications.at(-1), {
+		message: "Branch not found: definitely-not-a-branch",
+		level: "error",
+	});
 });
 
 test("/branch list writes switchable branches to the editor", async () => {

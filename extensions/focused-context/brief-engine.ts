@@ -265,6 +265,7 @@ export async function collectRefreshSources(params: {
 	cwd: string;
 	brief?: BriefRecord;
 	sessionText?: string;
+	sessionSources?: RefreshSource[];
 	latestHandoffText?: string;
 }): Promise<RefreshSource[]> {
 	const sources: RefreshSource[] = [];
@@ -279,7 +280,15 @@ export async function collectRefreshSources(params: {
 		if (source) sources.push(source);
 	}
 
-	if (params.sessionText?.trim()) {
+	if (params.sessionSources && params.sessionSources.length > 0) {
+		for (const source of params.sessionSources) {
+			sources.push({
+				label: source.label,
+				path: source.path,
+				content: truncateText(source.content, MAX_SESSION_CHARS),
+			});
+		}
+	} else if (params.sessionText?.trim()) {
 		sources.push({
 			label: "current-session",
 			content: truncateText(params.sessionText, MAX_SESSION_CHARS),
@@ -327,6 +336,7 @@ export async function refreshBrief(params: {
 	ctx: Pick<ExtensionContext, "cwd" | "model" | "modelRegistry" | "sessionManager">;
 	topic: string;
 	brief?: BriefRecord;
+	sessionSources?: RefreshSource[];
 	latestHandoffText?: string;
 	candidates?: RefreshModelCandidate[];
 	now?: Date;
@@ -340,6 +350,7 @@ export async function refreshBrief(params: {
 		cwd: params.ctx.cwd,
 		brief: params.brief,
 		sessionText,
+		sessionSources: params.sessionSources,
 		latestHandoffText: params.latestHandoffText,
 	});
 	const prompt = buildRefreshPrompt({topic: normalizeTopic(params.topic), brief: params.brief, sources});
