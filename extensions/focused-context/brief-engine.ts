@@ -53,9 +53,9 @@ export type RefreshBriefResult =
 	  };
 
 export const DEFAULT_REFRESH_MODEL_CANDIDATES: RefreshModelCandidate[] = [
+	{provider: "openai-codex", model: "gpt-5.3-codex"},
 	{provider: "google", model: "gemini-2.5-flash"},
 	{provider: "anthropic", model: "claude-sonnet-4-6"},
-	{provider: "openai-codex", model: "gpt-5.3-codex"},
 ];
 
 const MAX_SOURCE_ITEMS = 6;

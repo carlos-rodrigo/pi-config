@@ -267,22 +267,22 @@ test("renderBriefDocument preserves the Manual Notes section while replacing gen
 	assert.doesNotMatch(rendered, /Old objective/);
 });
 
-test("resolveRefreshModel prefers a helper model when available", async () => {
+test("resolveRefreshModel prefers the first configured helper model when available", async () => {
 	const result = await resolveRefreshModel({
 		model: {provider: "anthropic", id: "claude-opus-4-5"},
 		modelRegistry: {
 			find(provider: string, model: string) {
-				if (provider === "google" && model === "gemini-2.5-flash") return {provider, id: model};
+				if (provider === "openai-codex" && model === "gpt-5.3-codex") return {provider, id: model};
 				return undefined;
 			},
 			async getApiKeyForProvider(provider: string) {
-				return provider === "google" ? "helper-key" : undefined;
+				return provider === "openai-codex" ? "helper-key" : undefined;
 			},
 		},
 	} as any);
 
 	assert.deepEqual(result, {
-		model: {provider: "google", id: "gemini-2.5-flash"},
+		model: {provider: "openai-codex", id: "gpt-5.3-codex"},
 		apiKey: "helper-key",
 		source: "helper",
 	});
