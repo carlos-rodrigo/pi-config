@@ -51,6 +51,37 @@ test("computeSelectionMetadata uses flexible matching across mixed formatting", 
 	assert.equal(result.matchedText, md);
 });
 
+test("computeSelectionMetadata expands link-only selections to the full markdown link", () => {
+	const md = "- [Advanced Context Engineering](https://www.humanlayer.dev/blog/advanced-context-engineering)";
+	const result = computeSelectionMetadata(md, "Advanced Context Engineering");
+	assert.equal(result.offsetStart, 2);
+	assert.equal(result.offsetEnd, md.length);
+	assert.equal(result.matchedText, "[Advanced Context Engineering](https://www.humanlayer.dev/blog/advanced-context-engineering)");
+});
+
+test("computeSelectionMetadata matches selections that span inline code, headings, and linked list items", () => {
+	const md = [
+		"Improve how agents build, transfer, and retain context across sessions. Replaces compound/LEARNINGS with auto-maintained `docs/`, adds research phase and backpressure to `implement-task`, rewrites handoff for structured context packets, adds deterministic hooks, and restructures feature specs into `docs/features/` with verification workflows.",
+		"",
+		"Informed by:",
+		"- [Advanced Context Engineering](https://www.humanlayer.dev/blog/advanced-context-engineering)",
+	].join("\n");
+	const selection = [
+		"Improve how agents build, transfer, and retain context across sessions. Replaces compound/LEARNINGS with auto-maintained docs/, adds research phase and backpressure to implement-task, rewrites handoff for structured context packets, adds deterministic hooks, and restructures feature specs into docs/features/ with verification workflows.",
+		"",
+		"Informed by:",
+		"Advanced Context Engineering",
+	].join("\n");
+
+	const result = computeSelectionMetadata(md, selection);
+	assert.notEqual(result.offsetStart, -1);
+	assert.equal(result.lineStart, 1);
+	assert.equal(result.lineEnd, 4);
+	assert.equal(result.fallbackReason, "multi_line_selection");
+	assert.match(result.matchedText ?? "", /`docs\//);
+	assert.match(result.matchedText ?? "", /\[Advanced Context Engineering\]\(https:\/\/www\.humanlayer\.dev\/blog\/advanced-context-engineering\)/);
+});
+
 test("computeSelectionMetadata returns -1 offsets for unresolvable selections", () => {
 	const result = computeSelectionMetadata("# Hello World\n", "something completely different");
 	assert.equal(result.offsetStart, -1);

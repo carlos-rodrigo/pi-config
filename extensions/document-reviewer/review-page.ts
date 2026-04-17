@@ -147,61 +147,306 @@ export interface PullRequestSessionDisplayContext {
 	filePath?: string;
 }
 
+type ProjectedCharacter = {
+	char: string;
+	start: number;
+	end: number;
+};
+
+function parseDelimitedRange(
+	source: string,
+	start: number,
+	openChar: string,
+	closeChar: string,
+): {contentStart: number; contentEnd: number; end: number} | null {
+	if (source[start] !== openChar) return null;
+
+	let depth = 0;
+	for (let index = start + 1; index < source.length; index++) {
+		const char = source[index]!;
+		if (char === "\\") {
+			index += 1;
+			continue;
+		}
+		if (char === "\n") return null;
+		if (char === openChar) {
+			depth += 1;
+			continue;
+		}
+		if (char !== closeChar) continue;
+		if (depth > 0) {
+			depth -= 1;
+			continue;
+		}
+		return {contentStart: start + 1, contentEnd: index, end: index + 1};
+	}
+
+	return null;
+}
+
+function parseInlineLinkRange(source: string, start: number): {labelStart: number; labelEnd: number; end: number} | null {
+	const bracketStart = source[start] === "!" && source[start + 1] === "[" ? start + 1 : start;
+	if (source[bracketStart] !== "[") return null;
+
+	const label = parseDelimitedRange(source, bracketStart, "[", "]");
+	if (!label) return null;
+
+	const afterLabel = label.end;
+	if (source[afterLabel] === "(") {
+		const destination = parseDelimitedRange(source, afterLabel, "(", ")");
+		if (!destination) return null;
+		return {labelStart: label.contentStart, labelEnd: label.contentEnd, end: destination.end};
+	}
+	if (source[afterLabel] === "[") {
+		const reference = parseDelimitedRange(source, afterLabel, "[", "]");
+		if (!reference) return null;
+		return {labelStart: label.contentStart, labelEnd: label.contentEnd, end: reference.end};
+	}
+
+	return {labelStart: label.contentStart, labelEnd: label.contentEnd, end: label.end};
+}
+
+function parseInlineCodeSpanRange(source: string, start: number): {contentStart: number; contentEnd: number; end: number} | null {
+	if (source[start] !== "`") return null;
+
+	let tickCount = 1;
+	while (source[start + tickCount] === "`") tickCount += 1;
+	const closingFence = "`".repeat(tickCount);
+	const closingIndex = source.indexOf(closingFence, start + tickCount);
+	if (closingIndex === -1) return null;
+
+	return {
+		contentStart: start + tickCount,
+		contentEnd: closingIndex,
+		end: closingIndex + tickCount,
+	};
+}
+
+function consumeMarkdownLinePrefix(source: string, start: number): number {
+	let cursor = start;
+	let consumedMarker = false;
+
+	const skipIndent = () => {
+		let width = 0;
+		while (cursor < source.length && (source[cursor] === " " || source[cursor] === "\t") && width < 4) {
+			cursor += 1;
+			width += 1;
+		}
+	};
+
+	skipIndent();
+	while (source[cursor] === ">") {
+		consumedMarker = true;
+		cursor += 1;
+		skipIndent();
+	}
+
+	const headingMatch = source.slice(cursor).match(/^(#{1,6})[ \t]+/);
+	if (headingMatch) {
+		cursor += headingMatch[0].length;
+		return cursor;
+	}
+
+	const listMatch = source.slice(cursor).match(/^(?:[-+*]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/);
+	if (listMatch) {
+		cursor += listMatch[0].length;
+		return cursor;
+	}
+
+	return consumedMarker ? cursor : start;
+}
+
+function projectMarkdownForMatching(markdown: string): ProjectedCharacter[] {
+	const projected: ProjectedCharacter[] = [];
+	let index = 0;
+	let lineStart = true;
+	let fenceMarker: string | null = null;
+
+	const appendText = (text: string, start: number, end: number) => {
+		for (const char of text) projected.push({char, start, end});
+	};
+
+	while (index < markdown.length) {
+		if (lineStart) {
+			let fenceCursor = index;
+			while (fenceCursor < markdown.length && (markdown[fenceCursor] === " " || markdown[fenceCursor] === "\t") && fenceCursor - index < 4) {
+				fenceCursor += 1;
+			}
+			const fenceChar = markdown[fenceCursor];
+			if (fenceChar === "`" || fenceChar === "~") {
+				let fenceEnd = fenceCursor;
+				while (markdown[fenceEnd] === fenceChar) fenceEnd += 1;
+				if (fenceEnd - fenceCursor >= 3) {
+					const marker = markdown.slice(fenceCursor, fenceEnd);
+					if (!fenceMarker) {
+						fenceMarker = marker;
+					} else if (marker[0] === fenceMarker[0] && marker.length >= fenceMarker.length) {
+						fenceMarker = null;
+					}
+					while (index < markdown.length && markdown[index] !== "\n") index += 1;
+					if (markdown[index] === "\n") index += 1;
+					lineStart = true;
+					continue;
+				}
+			}
+
+			if (!fenceMarker) {
+				const prefixed = consumeMarkdownLinePrefix(markdown, index);
+				if (prefixed !== index) {
+					index = prefixed;
+					lineStart = false;
+					if (index >= markdown.length) break;
+				}
+			}
+		}
+
+		if (!fenceMarker) {
+			if (markdown.startsWith("<!--", index)) {
+				const commentEnd = markdown.indexOf("-->", index + 4);
+				if (commentEnd !== -1) {
+					index = commentEnd + 3;
+					continue;
+				}
+			}
+
+			const link = parseInlineLinkRange(markdown, index);
+			if (link) {
+				const labelProjection = projectMarkdownForMatching(markdown.slice(link.labelStart, link.labelEnd));
+				if (labelProjection.length > 0) {
+					for (const item of labelProjection) projected.push({char: item.char, start: index, end: link.end});
+				} else {
+					appendText(markdown.slice(link.labelStart, link.labelEnd), index, link.end);
+				}
+				index = link.end;
+				lineStart = false;
+				continue;
+			}
+
+			const inlineCode = parseInlineCodeSpanRange(markdown, index);
+			if (inlineCode) {
+				appendText(markdown.slice(inlineCode.contentStart, inlineCode.contentEnd), index, inlineCode.end);
+				index = inlineCode.end;
+				lineStart = false;
+				continue;
+			}
+
+			if (markdown[index] === "\\" && index + 1 < markdown.length) {
+				const escaped = markdown[index + 1]!;
+				projected.push({char: escaped, start: index, end: index + 2});
+				lineStart = escaped === "\n";
+				index += 2;
+				continue;
+			}
+
+			if (markdown[index] === "<") {
+				const autolinkEnd = markdown.indexOf(">", index + 1);
+				const autolinkContent = autolinkEnd === -1 ? "" : markdown.slice(index + 1, autolinkEnd);
+				if (autolinkEnd !== -1 && (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(autolinkContent) || autolinkContent.includes("@"))) {
+					appendText(autolinkContent, index, autolinkEnd + 1);
+					index = autolinkEnd + 1;
+					lineStart = false;
+					continue;
+				}
+			}
+
+			if (markdown[index] === "*" || markdown[index] === "_" || markdown[index] === "~" || markdown[index] === "`") {
+				index += 1;
+				continue;
+			}
+		}
+
+		const char = markdown[index]!;
+		projected.push({char, start: index, end: index + 1});
+		lineStart = char === "\n";
+		index += 1;
+	}
+
+	return projected;
+}
+
+function normalizeProjectedCharacters(characters: ProjectedCharacter[]): ProjectedCharacter[] {
+	const normalized: ProjectedCharacter[] = [];
+
+	for (const character of characters) {
+		if (/\s/.test(character.char)) {
+			const previous = normalized.at(-1);
+			if (previous?.char === " ") {
+				previous.end = character.end;
+				continue;
+			}
+			normalized.push({char: " ", start: character.start, end: character.end});
+			continue;
+		}
+		normalized.push({...character});
+	}
+
+	return normalized;
+}
+
+function normalizeSearchTextForMatching(text: string): string {
+	return text.trim().replace(/\s+/g, " ");
+}
+
+function expandSelectionToSafeRange(markdown: string, start: number, end: number): {start: number; end: number} {
+	let expandedStart = start;
+	let expandedEnd = end;
+
+	while (expandedStart > 0 && /[*_~`]/.test(markdown[expandedStart - 1]!)) expandedStart -= 1;
+	while (expandedEnd < markdown.length && /[*_~`]/.test(markdown[expandedEnd]!)) expandedEnd += 1;
+
+	const lineStart = markdown.lastIndexOf("\n", expandedStart - 1) + 1;
+	const lineBreakAfterEnd = markdown.indexOf("\n", expandedEnd);
+	const lineEnd = lineBreakAfterEnd === -1 ? markdown.length : lineBreakAfterEnd;
+
+	for (let index = lineStart; index <= lineEnd; index++) {
+		const link = parseInlineLinkRange(markdown, index);
+		if (link && link.labelStart <= expandedStart && expandedEnd <= link.labelEnd) {
+			expandedStart = index;
+			expandedEnd = link.end;
+			break;
+		}
+
+		const inlineCode = parseInlineCodeSpanRange(markdown, index);
+		if (inlineCode && inlineCode.contentStart <= expandedStart && expandedEnd <= inlineCode.contentEnd) {
+			expandedStart = index;
+			expandedEnd = inlineCode.end;
+			break;
+		}
+	}
+
+	while (expandedStart > 0 && /[*_~`]/.test(markdown[expandedStart - 1]!)) expandedStart -= 1;
+	while (expandedEnd < markdown.length && /[*_~`]/.test(markdown[expandedEnd]!)) expandedEnd += 1;
+
+	return {start: expandedStart, end: expandedEnd};
+}
+
 /**
- * Try to find `searchText` in `markdown` by skipping common inline formatting
- * characters (`*`, `_`, `` ` ``, `~`) and normalising whitespace runs.
- * Returns the start/end offsets in the *original* markdown, or null.
+ * Try to find `searchText` in `markdown` by projecting the markdown source into
+ * the rendered text a reviewer can actually select.
  */
 export function findFlexibleMatch(markdown: string, searchText: string): { start: number; end: number } | null {
 	if (!searchText || !markdown) return null;
 
-	const SKIP = new Set(["*", "_", "`", "~"]);
-	const WS = /\s/;
-	const searchLen = searchText.length;
-	const mdLen = markdown.length;
+	const normalizedSearch = normalizeSearchTextForMatching(searchText);
+	if (!normalizedSearch) return null;
 
-	for (let start = 0; start < mdLen; start++) {
-		let mi = start;
-		let si = 0;
+	const projected = normalizeProjectedCharacters(projectMarkdownForMatching(markdown));
+	const projectedText = projected.map((character) => character.char).join("");
+	const matchIndex = projectedText.indexOf(normalizedSearch);
+	if (matchIndex === -1) return null;
 
-		while (si < searchLen && mi < mdLen) {
-			// Skip inline-formatting characters in the markdown source
-			if (SKIP.has(markdown[mi]!)) {
-				mi++;
-				continue;
-			}
+	const lastCharacter = projected[matchIndex + normalizedSearch.length - 1];
+	if (!lastCharacter) return null;
 
-			// Whitespace normalisation: consume all whitespace in both strings
-			if (WS.test(markdown[mi]!) && WS.test(searchText[si]!)) {
-				while (mi < mdLen && WS.test(markdown[mi]!)) mi++;
-				while (si < searchLen && WS.test(searchText[si]!)) si++;
-				continue;
-			}
-
-			if (markdown[mi] === searchText[si]) {
-				si++;
-				mi++;
-			} else {
-				break;
-			}
-		}
-
-		if (si >= searchLen) {
-			// Include any trailing formatting characters so the matched range
-			// covers complete formatting pairs (e.g. **bold** not **bold).
-			while (mi < mdLen && SKIP.has(markdown[mi]!)) mi++;
-			return { start, end: mi };
-		}
-	}
-
-	return null;
+	return expandSelectionToSafeRange(markdown, projected[matchIndex]!.start, lastCharacter.end);
 }
 
 export function computeSelectionMetadata(markdown: string, selectedText: string): ReviewSelectionMetadata {
 	// Strategy 1: exact substring match
 	const exactIdx = markdown.indexOf(selectedText);
 	if (exactIdx !== -1) {
-		return buildSelectionResult(markdown, selectedText, exactIdx, exactIdx + selectedText.length);
+		const expanded = expandSelectionToSafeRange(markdown, exactIdx, exactIdx + selectedText.length);
+		return buildSelectionResult(markdown, markdown.slice(expanded.start, expanded.end), expanded.start, expanded.end);
 	}
 
 	// Strategy 2: trimmed match
@@ -209,15 +454,15 @@ export function computeSelectionMetadata(markdown: string, selectedText: string)
 	if (trimmed) {
 		const trimmedIdx = markdown.indexOf(trimmed);
 		if (trimmedIdx !== -1) {
-			return buildSelectionResult(markdown, trimmed, trimmedIdx, trimmedIdx + trimmed.length);
+			const expanded = expandSelectionToSafeRange(markdown, trimmedIdx, trimmedIdx + trimmed.length);
+			return buildSelectionResult(markdown, markdown.slice(expanded.start, expanded.end), expanded.start, expanded.end);
 		}
 	}
 
-	// Strategy 3: flexible match — skip formatting chars, normalise whitespace
+	// Strategy 3: flexible match — compare against a markdown-aware rendered projection
 	const flex = findFlexibleMatch(markdown, selectedText);
 	if (flex) {
-		const matched = markdown.slice(flex.start, flex.end);
-		return buildSelectionResult(markdown, matched, flex.start, flex.end);
+		return buildSelectionResult(markdown, markdown.slice(flex.start, flex.end), flex.start, flex.end);
 	}
 
 	// No match found
@@ -925,6 +1170,14 @@ function getScript(sessionId: string): string {
   const API_BASE = window.location.origin + '/api/' + SESSION_ID;
   const PAGE_STEP_FACTOR = 0.5;
   const CARET_VIEWPORT_PADDING = 28;
+  const parseDelimitedRange = ${parseDelimitedRange.toString()};
+  const parseInlineLinkRange = ${parseInlineLinkRange.toString()};
+  const parseInlineCodeSpanRange = ${parseInlineCodeSpanRange.toString()};
+  const consumeMarkdownLinePrefix = ${consumeMarkdownLinePrefix.toString()};
+  const projectMarkdownForMatching = ${projectMarkdownForMatching.toString()};
+  const normalizeProjectedCharacters = ${normalizeProjectedCharacters.toString()};
+  const normalizeSearchTextForMatching = ${normalizeSearchTextForMatching.toString()};
+  const expandSelectionToSafeRange = ${expandSelectionToSafeRange.toString()};
   const findFlexibleMatch = ${findFlexibleMatch.toString()};
   const buildSelectionResult = ${buildSelectionResult.toString()};
   const computeSelectionMetadata = ${computeSelectionMetadata.toString()};
