@@ -1258,6 +1258,63 @@ test("hot-file edits mark the active brief stale with C", async (t) => {
 });
 
 
+test("brief_ensure refreshes when drift marks the current brief stale", async (t) => {
+	const projectDir = makeTempDir();
+	t.after(() => rmSync(projectDir, {recursive: true, force: true}));
+	writeBrief(join(projectDir, ".pi", "briefs"), "billing.md", sampleBrief("billing", "Billing"));
+
+	const refreshCalls: Array<{topic: string; hasBrief: boolean}> = [];
+	const {eventHandlers, tools} = createHarness({
+		deps: {
+			refreshBriefForTopic: async ({topic, brief}) => {
+				refreshCalls.push({topic, hasBrief: Boolean(brief)});
+				return {
+					ok: true,
+					created: false,
+					usedModel: "google/gemini-2.5-flash",
+					modelSource: "helper",
+					brief: parseBriefDocument(
+						sampleBrief(topic, "Billing", {updatedAt: "2026-04-12T00:00:00Z"}),
+						join(projectDir, ".pi", "briefs", `${topic}.md`),
+						"project",
+					)!,
+				};
+			},
+		},
+	});
+	const sessionStart = eventHandlers.get("session_start");
+	const toolCall = eventHandlers.get("tool_call");
+	const ensureTool = tools.get("brief_ensure");
+	assert.ok(sessionStart);
+	assert.ok(toolCall);
+	assert.ok(ensureTool);
+	const {ctx, statuses} = createCtx(projectDir, {
+		entries: [
+			{
+				type: "custom",
+				customType: "focused-context",
+				data: {activeTopic: "billing", pinnedTopic: undefined},
+			},
+		],
+	});
+
+	await sessionStart({}, ctx as any);
+	await toolCall({toolName: "edit", input: {path: "src/billing.ts"}}, ctx as any);
+	const result = await ensureTool.execute(
+		"tool-call-1",
+		{task: "Continue billing work", refresh: "if_stale"},
+		undefined,
+		undefined,
+		ctx as any,
+	);
+
+	assert.deepEqual(refreshCalls, [{topic: "billing", hasBrief: true}]);
+	assert.equal(result.details.action, "refreshed");
+	assert.equal(result.details.freshness, "fresh");
+	assert.deepEqual(statuses.at(-1), {key: "focused-context", value: "brief:billing · fresh"});
+});
+
+
 test("repeated exploration loops recommend a fresh session only once per drift window", async (t) => {
 	const projectDir = makeTempDir();
 	const globalDir = makeTempDir();

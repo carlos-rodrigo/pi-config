@@ -184,8 +184,9 @@ function getSessionIdentity(ctx: ExtensionContext): {sessionId?: string; session
 	};
 }
 
-function getFreshnessLabel(brief: BriefRecord | undefined): "fresh" | "stale" {
-	return brief?.updatedAt ? "fresh" : "stale";
+function getFreshnessLabel(brief: BriefRecord | undefined, reasons: Iterable<StaleReason> = []): "fresh" | "stale" {
+	if (!brief?.updatedAt) return "stale";
+	return [...reasons].length > 0 ? "stale" : "fresh";
 }
 
 function getDriftReasons(driftState: FocusedContextDriftState): StaleReason[] {
@@ -203,7 +204,7 @@ function formatStatus(
 	reasons: StaleReason[] = [],
 ): string | undefined {
 	if (!brief) return undefined;
-	let text = `brief:${brief.topic} · ${reasons.length > 0 ? formatStaleReasonLabel(reasons) : getFreshnessLabel(brief)}`;
+	let text = `brief:${brief.topic} · ${reasons.length > 0 ? formatStaleReasonLabel(reasons) : getFreshnessLabel(brief, reasons)}`;
 	if (shouldRecommendFreshSession(reasons)) text += " · new-session?";
 	return ctx.ui.theme.fg("accent", text);
 }
@@ -214,11 +215,15 @@ export function normalizeRefreshPolicy(value: string | undefined): EnsureRefresh
 	return undefined;
 }
 
-export function shouldRefreshBrief(brief: BriefRecord | undefined, policy: EnsureRefreshPolicy): boolean {
+export function shouldRefreshBrief(
+	brief: BriefRecord | undefined,
+	policy: EnsureRefreshPolicy,
+	reasons: Iterable<StaleReason> = [],
+): boolean {
 	if (!brief) return true;
 	if (policy === "always") return true;
 	if (policy === "never") return false;
-	return getFreshnessLabel(brief) === "stale";
+	return getFreshnessLabel(brief, reasons) === "stale";
 }
 
 function tokenizeTask(task: string): string[] {
@@ -1115,8 +1120,9 @@ export function createFocusedContextExtension(deps: FocusedContextDeps = {}) {
 			}
 
 			const existing = explicit?.brief ?? findBriefByTopicOrAlias(briefs, topic);
-			if (!shouldRefreshBrief(existing, params.policy)) {
-				return {ok: true, brief: existing!, action: "reused", freshness: getFreshnessLabel(existing)};
+			const reasons = getDriftReasons(driftState);
+			if (!shouldRefreshBrief(existing, params.policy, reasons)) {
+				return {ok: true, brief: existing!, action: "reused", freshness: getFreshnessLabel(existing, reasons)};
 			}
 
 			const refreshed = await runRefresh({
