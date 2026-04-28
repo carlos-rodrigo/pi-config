@@ -32,8 +32,8 @@ type PendingAutoHandoff = {
 	previousSessionFile?: string;
 };
 
-function emitSessionStarted(pi: ExtensionAPI, payload: HandoffSessionStartedEvent) {
-	pi.events.emit(HANDOFF_SESSION_STARTED_EVENT, payload);
+function emitSessionStarted(eventBus: ExtensionAPI["events"], payload: HandoffSessionStartedEvent) {
+	eventBus.emit(HANDOFF_SESSION_STARTED_EVENT, payload);
 }
 
 function gatherConversation(ctx: ExtensionContext): string | null {
@@ -165,6 +165,7 @@ export function filterHandoffContext<T extends { timestamp?: number }>(messages:
 }
 
 export default function (pi: ExtensionAPI) {
+	const eventBus = pi.events;
 	let pendingAutoHandoff: PendingAutoHandoff | null = null;
 	let handoffTimestamp: number | null = null;
 
@@ -202,7 +203,7 @@ export default function (pi: ExtensionAPI) {
 		};
 		rawSessionManager.newSession({ parentSession: handoff.parentSessionFile });
 
-		emitSessionStarted(pi, {
+		emitSessionStarted(eventBus, {
 			mode: "tool",
 			previousSessionFile: handoff.previousSessionFile,
 			parentSessionFile: handoff.parentSessionFile,
@@ -263,23 +264,24 @@ export default function (pi: ExtensionAPI) {
 
 			const newSessionResult = await ctx.newSession({
 				parentSession: currentSessionFile ?? undefined,
+				withSession: async (newCtx) => {
+					emitSessionStarted(eventBus, {
+						mode: "command",
+						previousSessionFile: currentSessionFile ?? undefined,
+						parentSessionFile: currentSessionFile ?? undefined,
+						nextSessionFile: newCtx.sessionManager.getSessionFile() ?? undefined,
+						nextSessionId: newCtx.sessionManager.getSessionId(),
+					});
+
+					newCtx.ui.setEditorText(editedPrompt);
+					newCtx.ui.notify("Handoff ready — submit to start the new session.", "info");
+				},
 			});
 
 			if (newSessionResult.cancelled) {
 				ctx.ui.notify("New session cancelled", "info");
 				return;
 			}
-
-			emitSessionStarted(pi, {
-				mode: "command",
-				previousSessionFile: currentSessionFile ?? undefined,
-				parentSessionFile: currentSessionFile ?? undefined,
-				nextSessionFile: ctx.sessionManager.getSessionFile() ?? undefined,
-				nextSessionId: ctx.sessionManager.getSessionId(),
-			});
-
-			ctx.ui.setEditorText(editedPrompt);
-			ctx.ui.notify("Handoff ready — submit to start the new session.", "info");
 		},
 	});
 

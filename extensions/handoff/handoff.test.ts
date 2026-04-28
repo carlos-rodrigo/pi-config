@@ -145,6 +145,7 @@ test("/handoff creates a new session, preserves parent linkage, and seeds the ed
 	const editorTexts: string[] = [];
 	const notifications: Array<{ message: string; type?: string }> = [];
 	const newSessionCalls: Array<{ parentSession?: string }> = [];
+	let oldContextStale = false;
 
 	const ui = createMockUI({
 		custom: async () => ({ type: "prompt", text: "## Objective\nImplement phase two" }),
@@ -157,15 +158,40 @@ test("/handoff creates a new session, preserves parent linkage, and seeds the ed
 		},
 	});
 
-	const ctx = {
+	const replacementCtx = {
 		hasUI: true,
 		model: { provider: "anthropic", id: "test-model" },
 		modelRegistry: { getApiKeyForProvider: async () => "test-key" },
 		sessionManager,
 		ui,
-		async newSession(options?: { parentSession?: string }) {
-			newSessionCalls.push(options ?? {});
-			sessionManager.newSession(options);
+	};
+
+	const ctx = {
+		get hasUI() {
+			if (oldContextStale) throw new Error("old context used after newSession");
+			return true;
+		},
+		get model() {
+			if (oldContextStale) throw new Error("old context used after newSession");
+			return { provider: "anthropic", id: "test-model" };
+		},
+		get modelRegistry() {
+			if (oldContextStale) throw new Error("old context used after newSession");
+			return { getApiKeyForProvider: async () => "test-key" };
+		},
+		get sessionManager() {
+			if (oldContextStale) throw new Error("old context used after newSession");
+			return sessionManager;
+		},
+		get ui() {
+			if (oldContextStale) throw new Error("old context used after newSession");
+			return ui;
+		},
+		async newSession(options?: { parentSession?: string; withSession?: (ctx: any) => Promise<void> }) {
+			newSessionCalls.push({ parentSession: options?.parentSession });
+			sessionManager.newSession({ parentSession: options?.parentSession });
+			oldContextStale = true;
+			await options?.withSession?.(replacementCtx);
 			return { cancelled: false };
 		},
 	};

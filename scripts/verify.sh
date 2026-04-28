@@ -1,10 +1,13 @@
 #!/bin/bash
 # Back-pressure verification — silent on success, verbose on failure.
-# Runs all quality gates. Exit 0 = clean, exit non-zero = agent must fix.
+# This repo's real quality gates are the npm test scripts documented in package.json,
+# README.md, and AGENTS.md:
+#   - npm test              -> full suite
+#   - npm run test:direct   -> fast subset (skips document-reviewer integration)
 #
 # Usage:
-#   bash scripts/verify.sh          # run all checks
-#   bash scripts/verify.sh --quick  # tests only (skip typecheck)
+#   bash scripts/verify.sh
+#   bash scripts/verify.sh --quick
 
 set -euo pipefail
 
@@ -14,21 +17,24 @@ cd "$PROJECT_DIR"
 
 source "$SCRIPT_DIR/run_silent.sh"
 
-quick=false
-[[ "${1:-}" == "--quick" ]] && quick=true
+usage() {
+  echo "Usage: bash scripts/verify.sh [--quick]" >&2
+}
 
-failed=0
-
-# Tests (fail-fast, context-efficient)
-if ! run_silent "tests" npm test; then
-  failed=1
+if [[ $# -gt 1 ]]; then
+  usage
+  exit 64
 fi
 
-if [ $failed -ne 0 ]; then
-  echo "" >&2
-  echo "❌ Verification failed — fix errors above before continuing." >&2
-  exit 2
-fi
-
-# All good — silent (zero context consumed)
-exit 0
+case "${1:-}" in
+  "")
+    run_silent "full test suite" npm test >/dev/null
+    ;;
+  --quick)
+    run_silent "direct test suite" npm run test:direct >/dev/null
+    ;;
+  *)
+    usage
+    exit 64
+    ;;
+esac
