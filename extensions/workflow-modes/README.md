@@ -25,4 +25,6 @@ pi install ./extensions/workflow-modes
 | **deep** | xhigh | Complex reasoning, architecture, debugging |
 | **fast** | low | Quick tasks, simple edits |
 
+Deep mode prefers `openai-codex/gpt-5.5`, then falls back to `gpt-5.4` and `gpt-5.3-codex` if needed.
+
 Startup note: if you launch Pi with an explicit model/thinking selection (`--model`, `--models`, or `--thinking`), workflow-modes now preserves that choice unless you also pass `--workflow-mode`.
