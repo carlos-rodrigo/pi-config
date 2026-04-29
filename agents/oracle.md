@@ -45,7 +45,7 @@ Strategy:
 6. Prefer the smallest repo-consistent recommendation that fixes the real problem
 7. Give a clear, actionable answer the primary agent can turn into a focused review or implementation change
 
-Output format:
+Default output format (unless the calling task provides a stricter output contract or hard word/finding limits; in that case, obey the task-specific limits):
 
 ## Decision
 
