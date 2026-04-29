@@ -18,7 +18,10 @@
     "test:dumb-zone": "node --test extensions/dumb-zone/dumb-zone.test.ts",
     "test:verify": "node --test extensions/verify/verify.test.ts",
     "test:git-blame": "node --test extensions/git-blame/git-blame.test.ts",
-    "test:direct": "node --test extensions/auto-prompt/auto-prompt.test.ts extensions/branch-switcher/branch-switcher.test.ts extensions/web-tools/web-tools.test.ts extensions/workflow-modes/workflow-modes.test.ts extensions/feature-flow/feature-flow.test.ts extensions/handoff/handoff.test.ts extensions/session-query/session-query.test.ts extensions/lazygit/lazygit.test.ts extensions/document-reviewer/review-flow.test.ts extensions/bordered-editor/bordered-editor.test.ts extensions/dumb-zone/dumb-zone.test.ts extensions/verify/verify.test.ts extensions/git-blame/git-blame.test.ts",
+    "test:focused-context": "node --test extensions/focused-context/focused-context.test.ts",
+    "test:review-mode": "node --test extensions/review-mode/review-mode.test.ts",
+    "test:oracle": "node --test agents/oracle.test.ts",
+    "test:direct": "node --test agents/oracle.test.ts extensions/auto-prompt/auto-prompt.test.ts extensions/branch-switcher/branch-switcher.test.ts extensions/web-tools/web-tools.test.ts extensions/workflow-modes/workflow-modes.test.ts extensions/feature-flow/feature-flow.test.ts extensions/handoff/handoff.test.ts extensions/session-query/session-query.test.ts extensions/lazygit/lazygit.test.ts extensions/document-reviewer/review-flow.test.ts extensions/bordered-editor/bordered-editor.test.ts extensions/dumb-zone/dumb-zone.test.ts extensions/verify/verify.test.ts extensions/git-blame/git-blame.test.ts extensions/focused-context/focused-context.test.ts extensions/review-mode/review-mode.test.ts",
     "test:document-reviewer": "node scripts/test-document-reviewer.mjs",
     "test": "npm run test:direct && npm run test:document-reviewer"
   },

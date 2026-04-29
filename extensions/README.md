@@ -27,6 +27,8 @@ pi install ./extensions/worktree-manager
 pi install ./extensions/feature-flow
 pi install ./extensions/document-reviewer
 pi install ./extensions/handoff
+pi install ./extensions/focused-context
+pi install ./extensions/review-mode
 pi install ./extensions/lazygit
 pi install ./extensions/git-blame
 pi install ./extensions/subagent
@@ -46,6 +48,7 @@ pi install ./extensions/verify
 | [git-blame](git-blame/) | Interactive git blame overlay |
 | [handoff](handoff/) | `/handoff` command + LLM-callable `handoff` tool for session transfer |
 | [lazygit](lazygit/) | LazyGit launcher via tmux |
+| [review-mode](review-mode/) | Overlay review workbench for local/staged/unstaged/outgoing diffs with colorized preview, hunk/file/all scopes, same-session questions, and saved review notes |
 | [subagent](subagent/) | Delegate tasks to specialized sub-agents |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
 | [workflow-modes](workflow-modes/) | Smart/deep/fast mode switching |
