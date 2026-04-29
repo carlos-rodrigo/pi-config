@@ -184,7 +184,7 @@ function emptyLine(innerWidth: number, theme: Theme): string {
 
 // ── Blame viewer component ─────────────────────────────────────────────────
 
-class BlameViewerComponent {
+export class BlameViewerComponent {
   private blameLines: BlameLine[] = [];
   private highlightedContent: string[] = [];
   private scrollOffset = 0;
@@ -201,7 +201,7 @@ class BlameViewerComponent {
   
   // For coloring by commit
   private commitColors: Map<string, string> = new Map();
-  private colorPalette = ["cyan", "magenta", "yellow", "blue", "green"];
+  private colorPalette = ["accent", "success", "warning", "mdLink", "thinkingHigh"];
   private colorIndex = 0;
 
   constructor(
@@ -317,7 +317,7 @@ class BlameViewerComponent {
       
       // Highlight selected line
       if (isSelected) {
-        line = th.bg("selection", line);
+        line = th.bg("selectedBg", line);
       }
       
       out.push(wrapContentLine(line, innerWidth, th));

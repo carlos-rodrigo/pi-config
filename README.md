@@ -28,7 +28,6 @@ pi install ./extensions/worktree-manager.ts
 pi install ./extensions/feature-flow.ts
 pi install ./extensions/document-reviewer.ts
 pi install ./extensions/handoff.ts
-pi install ./extensions/focused-context/index.ts
 pi install ./extensions/subagent/index.ts
 ```
 
@@ -61,7 +60,6 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[web-tools](extensions/README.md#web-tools)** — Web search and page fetch tools for agents. Adds `websearch` and `webfetch` tools with Opencode-style provider choices.
 - **[worktree-manager](extensions/README.md#worktree-manager)** — Git worktree lifecycle manager with `/ws` commands and `worktree_manage` tool.
 - **[feature-flow](extensions/README.md#feature-flow)** — Opinionated `/feature` workflow orchestrator: create isolated branch/worktree, launch a tmux Pi pane by default (or window with `--window`), and start a lightweight-first feature workflow with docs on demand.
-- **[focused-context](extensions/README.md#focused-context)** — Topic briefs, bounded recon, drift detection, fresh-session recommendations, and continuity across handoff/compaction.
 - **[subagent](extensions/subagent/)** — Delegate tasks to specialized sub-agents with isolated context windows. Supports single, parallel, and chain modes.
 
 ### [Agents](agents/)

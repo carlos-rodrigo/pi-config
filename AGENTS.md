@@ -1,6 +1,6 @@
 # Project AGENTS.md
 
-Personal pi extensions and themes — bordered editor, focused context, file opener, catppuccin theme.
+Personal pi extensions and themes — bordered editor, file opener, catppuccin theme.
 
 ## Commands
 
@@ -39,7 +39,6 @@ Load relevant playbooks during research — don't read everything upfront.
 | `bordered-editor` | Rounded-border composer with mode, model, context, cost, git info |
 | `dumb-zone` | Context-window monitor — shows active zone label, auto-handoff at 45% |
 | `handoff` | `/handoff` command + LLM tool — produces structured context packets |
-| `focused-context` | Topic briefs + bounded recon + drift-aware session continuity across handoff/compaction |
 | `workflow-modes` | Smart/Deep/Fast agent modes with model switching |
 | `auto-prompt` | Ghost-text suggestions after each turn |
 | `branch-switcher` | Interactive `/branch` command for switching git branches |
