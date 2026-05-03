@@ -61,6 +61,14 @@ for stale in "${PI_DIR}"/extensions/lib; do
   rm "$stale"
   echo "  ✓ removed stale symlink $(basename "$stale")"
 done
+for stale in "${PI_DIR}"/agents/*.md; do
+  [ -L "$stale" ] || continue
+  target_path="$(readlink "$stale")"
+  if [[ "$target_path" == "${REPO_DIR}/agents/"* ]] && [ ! -e "$target_path" ]; then
+    rm "$stale"
+    echo "  ✓ removed stale agent symlink $(basename "$stale")"
+  fi
+done
 
 # --- Extensions (each extension is a directory with index.ts) ---
 for d in "${REPO_DIR}"/extensions/*/; do
