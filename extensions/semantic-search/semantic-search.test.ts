@@ -123,6 +123,42 @@ test("formatted search results include read-ready file ranges and compact previe
 	}
 });
 
+test("semantic cards summarize files and symbols for meaning-oriented search", () => {
+	const dir = makeProject({
+		"app/controllers/sessions_controller.rb": `class SessionsController < ApplicationController
+	before_action :authenticate_user!, only: :destroy
+
+	# Signs users in after checking credentials.
+	def create
+		user = User.find_by(email: params[:email])
+		sign_in(user)
+		redirect_to dashboard_path
+	end
+end
+`,
+		"app/services/report_builder.rb": `class ReportBuilder
+	def call
+		render_pdf
+	end
+end
+`,
+	});
+	try {
+		const index = buildSearchIndex(dir, { writeToDisk: false });
+		const methodCard = index.cards.find((card) => card.name === "SessionsController#create");
+
+		assert.ok(index.cards.length >= index.files.length, "expected at least one semantic card per file");
+		assert.equal(methodCard?.kind, "method");
+		assert.match(methodCard?.summary ?? "", /auth|sign_in|session|credentials/i);
+
+		const results = searchIndex(index, { query: "where are users authenticated or signed in?", topK: 5 });
+		assert.ok(results.some((result) => result.source === "card" && result.path === "app/controllers/sessions_controller.rb"));
+		assert.match(formatSearchResults("where are users authenticated or signed in?", results, index), /semantic card/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("Ollama embeddings are stored locally and used for semantic ranking", async () => {
 	const dir = makeProject({
 		"src/billing/ledger.ts": `export function reconcileLedger() {
@@ -142,8 +178,11 @@ test("Ollama embeddings are stored locally and used for semantic ranking", async
 			});
 			assert.equal(index.embedding?.provider, "ollama");
 			assert.equal(index.embedding?.model, "nomic-embed-text");
+			assert.equal(index.embedding?.inputMaxChars, 6_000);
 			assert.equal(index.embedding?.dimensions, 3);
+			assert.ok((index.embedding?.embeddedCards ?? 0) > 0);
 			assert.ok(index.chunks.every((chunk) => Array.isArray(chunk.embedding)));
+			assert.ok(index.cards.every((card) => Array.isArray(card.embedding)));
 
 			const { results, embeddingUsed } = await searchIndexWithEmbeddings(index, {
 				query: "where is money collection handled?",
@@ -156,6 +195,76 @@ test("Ollama embeddings are stored locally and used for semantic ranking", async
 			assert.ok(results[0]?.embeddingScore && results[0].embeddingScore > 0.9);
 		});
 	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("Ollama embedding client caps oversized inputs before sending them to Ollama", async () => {
+	const dir = makeProject({
+		"src/large.ts": `export const oversized = "${"token ".repeat(1_000)}";\n`,
+	});
+	const originalFetch = globalThis.fetch;
+	const seenInputs: string[] = [];
+	globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+		const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string | string[] };
+		const inputs = Array.isArray(body.input) ? body.input : [body.input ?? ""];
+		seenInputs.push(...inputs);
+		return new Response(JSON.stringify({ embeddings: inputs.map(fakeEmbeddingFor) }), {
+			status: 200,
+			headers: { "content-type": "application/json" },
+		});
+	}) as typeof fetch;
+	try {
+		const index = await buildSearchIndexWithEmbeddings(dir, {
+			writeToDisk: false,
+			ollama: { model: "nomic-embed-text", baseUrl: "http://ollama.test", maxInputChars: 400 },
+		});
+
+		assert.equal(index.embedding?.inputMaxChars, 400);
+		assert.ok(seenInputs.length > 0);
+		assert.ok(seenInputs.every((input) => input.length <= 400));
+		assert.ok(seenInputs.some((input) => input.includes("semantic-search input truncated")));
+	} finally {
+		globalThis.fetch = originalFetch;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("Ollama embedding client splits batches and shrinks inputs after context-length errors", async () => {
+	const dir = makeProject({
+		"src/large.ts": `export const oversized = "${"token ".repeat(1_000)}";\n`,
+		"src/small.ts": "export const small = 'invoice ledger';\n",
+	});
+	const originalFetch = globalThis.fetch;
+	const calls: Array<{ count: number; maxLength: number }> = [];
+	globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+		const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string | string[] };
+		const inputs = Array.isArray(body.input) ? body.input : [body.input ?? ""];
+		calls.push({ count: inputs.length, maxLength: Math.max(...inputs.map((input) => input.length)) });
+		if (inputs.some((input) => input.length > 160)) {
+			return new Response(JSON.stringify({ error: "the input length exceeds the context length" }), {
+				status: 400,
+				statusText: "Bad Request",
+				headers: { "content-type": "application/json" },
+			});
+		}
+		return new Response(JSON.stringify({ embeddings: inputs.map(fakeEmbeddingFor) }), {
+			status: 200,
+			headers: { "content-type": "application/json" },
+		});
+	}) as typeof fetch;
+	try {
+		const index = await buildSearchIndexWithEmbeddings(dir, {
+			writeToDisk: false,
+			ollama: { model: "nomic-embed-text", baseUrl: "http://ollama.test", batchSize: 2, maxInputChars: 500 },
+		});
+
+		assert.equal(index.embedding?.embeddedChunks, 2);
+		assert.ok(index.chunks.every((chunk) => Array.isArray(chunk.embedding)));
+		assert.ok(calls.some((call) => call.count === 2 && call.maxLength > 160));
+		assert.ok(calls.some((call) => call.count === 1 && call.maxLength <= 160));
+	} finally {
+		globalThis.fetch = originalFetch;
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
@@ -186,9 +295,11 @@ test("Ollama config defaults to the local embedding model and accepts OLLAMA_HOS
 		baseUrl: "http://127.0.0.1:11434",
 		batchSize: 16,
 		timeoutMs: 30_000,
+		maxInputChars: 6_000,
 	});
 	assert.equal(resolveOllamaEmbeddingConfig({}, { OLLAMA_HOST: "localhost:11434", OLLAMA_EMBED_MODEL: "mxbai-embed-large" }).baseUrl, "http://localhost:11434");
 	assert.equal(resolveOllamaEmbeddingConfig({}, { OLLAMA_HOST: "localhost:11434", OLLAMA_EMBED_MODEL: "mxbai-embed-large" }).model, "mxbai-embed-large");
+	assert.equal(resolveOllamaEmbeddingConfig({}, { PI_SEMANTIC_SEARCH_EMBED_MAX_CHARS: "256" }).maxInputChars, 256);
 });
 
 test("repo map clusters indexed files by reusable code concepts", () => {

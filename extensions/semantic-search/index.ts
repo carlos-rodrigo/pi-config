@@ -20,7 +20,7 @@ import {
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
-const INDEX_VERSION = 2;
+const INDEX_VERSION = 3;
 const INDEX_DIR = ".pi/semantic-search";
 const INDEX_FILE = "index.json";
 const DEFAULT_CHUNK_LINES = 80;
@@ -30,10 +30,20 @@ const DEFAULT_TOP_K = 8;
 const MAX_TOP_K = 25;
 const MAX_PREVIEW_LINES = 6;
 const MAX_PREVIEW_LINE_CHARS = 180;
+const MAX_SEMANTIC_CARDS_PER_FILE = 80;
+const MAX_CARD_BODY_LINES = 80;
+const MAX_CARD_TEXT_CHARS = 6_000;
+const MAX_CARD_CALLS = 18;
+const MAX_CARD_COMMENTS = 6;
+const MAX_CARD_TERMS = 28;
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_EMBED_MODEL = "nomic-embed-text";
 const DEFAULT_OLLAMA_BATCH_SIZE = 16;
 const DEFAULT_OLLAMA_TIMEOUT_MS = 30_000;
+const DEFAULT_OLLAMA_EMBED_INPUT_MAX_CHARS = 6_000;
+const MIN_OLLAMA_EMBED_INPUT_CHARS = 128;
+const MAX_OLLAMA_EMBED_INPUT_MAX_CHARS = 100_000;
+const EMBEDDING_TRUNCATION_MARKER = "\n\n[...semantic-search input truncated...]\n\n";
 
 const SKIP_DIRS = new Set([
 	".git",
@@ -310,14 +320,17 @@ export type OllamaEmbeddingConfig = {
 	baseUrl: string;
 	batchSize: number;
 	timeoutMs: number;
+	maxInputChars: number;
 };
 
 export type EmbeddingMetadata = {
 	provider: "ollama";
 	model: string;
 	baseUrl: string;
+	inputMaxChars: number;
 	dimensions: number;
 	embeddedChunks: number;
+	embeddedCards: number;
 	createdAt: string;
 };
 
@@ -342,6 +355,22 @@ export type IndexedChunk = {
 	embedding?: number[];
 };
 
+export type SemanticCardKind = "file" | "class" | "module" | "function" | "method" | "heading" | "definition";
+
+export type IndexedCard = {
+	id: string;
+	path: string;
+	startLine: number;
+	endLine: number;
+	kind: SemanticCardKind;
+	name: string;
+	summary: string;
+	text: string;
+	symbols: string[];
+	vector: VectorEntry[];
+	embedding?: number[];
+};
+
 export type SearchIndex = {
 	version: number;
 	cwd: string;
@@ -354,6 +383,7 @@ export type SearchIndex = {
 	};
 	files: IndexedFile[];
 	chunks: IndexedChunk[];
+	cards: IndexedCard[];
 	embedding?: EmbeddingMetadata;
 };
 
@@ -361,6 +391,10 @@ export type SearchResult = {
 	path: string;
 	startLine: number;
 	endLine: number;
+	source: "chunk" | "card";
+	cardKind?: SemanticCardKind;
+	cardName?: string;
+	cardSummary?: string;
 	score: number;
 	vectorScore: number;
 	lexicalScore: number;
@@ -413,6 +447,7 @@ type IndexStatus = {
 	reason: string;
 	files: number;
 	chunks: number;
+	cards: number;
 	updatedAt?: string;
 	embedding?: EmbeddingMetadata;
 };
@@ -435,6 +470,8 @@ function languageForPath(path: string): string {
 	if ([".json", ".jsonc"].includes(ext)) return "json";
 	if ([".yml", ".yaml"].includes(ext)) return "yaml";
 	if ([".sh", ".bash", ".zsh"].includes(ext)) return "shell";
+	if ([".rb", ".rake"].includes(ext)) return "ruby";
+	if ([".erb"].includes(ext)) return "erb";
 	if ([".py"].includes(ext)) return "python";
 	if ([".rs"].includes(ext)) return "rust";
 	if ([".go"].includes(ext)) return "go";
@@ -620,6 +657,12 @@ function normalizeOllamaBaseUrl(baseUrl: string): string {
 	return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
 }
 
+function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
+	const parsed = typeof value === "number" ? value : (typeof value === "string" && value.trim() ? Number(value) : Number.NaN);
+	const integer = Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
+	return Math.min(Math.max(integer, min), max);
+}
+
 export function resolveOllamaEmbeddingConfig(
 	input: Partial<OllamaEmbeddingConfig> = {},
 	env: Record<string, string | undefined> = process.env,
@@ -627,8 +670,9 @@ export function resolveOllamaEmbeddingConfig(
 	return {
 		model: input.model ?? env.PI_SEMANTIC_SEARCH_EMBED_MODEL ?? env.OLLAMA_EMBED_MODEL ?? DEFAULT_OLLAMA_EMBED_MODEL,
 		baseUrl: normalizeOllamaBaseUrl(input.baseUrl ?? env.OLLAMA_BASE_URL ?? env.OLLAMA_HOST ?? DEFAULT_OLLAMA_BASE_URL),
-		batchSize: Math.min(Math.max(Math.floor(input.batchSize ?? DEFAULT_OLLAMA_BATCH_SIZE), 1), 64),
-		timeoutMs: Math.min(Math.max(Math.floor(input.timeoutMs ?? DEFAULT_OLLAMA_TIMEOUT_MS), 1_000), 300_000),
+		batchSize: clampInteger(input.batchSize, DEFAULT_OLLAMA_BATCH_SIZE, 1, 64),
+		timeoutMs: clampInteger(input.timeoutMs, DEFAULT_OLLAMA_TIMEOUT_MS, 1_000, 300_000),
+		maxInputChars: clampInteger(input.maxInputChars ?? env.PI_SEMANTIC_SEARCH_EMBED_MAX_CHARS, DEFAULT_OLLAMA_EMBED_INPUT_MAX_CHARS, MIN_OLLAMA_EMBED_INPUT_CHARS, MAX_OLLAMA_EMBED_INPUT_MAX_CHARS),
 	};
 }
 
@@ -655,7 +699,46 @@ async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: n
 	}
 }
 
-async function embedOneWithLegacyOllama(text: string, config: OllamaEmbeddingConfig, signal?: AbortSignal): Promise<number[]> {
+function isOllamaEmbedEndpointMissing(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /\/api\/embed failed with 404/i.test(message);
+}
+
+function isOllamaContextLengthError(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /input length exceeds|exceeds (?:the )?(?:maximum )?context length|context length and cannot be truncated|after truncation exceeds maximum context length/i.test(message);
+}
+
+function truncateEmbeddingInput(text: string, maxChars: number): string {
+	const clean = text.replace(/\u0000/g, "\uFFFD");
+	if (clean.length <= maxChars) return clean;
+	if (maxChars <= EMBEDDING_TRUNCATION_MARKER.length + 8) return clean.slice(0, maxChars);
+
+	const available = maxChars - EMBEDDING_TRUNCATION_MARKER.length;
+	const headChars = Math.max(1, Math.ceil(available * 0.75));
+	const tailChars = Math.max(0, available - headChars);
+	return `${clean.slice(0, headChars)}${EMBEDDING_TRUNCATION_MARKER}${clean.slice(clean.length - tailChars)}`;
+}
+
+async function fetchOllamaEmbeddings(texts: string[], config: OllamaEmbeddingConfig, signal?: AbortSignal): Promise<number[][]> {
+	const payload = await fetchJsonWithTimeout(
+		`${config.baseUrl}/api/embed`,
+		{
+			method: "POST",
+			headers: { "content-type": "application/json", "user-agent": "pi-config-semantic-search/0.1" },
+			body: JSON.stringify({ model: config.model, input: texts, truncate: true }),
+		},
+		config.timeoutMs,
+		signal,
+	);
+	const embeddings = (payload as { embeddings?: unknown[] }).embeddings;
+	if (!Array.isArray(embeddings) || embeddings.length !== texts.length) {
+		throw new Error(`Ollama returned ${Array.isArray(embeddings) ? embeddings.length : 0} embeddings for ${texts.length} inputs.`);
+	}
+	return embeddings.map(normalizeEmbedding);
+}
+
+async function fetchLegacyOllamaEmbedding(text: string, config: OllamaEmbeddingConfig, signal?: AbortSignal): Promise<number[]> {
 	const payload = await fetchJsonWithTimeout(
 		`${config.baseUrl}/api/embeddings`,
 		{
@@ -669,29 +752,70 @@ async function embedOneWithLegacyOllama(text: string, config: OllamaEmbeddingCon
 	return normalizeEmbedding((payload as { embedding?: unknown }).embedding);
 }
 
-async function embedBatchWithOllama(texts: string[], config: OllamaEmbeddingConfig, signal?: AbortSignal): Promise<number[][]> {
-	try {
-		const payload = await fetchJsonWithTimeout(
-			`${config.baseUrl}/api/embed`,
-			{
-				method: "POST",
-				headers: { "content-type": "application/json", "user-agent": "pi-config-semantic-search/0.1" },
-				body: JSON.stringify({ model: config.model, input: texts, truncate: true }),
-			},
-			config.timeoutMs,
-			signal,
-		);
-		const embeddings = (payload as { embeddings?: unknown[] }).embeddings;
-		if (!Array.isArray(embeddings) || embeddings.length !== texts.length) {
-			throw new Error(`Ollama returned ${Array.isArray(embeddings) ? embeddings.length : 0} embeddings for ${texts.length} inputs.`);
+function shrinkEmbeddingLimit(current: number): number {
+	return Math.max(MIN_OLLAMA_EMBED_INPUT_CHARS, Math.floor(current / 2));
+}
+
+function contextRetryExhaustedError(originalLength: number, finalLength: number, error: unknown): Error {
+	const message = error instanceof Error ? error.message : String(error);
+	return new Error(`Ollama embedding input still exceeded context length after shrinking from ${originalLength} to ${finalLength} chars: ${message}`);
+}
+
+async function embedOneWithLegacyOllama(text: string, config: OllamaEmbeddingConfig, signal?: AbortSignal): Promise<number[]> {
+	let limit = Math.min(text.length, config.maxInputChars);
+	let lastError: unknown;
+	while (true) {
+		const candidate = truncateEmbeddingInput(text, limit);
+		try {
+			return await fetchLegacyOllamaEmbedding(candidate, config, signal);
+		} catch (error) {
+			if (!isOllamaContextLengthError(error)) throw error;
+			lastError = error;
+			if (limit <= MIN_OLLAMA_EMBED_INPUT_CHARS) throw contextRetryExhaustedError(text.length, candidate.length, lastError);
+			limit = shrinkEmbeddingLimit(limit);
 		}
-		return embeddings.map(normalizeEmbedding);
+	}
+}
+
+async function embedOneWithOllama(text: string, config: OllamaEmbeddingConfig, signal?: AbortSignal): Promise<number[]> {
+	let limit = Math.min(text.length, config.maxInputChars);
+	let lastError: unknown;
+	while (true) {
+		const candidate = truncateEmbeddingInput(text, limit);
+		try {
+			const [embedding] = await fetchOllamaEmbeddings([candidate], config, signal);
+			if (!embedding) throw new Error("Ollama returned no embedding for one input.");
+			return embedding;
+		} catch (error) {
+			if (isOllamaEmbedEndpointMissing(error)) return embedOneWithLegacyOllama(text, config, signal);
+			if (!isOllamaContextLengthError(error)) throw error;
+			lastError = error;
+			if (limit <= MIN_OLLAMA_EMBED_INPUT_CHARS) throw contextRetryExhaustedError(text.length, candidate.length, lastError);
+			limit = shrinkEmbeddingLimit(limit);
+		}
+	}
+}
+
+async function recoverContextLengthBatch(texts: string[], config: OllamaEmbeddingConfig, signal?: AbortSignal): Promise<number[][]> {
+	if (texts.length <= 1) return [await embedOneWithOllama(texts[0] ?? "", config, signal)];
+	const midpoint = Math.ceil(texts.length / 2);
+	const left = await embedBatchWithOllama(texts.slice(0, midpoint), config, signal);
+	const right = await embedBatchWithOllama(texts.slice(midpoint), config, signal);
+	return [...left, ...right];
+}
+
+async function embedBatchWithOllama(texts: string[], config: OllamaEmbeddingConfig, signal?: AbortSignal): Promise<number[][]> {
+	const preparedTexts = texts.map((text) => truncateEmbeddingInput(text, config.maxInputChars));
+	try {
+		return await fetchOllamaEmbeddings(preparedTexts, config, signal);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		if (!/\/api\/embed failed with 404|not found/i.test(message)) throw error;
-		const embeddings: number[][] = [];
-		for (const text of texts) embeddings.push(await embedOneWithLegacyOllama(text, config, signal));
-		return embeddings;
+		if (isOllamaEmbedEndpointMissing(error)) {
+			const embeddings: number[][] = [];
+			for (const text of texts) embeddings.push(await embedOneWithLegacyOllama(text, config, signal));
+			return embeddings;
+		}
+		if (isOllamaContextLengthError(error)) return recoverContextLengthBatch(texts, config, signal);
+		throw error;
 	}
 }
 
@@ -710,10 +834,17 @@ function embeddingInputForChunk(chunk: IndexedChunk): string {
 		.join("\n");
 }
 
+function embeddingInputForCard(card: IndexedCard): string {
+	return card.text;
+}
+
 function hasOllamaEmbeddings(index: SearchIndex, config?: OllamaEmbeddingConfig): boolean {
 	if (!index.embedding || index.embedding.provider !== "ollama") return false;
-	if (config && (index.embedding.model !== config.model || index.embedding.baseUrl !== config.baseUrl)) return false;
-	return index.chunks.length > 0 && index.chunks.every((chunk) => Array.isArray(chunk.embedding) && chunk.embedding.length === index.embedding?.dimensions);
+	if (config && (index.embedding.model !== config.model || index.embedding.baseUrl !== config.baseUrl || index.embedding.inputMaxChars !== config.maxInputChars)) return false;
+	const dimensions = index.embedding.dimensions;
+	const chunkEmbeddingsReady = index.chunks.length > 0 && index.chunks.every((chunk) => Array.isArray(chunk.embedding) && chunk.embedding.length === dimensions);
+	const cardEmbeddingsReady = (index.cards ?? []).every((card) => Array.isArray(card.embedding) && card.embedding.length === dimensions);
+	return chunkEmbeddingsReady && cardEmbeddingsReady;
 }
 
 function extractSymbols(relativePath: string, text: string): string[] {
@@ -754,6 +885,361 @@ function symbolsForRange(symbols: string[], chunkText: string): string[] {
 	return (inChunk.length > 0 ? inChunk : symbols.slice(0, 5)).slice(0, 12);
 }
 
+type SemanticDefinition = {
+	kind: SemanticCardKind;
+	name: string;
+	signature: string;
+	startLine: number;
+	endLine: number;
+	level?: number;
+};
+
+const CALL_STOPWORDS = new Set([
+	"begin",
+	"case",
+	"catch",
+	"class",
+	"def",
+	"describe",
+	"do",
+	"else",
+	"elsif",
+	"end",
+	"expect",
+	"for",
+	"function",
+	"if",
+	"import",
+	"include",
+	"let",
+	"new",
+	"raise",
+	"require",
+	"return",
+	"switch",
+	"throw",
+	"unless",
+	"while",
+]);
+
+function lineIndent(line: string): number {
+	return line.match(/^\s*/)?.[0].length ?? 0;
+}
+
+function compactWhitespace(text: string): string {
+	return text.replace(/\s+/g, " ").trim();
+}
+
+function humanizeIdentifier(value: string): string {
+	return compactWhitespace(value
+		.replace(/::/g, " ")
+		.replace(/[.#]/g, " ")
+		.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+		.replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+		.replace(/[!?=]/g, "")
+		.replace(/[_.:/\\-]+/g, " ")
+		.toLowerCase());
+}
+
+function classifyPathRoles(relativePath: string): string[] {
+	const path = relativePath.toLowerCase();
+	const roles: string[] = [];
+	if (/controllers?\//.test(path) || /_controller\./.test(path)) roles.push("controller actions and request handling");
+	if (/services?\//.test(path) || /_service\./.test(path)) roles.push("service-layer business workflow");
+	if (/jobs?\//.test(path) || /_job\./.test(path)) roles.push("background job processing");
+	if (/models?\//.test(path)) roles.push("domain model behavior");
+	if (/polic(y|ies)\//.test(path) || /_policy\./.test(path)) roles.push("authorization policy");
+	if (/mailers?\//.test(path) || /_mailer\./.test(path)) roles.push("email delivery");
+	if (/subscribers?\//.test(path) || /_subscriber\./.test(path)) roles.push("event subscriber");
+	if (/queries?\//.test(path) || /_query\./.test(path)) roles.push("query object");
+	if (/components?\//.test(path) || /component\./.test(path)) roles.push("UI component");
+	if (/clients?\//.test(path) || /_client\./.test(path)) roles.push("external API client");
+	if (/integrations?\//.test(path)) roles.push("external integration");
+	if (/serializers?\//.test(path) || /_serializer\./.test(path)) roles.push("serialization");
+	if (/forms?\//.test(path) || /_form\./.test(path)) roles.push("form object");
+	if (/migrations?\//.test(path)) roles.push("database migration");
+	if (isTestPath(relativePath)) roles.push("test coverage");
+	return roles.slice(0, 4);
+}
+
+function inferConceptsFromText(text: string): string[] {
+	return unique(tokenizeSearchText(text)
+		.filter((term) => term.startsWith("concept:"))
+		.map((term) => term.slice("concept:".length)))
+		.slice(0, 8);
+}
+
+function extractLeadingComments(lines: string[], startLine: number): string[] {
+	const comments: string[] = [];
+	for (let index = startLine - 2; index >= 0 && comments.length < MAX_CARD_COMMENTS; index--) {
+		const trimmed = lines[index]?.trim() ?? "";
+		if (!trimmed) {
+			if (comments.length > 0) break;
+			continue;
+		}
+		const comment = trimmed
+			.replace(/^#\s?/, "")
+			.replace(/^\/\/\s?/, "")
+			.replace(/^\/\*+\s?/, "")
+			.replace(/^\*\s?/, "")
+			.replace(/^<!--\s?/, "")
+			.replace(/\s?-->$/, "")
+			.trim();
+		if (comment === trimmed || !comment) break;
+		comments.unshift(comment);
+	}
+	return comments;
+}
+
+function extractCalls(text: string): string[] {
+	const calls: string[] = [];
+	for (const match of text.matchAll(/\b([A-Za-z_$][\w$!?=]*)\s*\(/g)) {
+		if (match[1]) calls.push(match[1]);
+	}
+	for (const match of text.matchAll(/[.:]\s*([A-Za-z_$][\w$!?=]*)\b/g)) {
+		if (match[1]) calls.push(match[1]);
+	}
+	for (const match of text.matchAll(/:([A-Za-z_][\w!?=]*)\b/g)) {
+		if (match[1]) calls.push(match[1]);
+	}
+	return unique(calls
+		.map((call) => call.replace(/[!?=]$/, ""))
+		.filter((call) => call.length > 1 && !CALL_STOPWORDS.has(call.toLowerCase()) && !/^\d+$/.test(call)))
+		.slice(0, MAX_CARD_CALLS);
+}
+
+function nextDefinitionStart(definitions: SemanticDefinition[], definition: SemanticDefinition, fallback: number): number {
+	const next = definitions.find((candidate) => candidate.startLine > definition.startLine);
+	return next ? next.startLine - 1 : fallback;
+}
+
+function rubyBlockEndLine(lines: string[], startIndex: number, fallback: number): number {
+	let depth = 0;
+	for (let index = startIndex; index < lines.length; index++) {
+		const code = (lines[index] ?? "").replace(/#.*$/, "").trim();
+		if (!code) continue;
+		if (/\b(class|module|def|if|unless|case|begin|for|while|until)\b/.test(code) || /\bdo\b/.test(code)) depth++;
+		if (/^end\b/.test(code)) depth--;
+		if (index > startIndex && depth <= 0) return index + 1;
+		if (index + 1 >= fallback) return fallback;
+	}
+	return fallback;
+}
+
+function braceBlockEndLine(lines: string[], startIndex: number, fallback: number): number {
+	let depth = 0;
+	let seenBrace = false;
+	for (let index = startIndex; index < lines.length; index++) {
+		const line = lines[index] ?? "";
+		for (const char of line) {
+			if (char === "{") {
+				depth++;
+				seenBrace = true;
+			} else if (char === "}") {
+				depth--;
+			}
+		}
+		if (seenBrace && index > startIndex && depth <= 0) return index + 1;
+		if (index + 1 >= fallback) return fallback;
+	}
+	return fallback;
+}
+
+function indentedBlockEndLine(lines: string[], startIndex: number, fallback: number): number {
+	const indent = lineIndent(lines[startIndex] ?? "");
+	for (let index = startIndex + 1; index < lines.length; index++) {
+		const line = lines[index] ?? "";
+		if (!line.trim() || line.trim().startsWith("#")) continue;
+		if (lineIndent(line) <= indent) return index;
+		if (index + 1 >= fallback) return fallback;
+	}
+	return fallback;
+}
+
+function computeDefinitionEndLine(definition: SemanticDefinition, definitions: SemanticDefinition[], lines: string[], language: string): number {
+	const fallback = nextDefinitionStart(definitions, definition, lines.length);
+	const startIndex = definition.startLine - 1;
+	if (definition.kind === "heading") {
+		const nextHeading = definitions.find((candidate) => candidate.kind === "heading" && candidate.startLine > definition.startLine && (candidate.level ?? 99) <= (definition.level ?? 99));
+		return nextHeading ? nextHeading.startLine - 1 : lines.length;
+	}
+	if (language === "ruby" || language === "erb") return rubyBlockEndLine(lines, startIndex, ["class", "module"].includes(definition.kind) ? lines.length : fallback);
+	if (language === "python") return indentedBlockEndLine(lines, startIndex, definition.kind === "class" ? lines.length : fallback);
+	if (["typescript", "javascript", "jvm", "go", "rust"].includes(language)) return braceBlockEndLine(lines, startIndex, definition.kind === "class" ? lines.length : fallback);
+	return fallback;
+}
+
+function rawDefinitionsForLine(line: string, language: string): Array<Omit<SemanticDefinition, "startLine" | "endLine">> {
+	const trimmed = line.trim();
+	const definitions: Array<Omit<SemanticDefinition, "startLine" | "endLine">> = [];
+	if (!trimmed) return definitions;
+
+	const markdown = trimmed.match(/^(#{1,6})\s+(.+)$/);
+	if (language === "markdown" && markdown?.[1] && markdown[2]) {
+		definitions.push({ kind: "heading", name: markdown[2].trim(), signature: trimmed, level: markdown[1].length });
+		return definitions;
+	}
+
+	if (language === "ruby" || language === "erb") {
+		const container = trimmed.match(/^(class|module)\s+([A-Za-z_][\w:]*)/);
+		if (container?.[1] && container[2]) definitions.push({ kind: container[1] === "module" ? "module" : "class", name: container[2], signature: trimmed });
+		const method = trimmed.match(/^def\s+(?:self\.)?([A-Za-z_][\w!?=]*)/);
+		if (method?.[1]) definitions.push({ kind: "method", name: method[1], signature: trimmed });
+		return definitions;
+	}
+
+	if (language === "typescript" || language === "javascript") {
+		const namedType = trimmed.match(/^(?:export\s+)?(?:abstract\s+)?(class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/);
+		if (namedType?.[1] && namedType[2]) definitions.push({ kind: namedType[1] === "class" ? "class" : "definition", name: namedType[2], signature: trimmed });
+		const fn = trimmed.match(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/);
+		if (fn?.[1]) definitions.push({ kind: "function", name: fn[1], signature: trimmed });
+		const variableFn = trimmed.match(/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)/);
+		if (variableFn?.[1]) definitions.push({ kind: "function", name: variableFn[1], signature: trimmed });
+		const method = trimmed.match(/^(?:(?:public|private|protected|static|async|override|readonly|get|set)\s+)*([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::\s*[^={]+)?\s*\{?\s*$/);
+		if (method?.[1] && !CALL_STOPWORDS.has(method[1].toLowerCase())) definitions.push({ kind: "method", name: method[1], signature: trimmed });
+		return definitions;
+	}
+
+	if (language === "python") {
+		const klass = trimmed.match(/^class\s+([A-Za-z_][\w]*)/);
+		if (klass?.[1]) definitions.push({ kind: "class", name: klass[1], signature: trimmed });
+		const fn = trimmed.match(/^(?:async\s+)?def\s+([A-Za-z_][\w]*)/);
+		if (fn?.[1]) definitions.push({ kind: "function", name: fn[1], signature: trimmed });
+		return definitions;
+	}
+
+	if (language === "go") {
+		const fn = trimmed.match(/^func\s+(?:\([^)]*\)\s*)?([A-Za-z_][\w]*)/);
+		if (fn?.[1]) definitions.push({ kind: "function", name: fn[1], signature: trimmed });
+		return definitions;
+	}
+
+	if (language === "rust") {
+		const named = trimmed.match(/^(?:pub\s+)?(?:async\s+)?(fn|struct|enum|trait|impl)\s+([A-Za-z_][\w]*)?/);
+		if (named?.[1]) definitions.push({ kind: named[1] === "fn" ? "function" : "definition", name: named[2] ?? named[1], signature: trimmed });
+		return definitions;
+	}
+
+	if (language === "jvm") {
+		const klass = trimmed.match(/^(?:public\s+|private\s+|protected\s+)?(?:abstract\s+)?(?:class|interface|enum)\s+([A-Za-z_][\w]*)/);
+		if (klass?.[1]) definitions.push({ kind: "class", name: klass[1], signature: trimmed });
+		const method = trimmed.match(/^(?:public|private|protected|static|final|suspend|override|open|fun|\s)+[\w<>, ?\[\]]+\s+([A-Za-z_][\w]*)\s*\(/);
+		if (method?.[1] && !CALL_STOPWORDS.has(method[1].toLowerCase())) definitions.push({ kind: "method", name: method[1], signature: trimmed });
+	}
+
+	return definitions;
+}
+
+function findSemanticDefinitions(relativePath: string, text: string): SemanticDefinition[] {
+	const language = languageForPath(relativePath);
+	const lines = text.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
+	const definitions: SemanticDefinition[] = [];
+	for (const [index, line] of lines.entries()) {
+		for (const definition of rawDefinitionsForLine(line, language)) {
+			definitions.push({ ...definition, startLine: index + 1, endLine: index + 1 });
+		}
+	}
+	definitions.sort((a, b) => a.startLine - b.startLine || a.kind.localeCompare(b.kind));
+	const uniqueDefinitions = unique(definitions.map((definition) => `${definition.kind}:${definition.name}:${definition.startLine}`))
+		.map((key) => definitions.find((definition) => `${definition.kind}:${definition.name}:${definition.startLine}` === key)!)
+		.filter(Boolean);
+	for (const definition of uniqueDefinitions) definition.endLine = computeDefinitionEndLine(definition, uniqueDefinitions, lines, language);
+	return uniqueDefinitions.slice(0, MAX_SEMANTIC_CARDS_PER_FILE);
+}
+
+function nearestContainer(definition: SemanticDefinition, definitions: SemanticDefinition[]): SemanticDefinition | undefined {
+	return definitions
+		.filter((candidate) => ["class", "module"].includes(candidate.kind) && candidate.startLine < definition.startLine && candidate.endLine >= definition.endLine)
+		.sort((a, b) => b.startLine - a.startLine)[0];
+}
+
+function displayNameForDefinition(relativePath: string, definition: SemanticDefinition, definitions: SemanticDefinition[]): string {
+	if (!["method", "function"].includes(definition.kind)) return definition.name;
+	const container = nearestContainer(definition, definitions);
+	if (!container) return definition.name;
+	const separator = languageForPath(relativePath) === "ruby" || languageForPath(relativePath) === "erb" ? "#" : ".";
+	return `${container.name}${separator}${definition.name}`;
+}
+
+function topCardTerms(text: string): string[] {
+	return unique(tokenizeSearchText(text).filter((term) => !term.startsWith("concept:"))).slice(0, MAX_CARD_TERMS);
+}
+
+function summarizeSemanticCard(kind: SemanticCardKind, name: string, relativePath: string, bodyText: string, comments: string[]): { summary: string; concepts: string[]; calls: string[]; terms: string[] } {
+	const calls = extractCalls(bodyText);
+	const roles = classifyPathRoles(relativePath);
+	const concepts = inferConceptsFromText([relativePath, name, bodyText, comments.join(" "), roles.join(" ")].join("\n"));
+	const terms = topCardTerms([relativePath, name, bodyText, comments.join(" ")].join("\n"));
+	const pieces = [`${kind === "file" ? "File" : `${kind} ${name}`} covers ${humanizeIdentifier(name) || basename(relativePath)}`];
+	if (roles.length > 0) pieces.push(`Role: ${roles.join(", ")}`);
+	if (concepts.length > 0) pieces.push(`Concepts: ${concepts.join(", ")}`);
+	if (calls.length > 0) pieces.push(`Calls or references: ${calls.slice(0, 8).join(", ")}`);
+	if (comments.length > 0) pieces.push(`Docs/comments: ${comments.slice(0, 3).join(" ")}`);
+	return { summary: pieces.join(". "), concepts, calls, terms };
+}
+
+function semanticCardText(card: Omit<IndexedCard, "vector" | "embedding" | "text">, extras: { concepts: string[]; calls: string[]; terms: string[]; snippet: string }): string {
+	const parts = [
+		`Path: ${card.path}`,
+		`Kind: ${card.kind}`,
+		`Name: ${card.name}`,
+		`Lines: ${card.startLine}-${card.endLine}`,
+		card.symbols.length > 0 ? `Symbols: ${card.symbols.join(", ")}` : undefined,
+		`Summary: ${card.summary}`,
+		extras.concepts.length > 0 ? `Concepts: ${extras.concepts.join(", ")}` : undefined,
+		extras.calls.length > 0 ? `Calls: ${extras.calls.join(", ")}` : undefined,
+		extras.terms.length > 0 ? `Terms: ${extras.terms.join(", ")}` : undefined,
+		extras.snippet ? `Snippet:\n${extras.snippet}` : undefined,
+	].filter(Boolean).join("\n");
+	return parts.length > MAX_CARD_TEXT_CHARS ? `${parts.slice(0, MAX_CARD_TEXT_CHARS - 1)}…` : parts;
+}
+
+function extractSemanticCards(relativePath: string, text: string, fileSymbols: string[]): Omit<IndexedCard, "vector">[] {
+	const normalized = text.replace(/\r\n/g, "\n").replace(/\n$/, "");
+	const lines = normalized.length > 0 ? normalized.split("\n") : [""];
+	const definitions = findSemanticDefinitions(relativePath, normalized);
+	const cards: Omit<IndexedCard, "vector">[] = [];
+
+	const fileSnippet = lines.slice(0, MAX_CARD_BODY_LINES).join("\n");
+	const fileComments = extractLeadingComments(lines, 1);
+	const fileSummary = summarizeSemanticCard("file", basename(relativePath), relativePath, [fileSymbols.join(" "), fileSnippet].join("\n"), fileComments);
+	const fileCardBase: Omit<IndexedCard, "vector" | "embedding" | "text"> = {
+		id: `${relativePath}:semantic:file`,
+		path: relativePath,
+		startLine: 1,
+		endLine: Math.min(lines.length, MAX_CARD_BODY_LINES),
+		kind: "file",
+		name: basename(relativePath),
+		summary: fileSummary.summary,
+		symbols: fileSymbols.slice(0, 12),
+	};
+	cards.push({ ...fileCardBase, text: semanticCardText(fileCardBase, { ...fileSummary, snippet: fileSnippet }) });
+
+	for (const definition of definitions) {
+		if (cards.length >= MAX_SEMANTIC_CARDS_PER_FILE) break;
+		const startIndex = definition.startLine - 1;
+		const bodyEnd = Math.min(definition.endLine, definition.startLine + MAX_CARD_BODY_LINES - 1);
+		const bodyText = lines.slice(startIndex, bodyEnd).join("\n");
+		const name = displayNameForDefinition(relativePath, definition, definitions);
+		const comments = extractLeadingComments(lines, definition.startLine);
+		const semantic = summarizeSemanticCard(definition.kind, name, relativePath, [definition.signature, bodyText].join("\n"), comments);
+		const symbols = unique([name, definition.name, ...symbolsForRange(fileSymbols, bodyText)]).slice(0, 12);
+		const base: Omit<IndexedCard, "vector" | "embedding" | "text"> = {
+			id: `${relativePath}:semantic:${definition.startLine}-${definition.endLine}:${definition.kind}:${definition.name}`,
+			path: relativePath,
+			startLine: definition.startLine,
+			endLine: definition.endLine,
+			kind: definition.kind,
+			name,
+			summary: semantic.summary,
+			symbols,
+		};
+		cards.push({ ...base, text: semanticCardText(base, { ...semantic, snippet: bodyText }) });
+	}
+
+	return cards;
+}
+
 function splitIntoChunks(relativePath: string, text: string, options: Required<Pick<BuildOptions, "chunkLines" | "chunkOverlap">>): Omit<IndexedChunk, "vector">[] {
 	const normalized = text.replace(/\r\n/g, "\n").replace(/\n$/, "");
 	const lines = normalized.length > 0 ? normalized.split("\n") : [""];
@@ -780,7 +1266,7 @@ function splitIntoChunks(relativePath: string, text: string, options: Required<P
 	return chunks;
 }
 
-function indexFile(cwd: string, relativePath: string, options: Required<BuildOptions>): { file: IndexedFile; chunks: IndexedChunk[] } | undefined {
+function indexFile(cwd: string, relativePath: string, options: Required<BuildOptions>): { file: IndexedFile; chunks: IndexedChunk[]; cards: IndexedCard[] } | undefined {
 	const fullPath = join(cwd, relativePath);
 	let stat: ReturnType<typeof statSync>;
 	try {
@@ -805,6 +1291,15 @@ function indexFile(cwd: string, relativePath: string, options: Required<BuildOpt
 			{ text: chunk.symbols.join(" "), weight: 3.4 },
 		]),
 	}));
+	const cards = extractSemanticCards(relativePath, text, symbols).map((card) => ({
+		...card,
+		vector: makeVector([
+			{ text: card.text, weight: 1.8 },
+			{ text: card.summary, weight: 3.2 },
+			{ text: relativePath, weight: 2.8 },
+			{ text: card.symbols.join(" "), weight: 3.6 },
+		]),
+	}));
 
 	return {
 		file: {
@@ -817,6 +1312,7 @@ function indexFile(cwd: string, relativePath: string, options: Required<BuildOpt
 			symbols,
 		},
 		chunks,
+		cards,
 	};
 }
 
@@ -831,11 +1327,13 @@ export function buildSearchIndex(cwd: string, options: BuildOptions = {}): Searc
 
 	const files: IndexedFile[] = [];
 	const chunks: IndexedChunk[] = [];
+	const cards: IndexedCard[] = [];
 	for (const relativePath of discoverProjectFiles(absoluteCwd)) {
 		const indexed = indexFile(absoluteCwd, relativePath, resolvedOptions);
 		if (!indexed) continue;
 		files.push(indexed.file);
 		chunks.push(...indexed.chunks);
+		cards.push(...indexed.cards);
 	}
 
 	const now = new Date().toISOString();
@@ -851,6 +1349,7 @@ export function buildSearchIndex(cwd: string, options: BuildOptions = {}): Searc
 		},
 		files,
 		chunks,
+		cards,
 	};
 
 	memoryIndexes.set(absoluteCwd, index);
@@ -866,8 +1365,10 @@ export async function buildSearchIndexWithEmbeddings(cwd: string, options: Embed
 			provider: "ollama",
 			model: config.model,
 			baseUrl: config.baseUrl,
+			inputMaxChars: config.maxInputChars,
 			dimensions: 0,
 			embeddedChunks: 0,
+			embeddedCards: 0,
 			createdAt: new Date().toISOString(),
 		};
 		memoryIndexes.set(index.cwd, index);
@@ -875,16 +1376,20 @@ export async function buildSearchIndexWithEmbeddings(cwd: string, options: Embed
 		return index;
 	}
 
-	options.onProgress?.(`Embedding ${index.chunks.length} chunks with Ollama model ${config.model}`);
-	const embeddings = await embedTextsWithOllama(index.chunks.map(embeddingInputForChunk), config, options.signal);
-	const dimensions = embeddings[0]?.length ?? 0;
-	index.chunks = index.chunks.map((chunk, chunkIndex) => ({ ...chunk, embedding: embeddings[chunkIndex] }));
+	options.onProgress?.(`Embedding ${index.chunks.length} chunks and ${index.cards.length} semantic cards with Ollama model ${config.model} (max ${config.maxInputChars} chars/input)`);
+	const chunkEmbeddings = await embedTextsWithOllama(index.chunks.map(embeddingInputForChunk), config, options.signal);
+	const cardEmbeddings = index.cards.length > 0 ? await embedTextsWithOllama(index.cards.map(embeddingInputForCard), config, options.signal) : [];
+	const dimensions = chunkEmbeddings[0]?.length ?? cardEmbeddings[0]?.length ?? 0;
+	index.chunks = index.chunks.map((chunk, chunkIndex) => ({ ...chunk, embedding: chunkEmbeddings[chunkIndex] }));
+	index.cards = index.cards.map((card, cardIndex) => ({ ...card, embedding: cardEmbeddings[cardIndex] }));
 	index.embedding = {
 		provider: "ollama",
 		model: config.model,
 		baseUrl: config.baseUrl,
+		inputMaxChars: config.maxInputChars,
 		dimensions,
-		embeddedChunks: embeddings.length,
+		embeddedChunks: chunkEmbeddings.length,
+		embeddedCards: cardEmbeddings.length,
 		createdAt: new Date().toISOString(),
 	};
 	index.updatedAt = new Date().toISOString();
@@ -945,6 +1450,7 @@ export function getIndexStatus(cwd: string, index = loadSearchIndex(cwd)): Index
 			reason: existsSync(indexPath) ? "index file could not be loaded" : "index has not been built",
 			files: 0,
 			chunks: 0,
+			cards: 0,
 		};
 	}
 
@@ -953,6 +1459,7 @@ export function getIndexStatus(cwd: string, index = loadSearchIndex(cwd)): Index
 		exists: true,
 		files: index.files.length,
 		chunks: index.chunks.length,
+		cards: index.cards.length,
 		updatedAt: index.updatedAt,
 		embedding: index.embedding,
 	};
@@ -1042,13 +1549,16 @@ function scoreTextOverlap(queryTerms: string[], text: string): number {
 	return scoreTokenOverlap(queryTerms, terms);
 }
 
-function buildReason(queryTerms: string[], queryConcepts: string[], chunk: IndexedChunk, vectorTerms: Set<string>): string[] {
+type SearchableVectorItem = Pick<IndexedChunk, "path" | "symbols" | "vector"> & Partial<Pick<IndexedCard, "kind" | "name" | "summary">>;
+
+function buildReason(queryTerms: string[], queryConcepts: string[], item: SearchableVectorItem, vectorTerms: Set<string>): string[] {
 	const exactMatches = queryTerms.filter((term) => vectorTerms.has(term)).slice(0, 6);
 	const conceptMatches = queryConcepts.filter((term) => vectorTerms.has(term)).map((term) => term.slice("concept:".length));
-	const pathMatches = queryTerms.filter((term) => tokenizeSearchText(chunk.path).includes(term)).slice(0, 3);
-	const symbolMatches = queryTerms.filter((term) => tokenizeSearchText(chunk.symbols.join(" ")).includes(term)).slice(0, 3);
+	const pathMatches = queryTerms.filter((term) => tokenizeSearchText(item.path).includes(term)).slice(0, 3);
+	const symbolMatches = queryTerms.filter((term) => tokenizeSearchText(item.symbols.join(" ")).includes(term)).slice(0, 3);
 
 	const reason: string[] = [];
+	if (item.kind && item.name) reason.push(`semantic card: ${item.kind} ${item.name}`);
 	if (conceptMatches.length > 0) reason.push(`matched ${unique(conceptMatches).join(", ")} concept`);
 	if (exactMatches.length > 0) reason.push(`matched terms: ${exactMatches.join(", ")}`);
 	if (symbolMatches.length > 0) reason.push(`symbol match: ${symbolMatches.join(", ")}`);
@@ -1078,39 +1588,48 @@ export function searchIndex(index: SearchIndex, options: SearchOptions): SearchR
 	const queryEmbedding = options.queryEmbedding ? normalizeEmbedding(options.queryEmbedding) : undefined;
 	const results: SearchResult[] = [];
 
-	for (const chunk of index.chunks) {
-		if (options.includeTests === false && isTestPath(chunk.path)) continue;
-		if (!pathMatches(chunk.path, options.paths)) continue;
+	const addResult = (item: IndexedChunk | IndexedCard, source: "chunk" | "card") => {
+		if (options.includeTests === false && isTestPath(item.path)) return;
+		if (!pathMatches(item.path, options.paths)) return;
 
-		const vectorTerms = new Set(chunk.vector.map(([term]) => term));
-		const vectorScore = cosine(queryVector, chunk.vector);
+		const vectorTerms = new Set(item.vector.map(([term]) => term));
+		const vectorScore = cosine(queryVector, item.vector);
 		const lexicalScore = scoreTokenOverlap(queryTerms, vectorTerms);
-		const pathScore = scoreTextOverlap(queryTerms, chunk.path);
-		const symbolScore = scoreTextOverlap(queryTerms, chunk.symbols.join(" "));
-		const embeddingScore = queryEmbedding ? embeddingCosine(queryEmbedding, chunk.embedding) : undefined;
-		const score =
+		const pathScore = scoreTextOverlap(queryTerms, item.path);
+		const symbolScore = scoreTextOverlap(queryTerms, item.symbols.join(" "));
+		const embeddingScore = queryEmbedding ? embeddingCosine(queryEmbedding, item.embedding) : undefined;
+		const rawScore =
 			typeof embeddingScore === "number"
-				? embeddingScore * 0.62 + vectorScore * 0.2 + lexicalScore * 0.1 + pathScore * 0.05 + symbolScore * 0.03
-				: vectorScore * 0.72 + lexicalScore * 0.16 + pathScore * 0.07 + symbolScore * 0.05;
-		if (score < minScore) continue;
+				? embeddingScore * (source === "card" ? 0.7 : 0.62) + vectorScore * (source === "card" ? 0.16 : 0.2) + lexicalScore * 0.08 + pathScore * 0.04 + symbolScore * 0.02
+				: vectorScore * (source === "card" ? 0.78 : 0.72) + lexicalScore * 0.14 + pathScore * 0.05 + symbolScore * 0.03;
+		const score = source === "card" ? rawScore * 1.05 : rawScore;
+		if (score < minScore) return;
 
-		const reason = buildReason(queryTerms, queryConcepts, chunk, vectorTerms);
-		if (typeof embeddingScore === "number" && embeddingScore > 0.05) reason.unshift("Ollama embedding similarity");
+		const reason = buildReason(queryTerms, queryConcepts, item, vectorTerms);
+		if (source === "card" && "summary" in item && item.summary) reason.push(`summary: ${item.summary.slice(0, 120)}${item.summary.length > 120 ? "…" : ""}`);
+		if (typeof embeddingScore === "number" && embeddingScore > 0.05) reason.unshift(source === "card" ? "Ollama semantic-card similarity" : "Ollama embedding similarity");
 		results.push({
-			path: chunk.path,
-			startLine: chunk.startLine,
-			endLine: chunk.endLine,
+			path: item.path,
+			startLine: item.startLine,
+			endLine: item.endLine,
+			source,
+			cardKind: source === "card" && "kind" in item ? item.kind : undefined,
+			cardName: source === "card" && "name" in item ? item.name : undefined,
+			cardSummary: source === "card" && "summary" in item ? item.summary : undefined,
 			score,
 			vectorScore,
 			lexicalScore,
 			pathScore,
 			symbolScore,
 			embeddingScore,
-			symbols: chunk.symbols,
+			symbols: item.symbols,
 			reason,
-			preview: previewText(chunk.text),
+			preview: source === "card" && "summary" in item ? previewText(item.summary) : previewText(item.text),
 		});
-	}
+	};
+
+	for (const chunk of index.chunks) addResult(chunk, "chunk");
+	for (const card of index.cards) addResult(card, "card");
 
 	return results.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path)).slice(0, topK);
 }
@@ -1124,6 +1643,7 @@ export async function searchIndexWithEmbeddings(
 		baseUrl: options.ollama?.baseUrl ?? index.embedding?.baseUrl,
 		batchSize: options.ollama?.batchSize,
 		timeoutMs: options.ollama?.timeoutMs,
+		maxInputChars: options.ollama?.maxInputChars ?? index.embedding?.inputMaxChars,
 	});
 	if (!hasOllamaEmbeddings(index, config)) {
 		return { results: searchIndex(index, options), embeddingUsed: false, config };
@@ -1134,18 +1654,19 @@ export async function searchIndexWithEmbeddings(
 
 export function formatSearchResults(query: string, results: SearchResult[], index: SearchIndex): string {
 	if (results.length === 0) {
-		return `No semantic search results for "${query}". Index contains ${index.files.length} files / ${index.chunks.length} chunks.`;
+		return `No semantic search results for "${query}". Index contains ${index.files.length} files / ${index.chunks.length} chunks / ${index.cards.length} semantic cards.`;
 	}
 
 	const embeddingLabel = index.embedding ? `, embeddings: ollama/${index.embedding.model}` : "";
 	return [
-		`Semantic search results for "${query}" (${results.length} shown, index: ${index.files.length} files / ${index.chunks.length} chunks${embeddingLabel}):`,
+		`Semantic search results for "${query}" (${results.length} shown, index: ${index.files.length} files / ${index.chunks.length} chunks / ${index.cards.length} semantic cards${embeddingLabel}):`,
 		"",
 		...results.map((result, index) => {
 			const scoreParts = [`vector ${result.vectorScore.toFixed(3)}`, `lexical ${result.lexicalScore.toFixed(3)}`];
 			if (typeof result.embeddingScore === "number") scoreParts.unshift(`embedding ${result.embeddingScore.toFixed(3)}`);
+			const sourceLabel = result.source === "card" ? ` [semantic card${result.cardKind ? `: ${result.cardKind}` : ""}${result.cardName ? ` ${result.cardName}` : ""}]` : "";
 			const lines = [
-				`${index + 1}. ${result.path}:${result.startLine}-${result.endLine}`,
+				`${index + 1}. ${result.path}:${result.startLine}-${result.endLine}${sourceLabel}`,
 				`   Score: ${result.score.toFixed(3)} (${scoreParts.join(", ")})`,
 				`   Why: ${result.reason.join("; ")}`,
 			];
@@ -1176,9 +1697,9 @@ export function createRepoMap(index: SearchIndex, options: { maxClusters?: numbe
 	const maxClusters = Math.min(Math.max(options.maxClusters ?? 8, 1), 20);
 	const fileScores = new Map<string, Map<string, { score: number; symbols: Set<string>; terms: Map<string, number> }>>();
 
-	for (const chunk of index.chunks) {
-		const concepts = chunk.vector.filter(([term]) => term.startsWith("concept:"));
-		const rawTerms = topTerms(chunk.vector, 12, (term) => !term.startsWith("concept:"));
+	const collectConcepts = (item: IndexedChunk | IndexedCard, multiplier: number) => {
+		const concepts = item.vector.filter(([term]) => term.startsWith("concept:"));
+		const rawTerms = topTerms(item.vector, 12, (term) => !term.startsWith("concept:"));
 		for (const [conceptTerm, weight] of concepts) {
 			const concept = conceptTerm.slice("concept:".length);
 			let files = fileScores.get(concept);
@@ -1186,13 +1707,16 @@ export function createRepoMap(index: SearchIndex, options: { maxClusters?: numbe
 				files = new Map();
 				fileScores.set(concept, files);
 			}
-			const current = files.get(chunk.path) ?? { score: 0, symbols: new Set<string>(), terms: new Map<string, number>() };
-			current.score += weight;
-			for (const symbol of chunk.symbols) current.symbols.add(symbol);
+			const current = files.get(item.path) ?? { score: 0, symbols: new Set<string>(), terms: new Map<string, number>() };
+			current.score += weight * multiplier;
+			for (const symbol of item.symbols) current.symbols.add(symbol);
 			for (const term of rawTerms) current.terms.set(term, (current.terms.get(term) ?? 0) + 1);
-			files.set(chunk.path, current);
+			files.set(item.path, current);
 		}
-	}
+	};
+
+	for (const chunk of index.chunks) collectConcepts(chunk, 1);
+	for (const card of index.cards) collectConcepts(card, 1.25);
 
 	const clusters: RepoCluster[] = [...fileScores.entries()].map(([name, files]) => {
 		const rankedFiles = [...files.entries()]
@@ -1218,7 +1742,7 @@ export function createRepoMap(index: SearchIndex, options: { maxClusters?: numbe
 }
 
 export function formatRepoMap(map: RepoMap, index: SearchIndex): string {
-	const lines = [`Repo map (${index.files.length} files / ${index.chunks.length} chunks):`];
+	const lines = [`Repo map (${index.files.length} files / ${index.chunks.length} chunks / ${index.cards.length} semantic cards):`];
 	if (map.clusters.length === 0) {
 		lines.push("No strong concept clusters found yet. Add more source/docs files or rebuild the index.");
 		return lines.join("\n");
@@ -1247,7 +1771,8 @@ function formatStatus(status: IndexStatus, rebuilt = false): string {
 		`Path: ${status.indexPath}`,
 		`Files: ${status.files}`,
 		`Chunks: ${status.chunks}`,
-		`Embeddings: ${status.embedding ? `ollama/${status.embedding.model} (${status.embedding.dimensions} dims, ${status.embedding.embeddedChunks} chunks)` : "none"}`,
+		`Semantic cards: ${status.cards}`,
+		`Embeddings: ${status.embedding ? `ollama/${status.embedding.model} (${status.embedding.dimensions} dims, ${status.embedding.embeddedChunks} chunks, ${status.embedding.embeddedCards} cards, max ${status.embedding.inputMaxChars ?? "unknown"} chars/input)` : "none"}`,
 		`Updated: ${status.updatedAt ?? "never"}`,
 		`Reason: ${status.reason}`,
 	].join("\n");
@@ -1258,6 +1783,10 @@ function compactResultDetails(results: SearchResult[]) {
 		path: result.path,
 		startLine: result.startLine,
 		endLine: result.endLine,
+		source: result.source,
+		cardKind: result.cardKind,
+		cardName: result.cardName,
+		cardSummary: result.cardSummary,
 		score: Number(result.score.toFixed(4)),
 		embeddingScore: typeof result.embeddingScore === "number" ? Number(result.embeddingScore.toFixed(4)) : undefined,
 		reason: result.reason,
@@ -1274,7 +1803,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			const action = tokens[0] ?? "rebuild";
 			if (action === "status") {
 				const status = getIndexStatus(ctx.cwd);
-				ctx.ui.notify(status.stale ? `Index stale: ${status.reason}` : `Index fresh: ${status.files} files / ${status.chunks} chunks`, status.stale ? "warning" : "info");
+				ctx.ui.notify(status.stale ? `Index stale: ${status.reason}` : `Index fresh: ${status.files} files / ${status.chunks} chunks / ${status.cards} semantic cards`, status.stale ? "warning" : "info");
 				pi.sendMessage?.({ customType: "semantic-search", content: formatStatus(status), display: true, details: status });
 				return;
 			}
@@ -1291,7 +1820,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 							onProgress: (message) => ctx.ui.setStatus?.("semantic-search", message),
 						});
 				const status = getIndexStatus(ctx.cwd, index);
-				ctx.ui.notify(`Indexed ${index.files.length} files / ${index.chunks.length} chunks${index.embedding ? ` with ${index.embedding.model}` : ""}`, "info");
+				ctx.ui.notify(`Indexed ${index.files.length} files / ${index.chunks.length} chunks / ${index.cards.length} semantic cards${index.embedding ? ` with ${index.embedding.model}` : ""}`, "info");
 				pi.sendMessage?.({ customType: "semantic-search", content: formatStatus(status, true), display: true, details: status });
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -1353,6 +1882,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			refresh: Type.Optional(Type.Boolean({ description: "Refresh a missing/stale index before searching. Defaults to true." })),
 			useEmbeddings: Type.Optional(Type.Boolean({ description: "Use local Ollama embeddings when available. Defaults to true; set false for lexical-only search." })),
 			embeddingModel: Type.Optional(Type.String({ description: `Ollama embedding model to use. Defaults to ${DEFAULT_OLLAMA_EMBED_MODEL} or OLLAMA_EMBED_MODEL.` })),
+			embeddingMaxChars: Type.Optional(Type.Number({ description: `Maximum characters sent to Ollama per embedding input before adaptive retries (default ${DEFAULT_OLLAMA_EMBED_INPUT_MAX_CHARS}).`, minimum: MIN_OLLAMA_EMBED_INPUT_CHARS, maximum: MAX_OLLAMA_EMBED_INPUT_MAX_CHARS })),
 			ollamaUrl: Type.Optional(Type.String({ description: `Ollama base URL. Defaults to OLLAMA_BASE_URL/OLLAMA_HOST or ${DEFAULT_OLLAMA_BASE_URL}.` })),
 		}),
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -1363,7 +1893,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			let results: SearchResult[];
 			let embeddingUsed = false;
 			let warning: string | undefined;
-			const ollama = { model: params.embeddingModel, baseUrl: params.ollamaUrl };
+			const ollama = { model: params.embeddingModel, baseUrl: params.ollamaUrl, maxInputChars: params.embeddingMaxChars };
 
 			if (params.useEmbeddings === false) {
 				({ index, status, rebuilt } = ensureIndex(ctx.cwd, params.refresh ?? true));
@@ -1410,7 +1940,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 					rebuilt,
 					embeddingUsed,
 					warning,
-					index: { files: index.files.length, chunks: index.chunks.length, updatedAt: index.updatedAt, stale: status.stale, reason: status.reason, embedding: index.embedding },
+					index: { files: index.files.length, chunks: index.chunks.length, cards: index.cards.length, updatedAt: index.updatedAt, stale: status.stale, reason: status.reason, embedding: index.embedding },
 					results: compactResultDetails(results),
 				},
 			};
@@ -1437,7 +1967,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			if (status.stale) text += `\n\nNote: index may be stale (${status.reason}).`;
 			return {
 				content: [{ type: "text" as const, text }],
-				details: { rebuilt, index: { files: index.files.length, chunks: index.chunks.length, stale: status.stale, reason: status.reason }, clusters: map.clusters },
+				details: { rebuilt, index: { files: index.files.length, chunks: index.chunks.length, cards: index.cards.length, stale: status.stale, reason: status.reason }, clusters: map.clusters },
 			};
 		},
 	});
