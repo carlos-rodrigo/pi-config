@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 const oracleAgent = readFileSync(new URL("./oracle.md", import.meta.url), "utf8");
 const researcherAgent = readFileSync(new URL("./researcher.md", import.meta.url), "utf8");
 const askOraclePrompt = readFileSync(new URL("../prompts/ask-oracle.md", import.meta.url), "utf8");
+const oraclePrompt = readFileSync(new URL("../prompts/oracle.md", import.meta.url), "utf8");
 const deepReviewPrompt = readFileSync(new URL("../prompts/deep-review.md", import.meta.url), "utf8");
 const oracleCheckpointPrompt = readFileSync(new URL("../prompts/oracle-checkpoint.md", import.meta.url), "utf8");
 const researchPrompt = readFileSync(new URL("../prompts/research.md", import.meta.url), "utf8");
@@ -24,7 +25,7 @@ test("oracle agent emphasizes concise, evidence-first, high-signal feedback", ()
 });
 
 test("oracle prompt templates require repo-specific evidence and interactive-flow feedback", () => {
-	for (const prompt of [askOraclePrompt, deepReviewPrompt, oracleCheckpointPrompt]) {
+	for (const prompt of [askOraclePrompt, oraclePrompt, deepReviewPrompt, oracleCheckpointPrompt]) {
 		assert.match(prompt, /repo-specific/i);
 		assert.match(prompt, /concise by default/i);
 		assert.match(prompt, /selection visibility/i);
@@ -53,4 +54,13 @@ test("research prompt templates keep researcher output bounded", () => {
 		assert.match(prompt, /maximum of 900 words|cap normal output at 900 words/i);
 		assert.match(prompt, /no long code blocks|avoid pasted code blocks/i);
 	}
+});
+
+test("oracle and researcher prompt templates use non-blocking agent jobs", () => {
+	for (const prompt of [askOraclePrompt, oraclePrompt, deepReviewPrompt, oracleCheckpointPrompt, researchPrompt, researchAndPlanPrompt]) {
+		assert.match(prompt, /agent_job_start/);
+		assert.match(prompt, /background|detached tmux/i);
+		assert.doesNotMatch(prompt, /Use the subagent tool/i);
+	}
+	assert.match(deepReviewPrompt, /mode="review"/);
 });

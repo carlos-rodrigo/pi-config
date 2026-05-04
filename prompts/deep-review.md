@@ -2,7 +2,12 @@
 description: Concise Oracle review of current work
 ---
 
-Use the subagent tool to invoke the "oracle" agent with this task:
+Use the agent_job_start tool to start the "oracle" agent in a detached tmux background job.
+
+Set mode="review" and followUp=true. Do not use the synchronous subagent tool for this prompt.
+The agent-jobs launcher will snapshot git status/diffs into review-context.md before oracle starts; require oracle to read that file first.
+
+Task:
 
 Review the current work relevant to: $@
 
@@ -33,3 +38,5 @@ Hard limits:
 - Maximum 800 words.
 - No long explanations.
 - No pasted code blocks unless essential.
+
+After starting the job, stop. The main workflow should continue when the background completion follow-up arrives.

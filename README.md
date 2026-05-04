@@ -18,6 +18,7 @@ Pi supports installing a local extension directory or single file directly. Clon
 git clone https://github.com/carlos-rodrigo/pi-config.git
 cd pi-config
 
+pi install ./extensions/agent-jobs
 pi install ./extensions/auto-prompt
 pi install ./extensions/bordered-editor
 pi install ./extensions/branch-switcher
@@ -62,6 +63,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 
 ### [Extensions](extensions/)
 
+- **[agent-jobs](extensions/agent-jobs/)** — Run researcher/oracle jobs in detached tmux windows and resume via follow-up messages.
 - **[auto-prompt](extensions/auto-prompt/)** — Inline ghost-text prompt suggestions.
 - **[bordered-editor](extensions/bordered-editor/)** — Bordered composer with model, context, cost, and git status.
 - **[branch-switcher](extensions/branch-switcher/)** — Interactive `/branch` command for local and remote branches.
@@ -76,7 +78,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[review-mode](extensions/review-mode/)** — Overlay review workbench for local/staged/unstaged/outgoing diffs.
 - **[semantic-search](extensions/semantic-search/)** — Local Ollama-backed hybrid code index, semantic search, and repo concept map.
 - **[session-query](extensions/session-query/)** — Query previous Pi session files from fresh handoff sessions.
-- **[subagent](extensions/subagent/)** — Delegate tasks to specialized sub-agents with isolated context windows.
+- **[subagent](extensions/subagent/)** — Delegate tasks to specialized sub-agents with isolated context windows (synchronous/blocking).
 - **[verify](extensions/verify/)** — Back-pressure verification hook and `/setup-verify` scaffolder.
 - **[web-tools](extensions/web-tools/)** — Web search and fetch tools.
 - **[workflow-modes](extensions/workflow-modes/)** — Smart/deep/fast mode switching.
@@ -84,7 +86,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 
 ### [Agents](agents/)
 
-Sub-agent definitions used by the subagent extension:
+Sub-agent definitions used by the subagent and agent-jobs extensions:
 
 - **oracle** — Deep reasoning second opinion (gpt-5.5). For complex debugging, architecture decisions, and thorough code analysis. Read-only.
 - **researcher** — Concise research specialist (gpt-5.5). Investigates technologies, reads docs/source, compares approaches, and returns evidence-first briefs with bounded tool/output budgets. Uses `websearch`/`webfetch` instead of shelling out.
@@ -93,11 +95,11 @@ Sub-agent definitions used by the subagent extension:
 
 Workflow prompt templates:
 
-- `/ask-oracle <question>` — Ask the oracle for a second opinion (decision/risk/verification contract)
-- `/research <topic>` — Research a technology, codebase, or library
-- `/deep-review <area>` — Have the oracle deeply review code with structured output
-- `/research-and-plan <feature>` — Research state of the art → get implementation recommendation
-- `/oracle-checkpoint <decision>` — Run researcher → oracle chain for high-uncertainty decisions
+- `/oracle <question>` / `/ask-oracle <question>` — Start a background oracle second-opinion job
+- `/research <topic>` — Start a background researcher job
+- `/deep-review <area>` — Start a background oracle review with git diff context
+- `/research-and-plan <feature>` — Background researcher → oracle implementation recommendation
+- `/oracle-checkpoint <decision>` — Background researcher → oracle checkpoint for high-uncertainty decisions
 
 ### [Themes](themes/)
 
@@ -111,7 +113,7 @@ Use the oracle to review the auth logic in src/auth/. I want to make sure there 
 Use the researcher agent to investigate how Next.js App Router handles parallel routes.
 
 # Via prompt templates
-/ask-oracle Is there a better way to handle the state machine in src/parser.ts?
+/oracle Is there a better way to handle the state machine in src/parser.ts?
 /research What's the current best approach for real-time sync in web apps? Compare options.
 /research-and-plan Add end-to-end encryption to our messaging feature
 /oracle-checkpoint Choose an approach for cache invalidation across worker + API boundaries

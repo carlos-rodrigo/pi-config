@@ -6,6 +6,7 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
+    "test:agent-jobs": "node --test extensions/agent-jobs/agent-jobs.test.ts",
     "test:auto-prompt": "node --test extensions/auto-prompt/auto-prompt.test.ts",
     "test:branch-switcher": "node --test extensions/branch-switcher/branch-switcher.test.ts",
     "test:web-tools": "node --test extensions/web-tools/web-tools.test.ts",
@@ -22,7 +23,7 @@
     "test:semantic-search": "node --test extensions/semantic-search/semantic-search.test.ts",
     "test:code-intel": "node --test extensions/code-intel/code-intel.test.ts",
     "test:oracle": "node --test agents/oracle.test.ts",
-    "test:direct": "node --test agents/oracle.test.ts extensions/auto-prompt/auto-prompt.test.ts extensions/branch-switcher/branch-switcher.test.ts extensions/web-tools/web-tools.test.ts extensions/workflow-modes/workflow-modes.test.ts extensions/feature-flow/feature-flow.test.ts extensions/handoff/handoff.test.ts extensions/session-query/session-query.test.ts extensions/lazygit/lazygit.test.ts extensions/document-reviewer/review-flow.test.ts extensions/bordered-editor/bordered-editor.test.ts extensions/dumb-zone/dumb-zone.test.ts extensions/verify/verify.test.ts extensions/git-blame/git-blame.test.ts extensions/review-mode/review-mode.test.ts extensions/semantic-search/semantic-search.test.ts extensions/code-intel/code-intel.test.ts",
+    "test:direct": "node --test agents/oracle.test.ts extensions/agent-jobs/agent-jobs.test.ts extensions/auto-prompt/auto-prompt.test.ts extensions/branch-switcher/branch-switcher.test.ts extensions/web-tools/web-tools.test.ts extensions/workflow-modes/workflow-modes.test.ts extensions/feature-flow/feature-flow.test.ts extensions/handoff/handoff.test.ts extensions/session-query/session-query.test.ts extensions/lazygit/lazygit.test.ts extensions/document-reviewer/review-flow.test.ts extensions/bordered-editor/bordered-editor.test.ts extensions/dumb-zone/dumb-zone.test.ts extensions/verify/verify.test.ts extensions/git-blame/git-blame.test.ts extensions/review-mode/review-mode.test.ts extensions/semantic-search/semantic-search.test.ts extensions/code-intel/code-intel.test.ts",
     "test:document-reviewer": "node scripts/test-document-reviewer.mjs",
     "test": "npm run test:direct && npm run test:document-reviewer"
   },

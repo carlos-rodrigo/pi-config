@@ -17,6 +17,7 @@ Or run the install script for symlink-based local development:
 ## Install individually
 
 ```bash
+pi install ./extensions/agent-jobs
 pi install ./extensions/auto-prompt
 pi install ./extensions/bordered-editor
 pi install ./extensions/code-intel
@@ -42,6 +43,7 @@ pi install ./extensions/worktree-manager
 
 | Extension | Description |
 |-----------|-------------|
+| [agent-jobs](agent-jobs/) | Non-blocking tmux-backed researcher/oracle jobs with persisted logs/results |
 | [auto-prompt](auto-prompt/) | Inline ghost text prompt suggestions (fish-style) |
 | [bordered-editor](bordered-editor/) | Bordered input editor with model/context/git info |
 | [branch-switcher](branch-switcher/) | Interactive git branch switching with local + remote-only branch support |
@@ -56,7 +58,7 @@ pi install ./extensions/worktree-manager
 | [review-mode](review-mode/) | Overlay review workbench for local/staged/unstaged/outgoing diffs with colorized preview, hunk/file/all scopes, same-session questions, and saved review notes |
 | [semantic-search](semantic-search/) | Local Ollama-backed hybrid code index, semantic search tool, and repo concept map |
 | [session-query](session-query/) | Query previous Pi session files from fresh handoff sessions |
-| [subagent](subagent/) | Delegate tasks to specialized sub-agents |
+| [subagent](subagent/) | Delegate tasks to specialized sub-agents (synchronous/blocking) |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
 | [workflow-modes](workflow-modes/) | Smart/deep/fast mode switching |
 | [verify](verify/) | Back-pressure hook — verifies touched project roots and scaffolds `scripts/verify.sh` via `/setup-verify` |
@@ -67,3 +69,5 @@ pi install ./extensions/worktree-manager
 - **auto-prompt** + **bordered-editor** work together via `pi.events` — auto-prompt generates suggestions, bordered-editor renders the ghost text.
 - **feature-flow** and **worktree-manager** share the same worktree core but are independent extensions.
 - **handoff** provides both the user `/handoff` command and the LLM-callable `handoff` tool.
+- **agent-jobs** requires Pi to be running inside tmux; it uses detached windows and persists results under `.pi/agent-jobs/`.
+- Researcher, oracle, and deep-review prompt templates default to **agent-jobs**; use `subagent` only when you explicitly want to block.
