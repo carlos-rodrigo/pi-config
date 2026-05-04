@@ -12,30 +12,36 @@ pi install git:github.com/carlos-rodrigo/pi-config
 
 ### Via pi (one extension from a local clone)
 
-Pi supports installing a single local extension file directly. Clone the repo once, then install only the extension you want:
+Pi supports installing a local extension directory or single file directly. Clone the repo once, then install only the extension you want:
 
 ```bash
 git clone https://github.com/carlos-rodrigo/pi-config.git
 cd pi-config
 
-pi install ./extensions/bordered-editor.ts
-pi install ./extensions/auto-prompt.ts
-pi install ./extensions/branch-switcher/index.ts
-pi install ./extensions/file-opener.ts
-pi install ./extensions/web-tools.ts
-pi install ./extensions/workflow-modes.ts
-pi install ./extensions/worktree-manager.ts
-pi install ./extensions/feature-flow.ts
-pi install ./extensions/document-reviewer.ts
-pi install ./extensions/handoff.ts
-pi install ./extensions/focused-context/index.ts
-pi install ./extensions/review-mode/index.ts
-pi install ./extensions/subagent/index.ts
+pi install ./extensions/auto-prompt
+pi install ./extensions/bordered-editor
+pi install ./extensions/branch-switcher
+pi install ./extensions/code-intel
+pi install ./extensions/document-reviewer
+pi install ./extensions/dumb-zone
+pi install ./extensions/feature-flow
+pi install ./extensions/file-opener
+pi install ./extensions/git-blame
+pi install ./extensions/handoff
+pi install ./extensions/lazygit
+pi install ./extensions/review-mode
+pi install ./extensions/semantic-search
+pi install ./extensions/session-query
+pi install ./extensions/subagent
+pi install ./extensions/verify
+pi install ./extensions/web-tools
+pi install ./extensions/workflow-modes
+pi install ./extensions/worktree-manager
 ```
 
 Notes:
-- Use the exact file path for the extension entrypoint.
-- Some extensions are best used together, for example Auto Prompt (`auto-prompt.ts`) + `bordered-editor.ts`.
+- Use the extension directory path; each extension exposes an `index.ts` entrypoint.
+- Some extensions are best used together, for example Auto Prompt (`auto-prompt`) + `bordered-editor`.
 - Pi can install a single local file, but it does **not** currently install one subpath from a git package in a single `pi install` command. For remote one-by-one installs, each extension would need to be published as its own package.
 
 ### Via install.sh (everything)
@@ -56,15 +62,25 @@ To update, just `git pull` — symlinks pick up changes automatically.
 
 ### [Extensions](extensions/)
 
-- **[bordered-editor](extensions/README.md#bordered-editor)** — Custom input box with rounded borders and embedded status info (model, context usage, cost, git branch).
-- **[branch-switcher](extensions/branch-switcher/)** — Interactive `/branch` command for switching local and remote-only git branches from pi.
-- **[file-opener](extensions/README.md#file-opener)** — Open files in a syntax-highlighted overlay modal or in nvim via tmux, with built-in diff support. Adds `/open` command and `open_file` tool.
-- **[web-tools](extensions/README.md#web-tools)** — Web search and page fetch tools for agents. Adds `websearch` and `webfetch` tools with Opencode-style provider choices.
-- **[worktree-manager](extensions/README.md#worktree-manager)** — Git worktree lifecycle manager with `/ws` commands and `worktree_manage` tool.
-- **[feature-flow](extensions/README.md#feature-flow)** — Opinionated `/feature` workflow orchestrator: create isolated branch/worktree, launch a tmux Pi pane by default (or window with `--window`), and start a lightweight-first feature workflow with docs on demand.
-- **[focused-context](extensions/README.md#focused-context)** — Topic briefs, bounded recon, drift detection, fresh-session recommendations, and continuity across handoff/compaction.
-- **[review-mode](extensions/review-mode/)** — Overlay review workbench for local/staged/unstaged/outgoing diffs with colorized diff preview, hunk/file/all scopes, same-session questions, and saved review notes via `/review-mode` and `/review-notes`.
-- **[subagent](extensions/subagent/)** — Delegate tasks to specialized sub-agents with isolated context windows. Supports single, parallel, and chain modes.
+- **[auto-prompt](extensions/auto-prompt/)** — Inline ghost-text prompt suggestions.
+- **[bordered-editor](extensions/bordered-editor/)** — Bordered composer with model, context, cost, and git status.
+- **[branch-switcher](extensions/branch-switcher/)** — Interactive `/branch` command for local and remote branches.
+- **[code-intel](extensions/code-intel/)** — `code_find` orchestration plus symbol, dependency, git-history, and AST search tools.
+- **[document-reviewer](extensions/document-reviewer/)** — Browser-based document and PR review with inline comments.
+- **[dumb-zone](extensions/dumb-zone/)** — Context-window monitor with auto-handoff before degradation.
+- **[feature-flow](extensions/feature-flow/)** — Lightweight feature orchestration with Git worktrees.
+- **[file-opener](extensions/file-opener/)** — Syntax-highlighted file viewer, nvim opener, and diff viewer.
+- **[git-blame](extensions/git-blame/)** — Interactive git blame overlay.
+- **[handoff](extensions/handoff/)** — `/handoff` command and LLM-callable session handoff tool.
+- **[lazygit](extensions/lazygit/)** — LazyGit launcher via tmux.
+- **[review-mode](extensions/review-mode/)** — Overlay review workbench for local/staged/unstaged/outgoing diffs.
+- **[semantic-search](extensions/semantic-search/)** — Local Ollama-backed hybrid code index, semantic search, and repo concept map.
+- **[session-query](extensions/session-query/)** — Query previous Pi session files from fresh handoff sessions.
+- **[subagent](extensions/subagent/)** — Delegate tasks to specialized sub-agents with isolated context windows.
+- **[verify](extensions/verify/)** — Back-pressure verification hook and `/setup-verify` scaffolder.
+- **[web-tools](extensions/web-tools/)** — Web search and fetch tools.
+- **[workflow-modes](extensions/workflow-modes/)** — Smart/deep/fast mode switching.
+- **[worktree-manager](extensions/worktree-manager/)** — Git worktree lifecycle manager.
 
 ### [Agents](agents/)
 
