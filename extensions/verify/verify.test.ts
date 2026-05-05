@@ -24,6 +24,7 @@ function createHarness(
 ) {
 	const eventHandlers = new Map<string, PiEventHandler>();
 	const commands = new Map<string, { description: string; handler: (...args: any[]) => unknown }>();
+	const tools = new Map<string, any>();
 	const sendUserMessages: Array<{ content: string; options: any }> = [];
 	const execCalls: ExecCall[] = [];
 	const eventBusHandlers = new Map<string, ((data: unknown) => void)[]>();
@@ -34,6 +35,9 @@ function createHarness(
 		},
 		registerCommand(name: string, definition: { description: string; handler: (...args: any[]) => unknown }) {
 			commands.set(name, definition);
+		},
+		registerTool(definition: any) {
+			tools.set(definition.name, definition);
 		},
 		sendUserMessage(content: string, options?: any) {
 			sendUserMessages.push({ content, options });
@@ -63,6 +67,7 @@ function createHarness(
 	return {
 		eventHandlers,
 		commands,
+		tools,
 		sendUserMessages,
 		execCalls,
 		emit(name: string, data?: unknown) {
@@ -104,6 +109,75 @@ function createCtx(cwd: string, options?: { idle?: boolean; hasUI?: boolean; ses
 		},
 	};
 }
+
+test("verification_plan tool builds a preflight contract from repo evidence", async (t) => {
+	const fixture = makeTempProject();
+	t.after(() => fixture.cleanup());
+
+	fs.mkdirSync(path.join(fixture.root, "extensions", "verify"), { recursive: true });
+	fs.mkdirSync(path.join(fixture.root, "scripts"), { recursive: true });
+	fs.writeFileSync(path.join(fixture.root, "extensions", "verify", "index.ts"), "export const verify = true;\n", "utf8");
+	fs.writeFileSync(path.join(fixture.root, "scripts", "verify.sh"), "#!/bin/bash\nexit 0\n", "utf8");
+	fs.writeFileSync(
+		path.join(fixture.root, "package.json"),
+		JSON.stringify({
+			name: "fixture",
+			scripts: {
+				"test:verify": "node --test extensions/verify/verify.test.ts",
+				"test:direct": "node --test all.test.ts",
+				test: "npm run test:direct",
+			},
+		}),
+		"utf8",
+	);
+
+	const { tools } = createHarness(async () => {
+		return { stdout: "", stderr: "fatal: not a git repository", code: 1, killed: false };
+	});
+	const verificationPlan = tools.get("verification_plan");
+	assert.ok(verificationPlan);
+	assert.ok(verificationPlan.promptGuidelines.some((guideline: string) => /before editing/i.test(guideline)));
+
+	const result = await verificationPlan.execute(
+		"tool-call-1",
+		{ task: "Add verify extension preflight planning", paths: ["extensions/verify/index.ts"] },
+		undefined,
+		undefined,
+		createCtx(fixture.root).ctx,
+	);
+
+	assert.match(result.content[0].text, /Verification Contract/i);
+	assert.match(result.content[0].text, /npm run test:verify/);
+	assert.match(result.content[0].text, /bash scripts\/verify\.sh/);
+	assert.match(result.content[0].text, /Expected: exits 0/);
+	assert.deepEqual(result.details.targetedCommands, ["npm run test:verify"]);
+});
+
+test("before_agent_start nudges implementation prompts to plan verification before editing", async () => {
+	const { eventHandlers } = createHarness();
+	const beforeAgentStart = eventHandlers.get("before_agent_start");
+	assert.ok(beforeAgentStart);
+
+	const result = await beforeAgentStart(
+		{ prompt: "Implement the new verification planner", systemPrompt: "base system" },
+		createCtx(process.cwd()).ctx,
+	);
+
+	assert.match(result.systemPrompt, /call `verification_plan` before editing/i);
+});
+
+test("before_agent_start skips docs-only prompts", async () => {
+	const { eventHandlers } = createHarness();
+	const beforeAgentStart = eventHandlers.get("before_agent_start");
+	assert.ok(beforeAgentStart);
+
+	const result = await beforeAgentStart(
+		{ prompt: "Update the README wording for the install section", systemPrompt: "base system" },
+		createCtx(process.cwd()).ctx,
+	);
+
+	assert.equal(result, undefined);
+});
 
 test("agent_end verifies only the touched project root and stays silent on success", async (t) => {
 	const fixture = makeTempProject();

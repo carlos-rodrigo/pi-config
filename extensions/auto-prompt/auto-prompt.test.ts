@@ -40,13 +40,15 @@ test("buildSuggestionPrompt includes directive prompting principle", () => {
 	assert.match(prompt, /Give direction, not questions/i);
 });
 
-test("buildSuggestionPrompt includes feedback-loop principle", () => {
+test("buildSuggestionPrompt includes feedback-loop principle and action-proof contract", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Add the API endpoint.\n\nAssistant: Done, I created the endpoint.",
 	);
 
 	assert.match(prompt, /FEEDBACK-LOOPABLE/i);
 	assert.match(prompt, /verify/i);
+	assert.match(prompt, /Action \+ proof/i);
+	assert.match(prompt, /verification_plan/i);
 });
 
 test("buildSuggestionPrompt includes specificity principle", () => {
@@ -77,7 +79,19 @@ test("buildSuggestionPrompt is mode-aware for deep work", () => {
 	);
 
 	assert.match(prompt, /Current agent mode: deep/i);
-	assert.match(prompt, /prefer prompts that drive deeper analysis, edge-case checks, and thorough validation/i);
+	assert.match(prompt, /GPT-5\.5 medium/i);
+	assert.match(prompt, /verification_plan/i);
+});
+
+test("buildSuggestionPrompt is mode-aware for deep3 work", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: This session handoff bug is intermittent and risky.\n\nAssistant: We need to reason through failure modes.",
+		"deep3",
+	);
+
+	assert.match(prompt, /Current agent mode: deep3/i);
+	assert.match(prompt, /maximum-quality/i);
+	assert.match(prompt, /reproduce or diagnose first/i);
 });
 
 test("buildSuggestionPrompt is mode-aware for fast work", () => {
@@ -87,7 +101,7 @@ test("buildSuggestionPrompt is mode-aware for fast work", () => {
 	);
 
 	assert.match(prompt, /Current agent mode: fast/i);
-	assert.match(prompt, /prefer narrow, concrete next actions with minimal scope/i);
+	assert.match(prompt, /prefer tiny, concrete next actions with a cheap proof check/i);
 });
 
 test("buildSuggestionPrompt is mode-aware for smart work", () => {
@@ -97,7 +111,8 @@ test("buildSuggestionPrompt is mode-aware for smart work", () => {
 	);
 
 	assert.match(prompt, /Current agent mode: smart/i);
-	assert.match(prompt, /prefer balanced prompts/i);
+	assert.match(prompt, /GPT-5\.5 low/i);
+	assert.match(prompt, /focused check/i);
 });
 
 // --- File path extraction ---
@@ -344,15 +359,15 @@ test("buildSuggestionPrompt includes planning phase guidance", () => {
 
 // --- Word limit updated ---
 
-test("buildSuggestionPrompt enforces concise suggestions under 200 characters", () => {
+test("buildSuggestionPrompt enforces concise suggestions under 240 characters", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Done.\n\nAssistant: Great.",
 	);
 
-	assert.match(prompt, /10-40 words/);
+	assert.match(prompt, /10-45 words/);
 	assert.match(prompt, /One or two sentences max/);
-	assert.match(prompt, /Never exceed 200 characters/);
-	assert.match(prompt, /Hard limit: 200 characters maximum/);
+	assert.match(prompt, /Never exceed 240 characters/);
+	assert.match(prompt, /Hard limit: 240 characters maximum/);
 });
 
 test("extractBaselineGuidelines captures AGENTS constraints", () => {
@@ -398,6 +413,19 @@ test("buildImprovementPrompt frames rewrite task and preserves intent", () => {
 	assert.match(prompt, /preserving their original intent exactly/i);
 	assert.match(prompt, /Return ONLY the improved prompt text/i);
 	assert.match(prompt, /Rewrite questions as instructions/i);
+});
+
+test("buildImprovementPrompt pushes behavior changes toward verification_plan or concrete checks", () => {
+	const prompt = buildImprovementPrompt(
+		"implement the verify planner",
+		"User: improve verify extension\n\nAssistant: use extensions/verify/index.ts",
+		["extensions/verify/index.ts"],
+		["npm run test:verify"],
+		"building",
+	);
+
+	assert.match(prompt, /verification_plan/i);
+	assert.match(prompt, /concrete check/i);
 });
 
 test("buildImprovementPrompt includes baseline context and implied-guidelines rule", () => {

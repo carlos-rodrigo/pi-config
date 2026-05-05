@@ -60,8 +60,8 @@ pi install ./extensions/worktree-manager
 | [session-query](session-query/) | Query previous Pi session files from fresh handoff sessions |
 | [subagent](subagent/) | Delegate tasks to specialized sub-agents (synchronous/blocking) |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
-| [workflow-modes](workflow-modes/) | Smart/deep/fast mode switching |
-| [verify](verify/) | Back-pressure hook — verifies touched project roots and scaffolds `scripts/verify.sh` via `/setup-verify` |
+| [workflow-modes](workflow-modes/) | Smart/deep/deep3/fast mode switching |
+| [verify](verify/) | Preflight `verification_plan`, back-pressure hook, and `scripts/verify.sh` scaffolding via `/setup-verify` |
 | [worktree-manager](worktree-manager/) | Git worktree management commands |
 
 ## Notes

@@ -2,7 +2,8 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { HANDOFF_SESSION_STARTED_EVENT } from "../handoff/events.ts";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import { Type } from "@sinclair/typebox";
 
 export const VERIFY_SCRIPT_RELATIVE_PATH = "scripts/verify.sh";
 const VERIFY_TIMEOUT_MS = 60_000;
@@ -20,6 +21,25 @@ export type DetectedProjectTemplate = {
 type VerificationFailure = {
 	projectRoot: string;
 	errors: string;
+};
+
+type VerificationPlanInput = {
+	task: string;
+	paths?: string[];
+	changedPaths?: string[];
+	behaviorChange?: boolean;
+};
+
+export type VerificationPlan = {
+	projectRoot: string;
+	task: string;
+	paths: string[];
+	targetedCommands: string[];
+	regressionCommands: string[];
+	preChangeChecks: string[];
+	edgeCases: string[];
+	manualChecks: string[];
+	notes: string[];
 };
 
 type SetupMode = "created" | "existing" | "reset";
@@ -396,6 +416,177 @@ function setupHelpText(): string {
 	].join("\n");
 }
 
+function toSlashPath(path: string): string {
+	return path.replace(/\\/g, "/");
+}
+
+function normalizePlanPath(projectRoot: string, rawPath: string): string {
+	const stripped = normalizeToolPath(rawPath.trim());
+	if (!stripped) return "";
+	const absolute = resolve(projectRoot, stripped);
+	const relativePath = toSlashPath(relative(projectRoot, absolute));
+	return relativePath.startsWith("../") || relativePath === ".." ? toSlashPath(stripped) : relativePath;
+}
+
+async function readPackageScripts(projectRoot: string): Promise<Record<string, string>> {
+	try {
+		const raw = await readFile(join(projectRoot, "package.json"), "utf8");
+		const parsed = JSON.parse(raw) as { scripts?: Record<string, unknown> };
+		const scripts: Record<string, string> = {};
+		for (const [name, command] of Object.entries(parsed.scripts ?? {})) {
+			if (typeof command === "string") scripts[name] = command;
+		}
+		return scripts;
+	} catch {
+		return {};
+	}
+}
+
+function scriptCommand(packageManager: PackageManager | undefined, script: string): string {
+	return nodeScriptCommand(packageManager ?? "npm", script);
+}
+
+function inferScriptNamesFromPath(path: string): string[] {
+	const parts = path.split("/").filter(Boolean);
+	const names: string[] = [];
+	if (parts[0] === "extensions" && parts[1]) names.push(`test:${parts[1]}`);
+	if (parts[0] === "agents" && parts[1]) names.push(`test:${basename(parts[1], ".md")}`);
+	return names;
+}
+
+function looksLikeCodePath(path: string): boolean {
+	return /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts|py|go|rs|java|kt|rb|ex|exs)$/i.test(path);
+}
+
+function unique<T>(values: T[]): T[] {
+	return [...new Set(values)];
+}
+
+async function inferVerificationCommands(projectRoot: string, template: DetectedProjectTemplate, paths: string[]): Promise<{ targeted: string[]; regression: string[]; notes: string[] }> {
+	const notes: string[] = [];
+	const targeted: string[] = [];
+	const regression: string[] = [];
+	const scripts = await readPackageScripts(projectRoot);
+	const packageManager = template.kind === "node" ? template.packageManager : undefined;
+
+	if (template.kind === "node") {
+		for (const path of paths) {
+			for (const script of inferScriptNamesFromPath(path)) {
+				if (scripts[script]) targeted.push(scriptCommand(packageManager, script));
+			}
+		}
+
+		if (targeted.length === 0 && paths.some(looksLikeCodePath)) {
+			if (scripts["test:direct"]) targeted.push(scriptCommand(packageManager, "test:direct"));
+			else if (scripts.test) targeted.push(scriptCommand(packageManager, "test"));
+		}
+	} else if (paths.some(looksLikeCodePath)) {
+		targeted.push(...getTemplateCommands(template).quick);
+	}
+
+	if (await pathExists(join(projectRoot, VERIFY_SCRIPT_RELATIVE_PATH))) {
+		regression.push(`bash ${VERIFY_SCRIPT_RELATIVE_PATH}`);
+	} else if (template.kind === "node" && scripts.test) {
+		regression.push(scriptCommand(packageManager, "test"));
+	} else if (template.kind !== "generic") {
+		regression.push(...getTemplateCommands(template).full);
+	}
+
+	if (targeted.length === 0) notes.push("No targeted automated command was inferred from repo scripts and paths; inspect nearby tests or CI before editing.");
+	if (regression.length === 0) notes.push("No final regression gate was found; consider running /setup-verify before implementation.");
+
+	return { targeted: unique(targeted), regression: unique(regression), notes };
+}
+
+function inferPreChangeChecks(task: string): string[] {
+	if (!/\b(fix|bug|regression|fail|failing|broken|error|crash|repro|reproduce)\b/i.test(task)) return [];
+	return ["Reproduce the failing behavior before editing, then keep the same command/input as the post-fix proof."];
+}
+
+function inferEdgeCases(task: string, paths: string[]): string[] {
+	const lower = `${task} ${paths.join(" ")}`.toLowerCase();
+	const cases: string[] = [];
+	if (/\b(api|endpoint|webhook|http|request|response)\b/.test(lower)) cases.push("Exercise at least one invalid or boundary request payload and verify the response/status is explicit.");
+	if (/\b(cli|command|script|args?|flag)\b/.test(lower)) cases.push("Run the CLI/command with one valid input and one invalid or missing argument.");
+	if (/\b(ui|tui|editor|modal|browser|review|shortcut|key)\b/.test(lower)) cases.push("Check focus transitions, visible state changes, and keyboard fallback behavior for the interactive path.");
+	if (/\b(extension|tool|command|hook)\b/.test(lower) || paths.some((path) => path.startsWith("extensions/"))) cases.push("Verify the changed extension registers its command/tool/hook and handles missing or malformed input without crashing.");
+	cases.push("Run one negative or no-op case to prove unchanged behavior remains stable.");
+	return unique(cases).slice(0, 4);
+}
+
+function inferManualChecks(task: string, paths: string[]): string[] {
+	const lower = `${task} ${paths.join(" ")}`.toLowerCase();
+	const checks: string[] = [];
+	if (/\b(ui|tui|editor|modal|browser|review|shortcut|key)\b/.test(lower)) checks.push("Manually exercise the visible interaction and compare the result to the expected UI state.");
+	if (/\b(extension|tool|command|hook)\b/.test(lower) || paths.some((path) => path.startsWith("extensions/"))) checks.push("After tests pass, reload Pi and smoke-test the changed command/tool in a real session if the behavior is user-facing.");
+	return unique(checks);
+}
+
+export async function buildVerificationPlan(projectRoot: string, template: DetectedProjectTemplate, input: VerificationPlanInput): Promise<VerificationPlan> {
+	const rawPaths = [...(input.paths ?? []), ...(input.changedPaths ?? [])];
+	const paths = unique(rawPaths.map((path) => normalizePlanPath(projectRoot, path)).filter(Boolean));
+	const commands = await inferVerificationCommands(projectRoot, template, paths);
+	return {
+		projectRoot,
+		task: input.task.trim(),
+		paths,
+		targetedCommands: commands.targeted,
+		regressionCommands: commands.regression,
+		preChangeChecks: inferPreChangeChecks(input.task),
+		edgeCases: inferEdgeCases(input.task, paths),
+		manualChecks: inferManualChecks(input.task, paths),
+		notes: commands.notes,
+	};
+}
+
+export function formatVerificationPlan(plan: VerificationPlan): string {
+	const lines = ["## Verification Contract", "", `Task: ${plan.task || "(not specified)"}`, `Project root: ${plan.projectRoot}`];
+	if (plan.paths.length > 0) lines.push(`Paths: ${plan.paths.join(", ")}`);
+	lines.push("", "### Before editing");
+	if (plan.preChangeChecks.length === 0) lines.push("- Define the expected behavior and any observable success signal before changing code.");
+	else for (const check of plan.preChangeChecks) lines.push(`- ${check}`);
+	lines.push("", "### Targeted automated checks");
+	if (plan.targetedCommands.length === 0) lines.push("- No targeted command inferred; find or add the nearest meaningful test first.");
+	else for (const command of plan.targetedCommands) lines.push(`- \`${command}\` → Expected: exits 0 and covers the changed behavior.`);
+	lines.push("", "### Edge cases / experiments");
+	for (const edgeCase of plan.edgeCases) lines.push(`- ${edgeCase}`);
+	if (plan.manualChecks.length > 0) {
+		lines.push("", "### Manual / E2E checks");
+		for (const check of plan.manualChecks) lines.push(`- ${check}`);
+	}
+	lines.push("", "### Final regression gate");
+	if (plan.regressionCommands.length === 0) lines.push("- No regression command inferred.");
+	else for (const command of plan.regressionCommands) lines.push(`- \`${command}\` → Expected: exits 0.`);
+	if (plan.notes.length > 0) {
+		lines.push("", "### Notes");
+		for (const note of plan.notes) lines.push(`- ${note}`);
+	}
+	return lines.join("\n");
+}
+
+function isDocsOnlyPrompt(prompt: string): boolean {
+	const lower = prompt.toLowerCase();
+	const docSignal = /\b(readme|docs?|markdown|wording|copy|typo|spelling|comment|comments)\b/.test(lower);
+	const behaviorSignal = /\b(behavior|logic|runtime|api|endpoint|tool|command|extension|hook|test|fix|bug|feature)\b/.test(lower);
+	return docSignal && !behaviorSignal;
+}
+
+export function shouldInjectVerificationPreflight(prompt: string): boolean {
+	const lower = prompt.toLowerCase();
+	if (!prompt.trim() || isDocsOnlyPrompt(prompt)) return false;
+	if (/\b(verification_plan|verify-plan|verification contract|how should (i|we) verify)\b/.test(lower)) return false;
+	return /\b(implement|add|build|create|update|change|fix|refactor|remove|delete|wire|support|ship)\b/.test(lower);
+}
+
+function verificationPreflightSystemPrompt(): string {
+	return [
+		"Verification preflight:",
+		"For behavior-changing code, call `verification_plan` before editing to define targeted checks, expected results, edge cases, and the final regression gate.",
+		"If likely files are unclear, use code_find/semantic_search first, then pass candidate paths to `verification_plan`.",
+		"Skip only for docs-only/trivial changes, and state the exception briefly.",
+	].join("\n");
+}
+
 export default function (pi: ExtensionAPI) {
 	const touchedPaths = new Set<string>();
 	const touchedProjectRoots = new Set<string>();
@@ -423,6 +614,14 @@ export default function (pi: ExtensionAPI) {
 		if (!toolPath) return;
 		touchedPaths.add(resolve(ctxCwd, normalizeToolPath(toolPath)));
 	}
+
+	pi.on("before_agent_start", async (event) => {
+		if (!shouldInjectVerificationPreflight(event.prompt ?? "")) return;
+		const systemPrompt = event.systemPrompt ?? "";
+		return {
+			systemPrompt: `${systemPrompt}${systemPrompt ? "\n\n" : ""}${verificationPreflightSystemPrompt()}`,
+		};
+	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		resetSessionState(ctx);
@@ -462,6 +661,52 @@ export default function (pi: ExtensionAPI) {
 		if (failures.length === 0) return;
 
 		pi.sendUserMessage(buildVerificationFailureMessage(failures), { deliverAs: "followUp" });
+	});
+
+	pi.registerTool({
+		name: "verification_plan",
+		label: "Verification Plan",
+		description: "Build a preflight verification contract for a task before editing: targeted checks, expected results, edge cases, manual/E2E checks, and final regression gate.",
+		promptSnippet: "Plan how to verify a behavior change before editing",
+		promptGuidelines: [
+			"Use verification_plan before editing when the task changes behavior.",
+			"Use it to define targeted checks, expected results, edge cases, and the final regression gate.",
+			"Pass likely paths from code_find or semantic_search when known so checks are repo-specific.",
+			"For bug fixes, include a pre-change reproduction step when possible.",
+		],
+		parameters: Type.Object({
+			task: Type.String({ description: "The requested change or behavior to verify." }),
+			paths: Type.Optional(Type.Array(Type.String(), { description: "Known or likely files/directories affected by the task." })),
+			changedPaths: Type.Optional(Type.Array(Type.String(), { description: "Already changed files, if any." })),
+			behaviorChange: Type.Optional(Type.Boolean({ description: "Whether this is expected to change runtime behavior. Defaults to true." })),
+		}),
+		async execute(_toolCallId, params, _signal, onUpdate, ctx) {
+			onUpdate?.({ content: [{ type: "text", text: "Building verification contract from repo evidence" }], details: {} });
+			const projectRoot = (await findProjectRoot(pi, ctx.cwd)) ?? resolve(ctx.cwd);
+			const template = await detectProjectTemplate(projectRoot);
+			const plan = await buildVerificationPlan(projectRoot, template, params as VerificationPlanInput);
+			return {
+				content: [{ type: "text" as const, text: formatVerificationPlan(plan) }],
+				details: plan,
+			};
+		},
+	});
+
+	pi.registerCommand("verify-plan", {
+		description: "Create a preflight verification contract for a task before editing",
+		handler: async (args, ctx) => {
+			const task = args.trim();
+			if (!task) {
+				ctx.ui.setEditorText("Usage: /verify-plan <task to implement or fix>");
+				ctx.ui.notify("/verify-plan usage written to editor", "info");
+				return;
+			}
+			const projectRoot = (await findProjectRoot(pi, ctx.cwd)) ?? resolve(ctx.cwd);
+			const template = await detectProjectTemplate(projectRoot);
+			const plan = await buildVerificationPlan(projectRoot, template, { task });
+			ctx.ui.setEditorText(formatVerificationPlan(plan));
+			ctx.ui.notify("Verification contract written to editor", "info");
+		},
 	});
 
 	pi.registerCommand("setup-verify", {

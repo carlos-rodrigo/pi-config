@@ -1,21 +1,23 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 
-type AgentMode = "smart" | "deep" | "fast";
+type AgentMode = "smart" | "deep" | "deep3" | "fast";
 type ModelLike = { provider?: string; id?: string; model?: string } | undefined;
 
 const MODE_LABEL: Record<AgentMode, string> = {
 	smart: "Smart",
 	deep: "Deep",
+	deep3: "Deep³",
 	fast: "Fast",
 };
 
 const MODE_STATUS_COLOR: Record<AgentMode, "success" | "error" | "warning"> = {
 	smart: "success",
 	deep: "error",
+	deep3: "error",
 	fast: "warning",
 };
 
-type ModeModelCandidate = { provider: string; model: string };
+type ModeModelCandidate = { provider: string; model: string; thinking?: string };
 
 type ModeProfile = {
 	models: ModeModelCandidate[];
@@ -23,8 +25,23 @@ type ModeProfile = {
 };
 
 const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
-	smart: { models: [{ provider: "anthropic", model: "claude-opus-4-5" }], thinking: "high" },
+	smart: {
+		models: [
+			{ provider: "openai-codex", model: "gpt-5.5" },
+			{ provider: "openai-codex", model: "gpt-5.4", thinking: "medium" },
+			{ provider: "anthropic", model: "claude-opus-4-5", thinking: "high" },
+		],
+		thinking: "low",
+	},
 	deep: {
+		models: [
+			{ provider: "openai-codex", model: "gpt-5.5" },
+			{ provider: "openai-codex", model: "gpt-5.4", thinking: "high" },
+			{ provider: "openai-codex", model: "gpt-5.3-codex", thinking: "xhigh" },
+		],
+		thinking: "medium",
+	},
+	deep3: {
 		models: [
 			{ provider: "openai-codex", model: "gpt-5.5" },
 			{ provider: "openai-codex", model: "gpt-5.4" },
@@ -39,7 +56,8 @@ export function normalizeMode(raw: string | undefined): AgentMode | undefined {
 	if (!raw) return undefined;
 	const value = raw.trim().toLowerCase();
 	if (["smart", "s"].includes(value)) return "smart";
-	if (["deep", "d"].includes(value)) return "deep";
+	if (["deep", "deep2", "d", "d2"].includes(value)) return "deep";
+	if (["deep3", "deep³", "d3"].includes(value)) return "deep3";
 	if (["fast", "f", "rush", "r"].includes(value)) return "fast";
 	return undefined;
 }
@@ -102,6 +120,7 @@ export default function (pi: ExtensionAPI) {
 
 		const profile = MODE_PROFILE[mode];
 		let selectedModelCandidate: ModeModelCandidate | undefined;
+		let selectedThinking = profile.thinking;
 		let firstUnavailableModel: ModeModelCandidate | undefined;
 
 		for (const candidate of profile.models) {
@@ -111,6 +130,7 @@ export default function (pi: ExtensionAPI) {
 			const ok = await pi.setModel(targetModel);
 			if (ok) {
 				selectedModelCandidate = candidate;
+				selectedThinking = candidate.thinking ?? profile.thinking;
 				break;
 			}
 
@@ -132,7 +152,7 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		pi.setThinkingLevel(profile.thinking);
+		pi.setThinkingLevel(selectedThinking);
 		syncModeState(ctx);
 
 		if (options?.persist !== false) {
@@ -143,12 +163,12 @@ export default function (pi: ExtensionAPI) {
 			const appliedModel = selectedModelCandidate
 				? `${selectedModelCandidate.provider}/${selectedModelCandidate.model}`
 				: "current model";
-			ctx.ui.notify(`Switched to Mode: ${MODE_LABEL[mode]} (${appliedModel}, ${profile.thinking})`, "info");
+			ctx.ui.notify(`Switched to Mode: ${MODE_LABEL[mode]} (${appliedModel}, ${selectedThinking})`, "info");
 		}
 	}
 
 	async function cycleMode(ctx: ExtensionContext): Promise<void> {
-		const next: AgentMode = currentMode === "smart" ? "deep" : currentMode === "deep" ? "fast" : "smart";
+		const next: AgentMode = currentMode === "smart" ? "deep" : currentMode === "deep" || currentMode === "deep3" ? "fast" : "smart";
 		await applyMode(next, ctx);
 	}
 
@@ -164,7 +184,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.registerFlag("workflow-mode", {
-		description: "Start in agent mode (smart | deep | fast)",
+		description: "Start in agent mode (smart | deep | deep3 | fast)",
 		type: "string",
 	});
 
@@ -185,21 +205,21 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 
-				const selected = await ctx.ui.select("Choose agent mode", ["Smart mode", "Deep mode", "Fast mode"]);
+				const selected = await ctx.ui.select("Choose agent mode", ["Smart mode", "Deep mode", "Deep³ mode", "Fast mode"]);
 				if (!selected) return;
-				const selectedMode = selected.startsWith("Smart") ? "smart" : selected.startsWith("Deep") ? "deep" : "fast";
+				const selectedMode = selected.startsWith("Smart") ? "smart" : selected.startsWith("Deep³") ? "deep3" : selected.startsWith("Deep") ? "deep" : "fast";
 				await applyMode(selectedMode, ctx);
 				return;
 			}
 
 			if (input.toLowerCase() === "help") {
-				ctx.ui.notify("Usage: /mode smart | /mode deep | /mode fast", "info");
+				ctx.ui.notify("Usage: /mode smart | /mode deep | /mode deep3 | /mode fast", "info");
 				return;
 			}
 
 			const mode = normalizeMode(input);
 			if (!mode) {
-				ctx.ui.notify("Unknown mode. Use: smart, deep, or fast", "error");
+				ctx.ui.notify("Unknown mode. Use: smart, deep, deep3, or fast", "error");
 				return;
 			}
 
@@ -221,10 +241,17 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("deep3", {
-		description: "Switch agent mode to Deep (xhigh reasoning)",
+	pi.registerCommand("deep2", {
+		description: "Switch agent mode to Deep (medium reasoning)",
 		handler: async (_args, ctx) => {
 			await applyMode("deep", ctx);
+		},
+	});
+
+	pi.registerCommand("deep3", {
+		description: "Switch agent mode to Deep³ (xhigh reasoning)",
+		handler: async (_args, ctx) => {
+			await applyMode("deep3", ctx);
 		},
 	});
 

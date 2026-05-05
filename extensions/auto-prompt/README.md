@@ -37,6 +37,8 @@ Suggestions follow a "devil's advocate" approach to verification:
 - **E2E bias**: Prefer verification that hits real boundaries (curl the endpoint, run CLI with real input) over just "run tests"
 - **Fixtures from reality**: Suggest using real inputs from docs/API samples, not agent-generated test data
 - **Challenge the implementation**: Verification should prove the code works to someone who didn't write it
+- **Action + proof**: Suggestions should push the next step forward and include how to prove it worked
+- **Preflight when coding**: For behavior-changing edits, suggestions can ask the agent to call `verification_plan` before editing
 
 This addresses the blind spot problem: when an agent writes code AND writes unit tests, both can share the same misconception.
 
@@ -78,7 +80,11 @@ Example: If the agent says "Done! I've created the webhook handler" without ment
 - **Default model:** `openai-codex/gpt-5.3-codex-spark`
 - **Fallback model:** `openai-codex/gpt-5.3-codex` (if primary unavailable or unsupported)
 - State (enabled/disabled, model) persists across session restarts
-- Agent mode context (smart/deep/fast) is included in the suggestion prompt for relevance
+- Agent mode context (smart/deep/deep3/fast) is included in the suggestion prompt for relevance:
+  - `fast`: tiny action + cheap proof check
+  - `smart`: narrow next action + focused check
+  - `deep`: outcome/constraints + `verification_plan` or focused/regression checks
+  - `deep3`: reproduce/diagnose first, patch only if localized, then focused + regression checks
 
 ## Architecture
 

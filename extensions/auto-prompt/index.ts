@@ -323,6 +323,26 @@ export function detectUnverifiedImplementation(conversationContext: string): boo
 	return hasImplementation && !hasVerification;
 }
 
+function getWorkflowModeGuidance(workflowMode?: string): string {
+	switch (workflowMode) {
+		case "smart":
+			return `
+- In Smart mode (GPT-5.5 low), prefer a narrow next action plus one focused check`;
+		case "deep":
+		case "deep2":
+			return `
+- In Deep mode (GPT-5.5 medium), prefer outcome-focused prompts with constraints and a verification_plan before behavior-changing edits`;
+		case "deep3":
+			return `
+- In Deep³ mode, prefer maximum-quality prompts: reproduce or diagnose first, state tradeoffs, patch only if localized, and verify with focused + regression checks`;
+		case "fast":
+			return `
+- In Fast mode, prefer tiny, concrete next actions with a cheap proof check`;
+		default:
+			return "";
+	}
+}
+
 export function buildSuggestionPrompt(
 	conversationContext: string,
 	workflowMode?: string,
@@ -333,17 +353,7 @@ export function buildSuggestionPrompt(
 	unverifiedImplementation?: boolean,
 ): string {
 	const modeHint = workflowMode ? `\n- Current agent mode: ${workflowMode}` : "";
-	const modeGuidance =
-		workflowMode === "deep"
-			? `
-- In Deep mode, prefer prompts that drive deeper analysis, edge-case checks, and thorough validation`
-			: workflowMode === "fast"
-				? `
-- In Fast mode, prefer narrow, concrete next actions with minimal scope`
-				: workflowMode === "smart"
-					? `
-- In Smart mode, prefer balanced prompts that keep momentum without sacrificing quality`
-					: "";
+	const modeGuidance = getWorkflowModeGuidance(workflowMode);
 
 	const fileContext =
 		filePaths && filePaths.length > 0
@@ -385,7 +395,9 @@ A great prompt has up to 3 parts (combine naturally into 1-2 sentences):
 - HOW to verify / definition of done (prefer E2E: "curl the endpoint with sample payload", "run the CLI with real input" over just "run tests")
 - WHAT to reference or follow (include when specific files/patterns are relevant)
 
-Keep it concise: 10-40 words. One or two sentences max. Never exceed 200 characters.
+Use an Action + proof shape by default: "Do X, then verify with Y." For behavior-changing edits, either ask the agent to call verification_plan first or name a concrete check.
+
+Keep it concise: 10-45 words. One or two sentences max. Never exceed 240 characters.
 
 ## Rules
 
@@ -395,14 +407,15 @@ Keep it concise: 10-40 words. One or two sentences max. Never exceed 200 charact
 - Stay in the user's voice; do NOT write as the assistant
 - Do NOT suggest tangential work, new features, or improvements unless the user was exploring that
 - When a task was just completed, suggest E2E verification (curl the endpoint, run CLI with real input, check actual output) not just "run tests"
-- When debugging, suggest the next concrete debugging action, not more investigation
-- When tests are failing, suggest fixing them with a specific approach
+- When the next step is implementation, include verification_plan before editing unless the verification contract is already clear
+- When debugging, suggest the next concrete debugging action plus the failing input or focused test that proves it
+- When tests are failing, suggest fixing them with a specific approach and rerunning the failing command
 - When the user was told to do something manually, suggest that manual step
 - Assume baseline AGENTS/system guidelines are already enforced by the coding agent
 - Do NOT restate generic process defaults (e.g. "follow AGENTS", "run/feed the loop") unless it is the specific blocking action now
 - Prefer delta guidance: what concrete next action should happen now${modeHint}${modeGuidance}
 - Return ONLY the prompt text. No quotes, no explanation, no markdown.
-- Hard limit: 200 characters maximum.${phaseGuidance}${unverifiedImplementation ? `
+- Hard limit: 240 characters maximum.${phaseGuidance}${unverifiedImplementation ? `
 
 <verification_gap>
 IMPORTANT: The agent just completed an implementation but did NOT mention verification.
@@ -443,6 +456,7 @@ function getPhaseGuidance(phase: ConversationPhase): string {
 		case "building":
 			return `The conversation is in a BUILDING phase.
 - Suggest the next implementation step with a clear deliverable
+- Include verification_plan before behavior-changing edits, or include a concrete check if the plan already exists
 - Include E2E verification: "Implement X, then curl it with a sample payload" or "Build X, verify with real input"
 - Reference specific files or patterns when available
 - When integration work, suggest: "Get a sample payload from the API docs and save to fixtures/ for testing"
@@ -457,7 +471,7 @@ function getPhaseGuidance(phase: ConversationPhase): string {
 			return `The conversation is in a PLANNING phase.
 - Suggest clarifying requirements, defining scope, or documenting decisions
 - For integrations, suggest: "Get sample payloads from their API docs and save to fixtures/"
-- If planning is done, suggest transitioning to implementation with verification strategy
+- If planning is done, suggest transitioning to implementation with a verification_plan or explicit success criteria
 - Prefer: "Define the webhook contract and save a sample payload from BitFreighter docs to fixtures/" over "Let's plan more"`;
 	}
 }
@@ -494,7 +508,7 @@ Rewrite the user's draft to follow best practices for agent collaboration, while
 
 1. DIRECTIVE — Rewrite questions as instructions. "Why isn't X working?" → "Fix X in file.ts"
 2. SPECIFIC — Add file paths, function names, or patterns from the conversation when relevant
-3. FEEDBACK-LOOPABLE — Add E2E verification if missing. Prefer "curl the endpoint with sample payload" over just "run tests"
+3. FEEDBACK-LOOPABLE — For behavior-changing work, add verification_plan before coding or a concrete check after coding. Prefer "curl the endpoint with sample payload" over just "run tests"
 4. SCOPED — Keep it focused on one task. If the draft is already scoped, don't expand it
 5. CONTEXTUAL — Add relevant constraints or references the user likely meant but didn't spell out
 6. DEVIL'S ADVOCATE — When adding verification, prefer real inputs (from docs, API samples, fixtures) over agent-generated test data
@@ -504,7 +518,7 @@ Rewrite the user's draft to follow best practices for agent collaboration, while
 - PRESERVE the user's intent — do NOT change what they want done, only improve how they say it
 - Keep improvements proportional — a short draft becomes a better short prompt, not a paragraph
 - If the draft is already good, make only minor improvements or return it as-is
-- Add verification/feedback steps only when there's a natural one — prefer E2E (curl, CLI with real input) over just "run tests"
+- For behavior-changing drafts, include verification_plan before editing or a concrete check after editing; prefer E2E (curl, CLI with real input) over just "run tests"
 - If the task involves integration, suggest verification with real fixtures from docs/API samples
 - Reference specific files or commands from conversation context when they're relevant to the task
 - Treat baseline AGENTS/system guidance as already implied; don't add generic process boilerplate unless it is explicitly requested
