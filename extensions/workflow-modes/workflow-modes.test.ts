@@ -121,12 +121,15 @@ function createContext(options?: {
 	};
 }
 
-test("normalizeMode accepts smart/deep/deep3/fast aliases", () => {
+test("normalizeMode accepts smart/deep1/deep2/deep3/fast aliases", () => {
 	assert.equal(normalizeMode("smart"), "smart");
 	assert.equal(normalizeMode("S"), "smart");
-	assert.equal(normalizeMode("deep"), "deep");
-	assert.equal(normalizeMode("D"), "deep");
-	assert.equal(normalizeMode("deep2"), "deep");
+	assert.equal(normalizeMode("deep1"), "deep1");
+	assert.equal(normalizeMode("D1"), "deep1");
+	assert.equal(normalizeMode("deep"), "deep2");
+	assert.equal(normalizeMode("D"), "deep2");
+	assert.equal(normalizeMode("deep2"), "deep2");
+	assert.equal(normalizeMode("deep²"), "deep2");
 	assert.equal(normalizeMode("deep3"), "deep3");
 	assert.equal(normalizeMode("D3"), "deep3");
 	assert.equal(normalizeMode("fast"), "fast");
@@ -142,7 +145,7 @@ test("workflow-modes registers only ctrl+shift+m for cycling", () => {
 	const shortcut = shortcuts.get("ctrl+shift+m");
 
 	assert.ok(shortcut);
-	assert.equal(shortcut.description, "Cycle agent mode (Smart/Deep/Fast)");
+	assert.equal(shortcut.description, "Cycle agent mode (Smart/Deep¹/Deep²/Deep³/Fast)");
 	assert.equal(shortcuts.has("f6"), false);
 	assert.equal(shortcuts.has("f7"), false);
 	assert.equal(shortcuts.has("f8"), false);
@@ -158,9 +161,9 @@ test("ctrl+shift+m matches csi-u input when kitty protocol is not active", () =>
 	assert.equal(matchesKey("\x1b[109;6u", "ctrl+shift+m"), true);
 });
 
-test("ctrl+shift+m cycles from smart to deep", async () => {
+test("ctrl+shift+m cycles through every mode", async () => {
 	const { shortcuts, pi, getSelectedModel, getThinkingLevel } = createPiHarness();
-	const { ctx, notifications } = createContext();
+	const { ctx, notifications, statuses } = createContext();
 
 	workflowModesExtension(pi as any);
 
@@ -168,13 +171,33 @@ test("ctrl+shift+m cycles from smart to deep", async () => {
 	assert.ok(shortcut);
 
 	await shortcut.handler(ctx as any);
-
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
+	assert.equal(getThinkingLevel(), "low");
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep¹/i);
+	assert.match(statuses.at(-1)?.value ?? "", /mode: Deep¹/i);
+
+	await shortcut.handler(ctx as any);
 	assert.equal(getThinkingLevel(), "medium");
-	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep/i);
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep²/i);
+	assert.match(statuses.at(-1)?.value ?? "", /mode: Deep²/i);
+
+	await shortcut.handler(ctx as any);
+	assert.equal(getThinkingLevel(), "xhigh");
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep³/i);
+	assert.match(statuses.at(-1)?.value ?? "", /mode: Deep³/i);
+
+	await shortcut.handler(ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "anthropic", model: "claude-sonnet-4-6" });
+	assert.equal(getThinkingLevel(), "off");
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Fast/i);
+
+	await shortcut.handler(ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
+	assert.equal(getThinkingLevel(), "low");
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Smart/i);
 });
 
-test("/smart /deep /deep2 /deep3 /fast commands switch modes directly", async () => {
+test("/smart /deep /deep1 /deep2 /deep3 /fast commands switch modes directly", async () => {
 	const { commands, pi, getSelectedModel, getThinkingLevel } = createPiHarness();
 	const { ctx, notifications } = createContext();
 
@@ -182,11 +205,13 @@ test("/smart /deep /deep2 /deep3 /fast commands switch modes directly", async ()
 
 	const smartCommand = commands.get("smart");
 	const deepCommand = commands.get("deep");
+	const deep1Command = commands.get("deep1");
 	const deep2Command = commands.get("deep2");
 	const deep3Command = commands.get("deep3");
 	const fastCommand = commands.get("fast");
 	assert.ok(smartCommand);
 	assert.ok(deepCommand);
+	assert.ok(deep1Command);
 	assert.ok(deep2Command);
 	assert.ok(deep3Command);
 	assert.ok(fastCommand);
@@ -196,15 +221,20 @@ test("/smart /deep /deep2 /deep3 /fast commands switch modes directly", async ()
 	assert.equal(getThinkingLevel(), "low");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Smart/i);
 
+	await deep1Command.handler("", ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
+	assert.equal(getThinkingLevel(), "low");
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep¹/i);
+
 	await deepCommand.handler("", ctx as any);
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
 	assert.equal(getThinkingLevel(), "medium");
-	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep/i);
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep²/i);
 
 	await deep2Command.handler("", ctx as any);
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
 	assert.equal(getThinkingLevel(), "medium");
-	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep/i);
+	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep²/i);
 
 	await deep3Command.handler("", ctx as any);
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
@@ -261,7 +291,7 @@ test("/mode command accepts aliases and rejects unknown values", async () => {
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
 
 	await modeCommand.handler("invalid", ctx as any);
-	assert.match(notifications.at(-1)?.message ?? "", /Unknown mode\. Use: smart, deep, deep3, or fast/i);
+	assert.match(notifications.at(-1)?.message ?? "", /Unknown mode\. Use: smart, deep1, deep2, deep3, or fast/i);
 });
 
 test("session_start applies workflow-mode flag and keeps edit/write tools active", async () => {

@@ -328,10 +328,13 @@ function getWorkflowModeGuidance(workflowMode?: string): string {
 		case "smart":
 			return `
 - In Smart mode (GPT-5.5 low), prefer a narrow next action plus one focused check`;
+		case "deep1":
+			return `
+- In Deep¹ mode (GPT-5.5 low), prefer a narrow implementation step plus a focused proof check`;
 		case "deep":
 		case "deep2":
 			return `
-- In Deep mode (GPT-5.5 medium), prefer outcome-focused prompts with constraints and a verification_plan before behavior-changing edits`;
+- In Deep² mode (GPT-5.5 medium), prefer outcome-focused prompts with constraints and a verification_plan before behavior-changing edits`;
 		case "deep3":
 			return `
 - In Deep³ mode, prefer maximum-quality prompts: reproduce or diagnose first, state tradeoffs, patch only if localized, and verify with focused + regression checks`;

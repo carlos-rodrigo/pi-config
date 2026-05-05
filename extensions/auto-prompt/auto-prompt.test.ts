@@ -72,6 +72,17 @@ test("buildSuggestionPrompt describes the 3-part structure: what, verify, refere
 
 // --- Mode awareness ---
 
+test("buildSuggestionPrompt is mode-aware for deep1 work", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Implement the focused fix.\n\nAssistant: Let's keep this narrow.",
+		"deep1",
+	);
+
+	assert.match(prompt, /Current agent mode: deep1/i);
+	assert.match(prompt, /GPT-5\.5 low/i);
+	assert.match(prompt, /focused proof check/i);
+});
+
 test("buildSuggestionPrompt is mode-aware for deep work", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: We need to find edge cases before shipping.\n\nAssistant: Let's inspect failure modes.",

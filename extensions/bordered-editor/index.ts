@@ -6,7 +6,7 @@
  * │   ▌Implement the error handling changes                │  ← gray ghost text
  * ╰─ 42% of 200k · $1.14 ───────────── ~/project (main) ─╯
  *
- * Top left:     agent mode (Smart in green, Deep in red, Fast in yellow)
+ * Top left:     agent mode (Smart in green, Deep¹/²/³ in red, Fast in yellow)
  * Top right:    model · thinking-level (level in green)
  * Bottom left:  context% of Nk . $cost - status
  * Bottom right: cwd plus git state — branch (main checkout) or worktree info
@@ -38,6 +38,28 @@ export function pickPrimaryExtensionStatus(statuses: ReadonlyMap<string, string>
 	}
 
 	return statuses.get("dumb-zone") ?? statuses.get("workflow-mode") ?? statuses.values().next().value ?? null;
+}
+
+export type WorkflowModeColor = "success" | "error" | "warning";
+
+export function formatWorkflowModeLabel(rawMode: string | null | undefined): string | null {
+	const value = rawMode?.trim();
+	if (!value) return null;
+
+	const normalized = value.toLowerCase();
+	if (["smart", "s"].includes(normalized)) return "Smart";
+	if (["deep1", "deep¹", "d1"].includes(normalized)) return "Deep¹";
+	if (["deep", "deep2", "deep²", "d", "d2"].includes(normalized)) return "Deep²";
+	if (["deep3", "deep³", "d3"].includes(normalized)) return "Deep³";
+	if (["fast", "f", "rush", "r"].includes(normalized)) return "Fast";
+	return value;
+}
+
+export function getWorkflowModeColor(label: string | null | undefined): WorkflowModeColor {
+	const normalized = label?.toLowerCase() ?? "";
+	if (normalized.startsWith("deep")) return "error";
+	if (normalized === "fast") return "warning";
+	return "success";
 }
 
 interface WorktreeEntry {
@@ -156,10 +178,9 @@ class BorderedEditor extends CustomEditor {
 	}
 
 	setModeLabel(label: string | null): void {
-		this.modeLabel = label;
-		if (label && this.ctx) {
-			const mode = label.toLowerCase();
-			this.modeColor = mode === "deep" ? "error" : mode === "fast" ? "warning" : "success";
+		this.modeLabel = formatWorkflowModeLabel(label);
+		if (this.modeLabel && this.ctx) {
+			this.modeColor = getWorkflowModeColor(this.modeLabel);
 			this.borderColor = (s: string) => this.ctx!.ui.theme.fg(this.modeColor, s);
 		}
 	}
@@ -235,8 +256,7 @@ class BorderedEditor extends CustomEditor {
 		let topLeft = "";
 		if (this.modeLabel && theme) {
 			const mode = this.modeLabel.toLowerCase();
-			const color = mode === "smart" ? "success" : mode === "deep" ? "error" : "warning";
-			topLeft = theme.fg("dim", "mode:") + theme.fg(color, mode);
+			topLeft = theme.fg("dim", "mode:") + theme.fg(getWorkflowModeColor(this.modeLabel), mode);
 		}
 
 		// --- Top right: model · level ---
@@ -377,11 +397,9 @@ export default function (pi: ExtensionAPI) {
 	// --- Agent mode events ---
 
 	pi.events.on("workflow:mode", (data) => {
-		const { mode } = data as { mode: string };
+		const { mode, label } = data as { mode?: string; label?: string };
 		if (editorInstance) {
-			const normalized = mode.toLowerCase();
-			const label = normalized === "deep" ? "Deep" : normalized === "fast" ? "Fast" : "Smart";
-			editorInstance.setModeLabel(label);
+			editorInstance.setModeLabel(label ?? mode ?? null);
 			requestRender?.();
 		}
 	});

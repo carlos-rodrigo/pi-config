@@ -80,10 +80,11 @@ Example: If the agent says "Done! I've created the webhook handler" without ment
 - **Default model:** `openai-codex/gpt-5.3-codex-spark`
 - **Fallback model:** `openai-codex/gpt-5.3-codex` (if primary unavailable or unsupported)
 - State (enabled/disabled, model) persists across session restarts
-- Agent mode context (smart/deep/deep3/fast) is included in the suggestion prompt for relevance:
+- Agent mode context (smart/deep1/deep2/deep3/fast) is included in the suggestion prompt for relevance:
   - `fast`: tiny action + cheap proof check
   - `smart`: narrow next action + focused check
-  - `deep`: outcome/constraints + `verification_plan` or focused/regression checks
+  - `deep1`: narrow implementation step + focused proof check
+  - `deep`/`deep2`: outcome/constraints + `verification_plan` or focused/regression checks
   - `deep3`: reproduce/diagnose first, patch only if localized, then focused + regression checks
 
 ## Architecture
