@@ -44,6 +44,7 @@ const DEFAULT_OLLAMA_EMBED_INPUT_MAX_CHARS = 6_000;
 const MIN_OLLAMA_EMBED_INPUT_CHARS = 128;
 const MAX_OLLAMA_EMBED_INPUT_MAX_CHARS = 100_000;
 const EMBEDDING_TRUNCATION_MARKER = "\n\n[...semantic-search input truncated...]\n\n";
+const EMBEDDING_VECTOR_JSON_ENCODING = "base64-f32";
 
 const SKIP_DIRS = new Set([
 	".git",
@@ -387,6 +388,11 @@ export type SearchIndex = {
 	embedding?: EmbeddingMetadata;
 };
 
+type SerializedEmbeddingVector = {
+	encoding: typeof EMBEDDING_VECTOR_JSON_ENCODING;
+	data: string;
+};
+
 export type SearchResult = {
 	path: string;
 	startLine: number;
@@ -642,6 +648,53 @@ function normalizeEmbedding(values: unknown): number[] {
 	const norm = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
 	if (norm === 0) throw new Error("Ollama returned a zero-length embedding vector.");
 	return vector.map((value) => value / norm);
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function encodeEmbeddingVectorForJson(embedding: number[]): SerializedEmbeddingVector {
+	const buffer = Buffer.allocUnsafe(embedding.length * Float32Array.BYTES_PER_ELEMENT);
+	for (let index = 0; index < embedding.length; index++) {
+		const value = embedding[index] ?? 0;
+		buffer.writeFloatLE(Number.isFinite(value) ? value : 0, index * Float32Array.BYTES_PER_ELEMENT);
+	}
+	return { encoding: EMBEDDING_VECTOR_JSON_ENCODING, data: buffer.toString("base64") };
+}
+
+function decodeEmbeddingVectorFromJson(value: unknown): number[] | undefined {
+	if (Array.isArray(value)) {
+		const embedding = value.map((entry) => (typeof entry === "number" ? entry : Number(entry)));
+		return embedding.every(Number.isFinite) ? embedding : undefined;
+	}
+	if (!isObjectRecord(value) || value.encoding !== EMBEDDING_VECTOR_JSON_ENCODING || typeof value.data !== "string") return undefined;
+
+	const buffer = Buffer.from(value.data, "base64");
+	if (buffer.length % Float32Array.BYTES_PER_ELEMENT !== 0) throw new Error("Serialized embedding vector has an invalid byte length.");
+	const embedding = new Array<number>(buffer.length / Float32Array.BYTES_PER_ELEMENT);
+	for (let index = 0; index < embedding.length; index++) {
+		embedding[index] = buffer.readFloatLE(index * Float32Array.BYTES_PER_ELEMENT);
+	}
+	return embedding;
+}
+
+function searchIndexJsonReplacer(key: string, value: unknown): unknown {
+	if (key === "embedding" && Array.isArray(value)) return encodeEmbeddingVectorForJson(value);
+	return value;
+}
+
+function searchIndexJsonReviver(key: string, value: unknown): unknown {
+	if (key === "embedding") return decodeEmbeddingVectorFromJson(value) ?? value;
+	return value;
+}
+
+export function serializeSearchIndexForJson(index: SearchIndex): string {
+	return JSON.stringify(index, searchIndexJsonReplacer);
+}
+
+export function parseSearchIndexJson(json: string): SearchIndex {
+	return JSON.parse(json, searchIndexJsonReviver) as SearchIndex;
 }
 
 function embeddingCosine(a: number[] | undefined, b: number[] | undefined): number {
@@ -1402,7 +1455,7 @@ export async function buildSearchIndexWithEmbeddings(cwd: string, options: Embed
 function saveSearchIndex(index: SearchIndex): void {
 	const indexPath = getIndexPath(index.cwd);
 	mkdirSync(dirname(indexPath), { recursive: true });
-	writeFileSync(indexPath, JSON.stringify(index), "utf8");
+	writeFileSync(indexPath, serializeSearchIndexForJson(index), "utf8");
 }
 
 export function loadSearchIndex(cwd: string): SearchIndex | undefined {
@@ -1413,7 +1466,7 @@ export function loadSearchIndex(cwd: string): SearchIndex | undefined {
 	const indexPath = getIndexPath(absoluteCwd);
 	if (!existsSync(indexPath)) return undefined;
 	try {
-		const parsed = JSON.parse(readFileSync(indexPath, "utf8")) as SearchIndex;
+		const parsed = parseSearchIndexJson(readFileSync(indexPath, "utf8"));
 		if (parsed.version !== INDEX_VERSION || parsed.cwd !== absoluteCwd) return undefined;
 		memoryIndexes.set(absoluteCwd, parsed);
 		return parsed;
@@ -1797,7 +1850,7 @@ function compactResultDetails(results: SearchResult[]) {
 
 export default function semanticSearchExtension(pi: ExtensionAPI) {
 	pi.registerCommand("index", {
-		description: "Build, rebuild, or show status for the semantic code-search index. Usage: /index [status|rebuild|lexical] [ollama-model]",
+		description: "Build, rebuild, or show status for the semantic code-search index. Usage: /index [status|rebuild|build|lexical] [ollama-model]",
 		handler: async (args, ctx) => {
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			const action = tokens[0] ?? "rebuild";
@@ -1809,7 +1862,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			}
 
 			const lexicalOnly = tokens.includes("lexical") || tokens.includes("--lexical");
-			const model = tokens.find((token) => !["rebuild", "embeddings", "--embeddings", "--ollama", "lexical", "--lexical"].includes(token));
+			const model = tokens.find((token) => !["rebuild", "build", "embeddings", "--embeddings", "--ollama", "lexical", "--lexical"].includes(token));
 			ctx.ui.setStatus?.("semantic-search", lexicalOnly ? "indexing…" : "embedding…");
 			try {
 				const index = lexicalOnly

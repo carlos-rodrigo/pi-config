@@ -13,6 +13,7 @@ Local hybrid code search for Pi, backed by Ollama embeddings plus lexical/symbol
 ```bash
 /index status            # show index freshness
 /index rebuild           # rebuild with Ollama embeddings (default model: nomic-embed-text)
+/index build             # alias for /index rebuild
 /index rebuild mxbai-embed-large
 /index lexical           # rebuild lexical-only
 /code-search <q>         # run a natural-language search and show results in the session

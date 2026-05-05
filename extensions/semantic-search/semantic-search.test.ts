@@ -10,9 +10,11 @@ import semanticSearchExtension, {
 	createRepoMap,
 	formatRepoMap,
 	formatSearchResults,
+	parseSearchIndexJson,
 	resolveOllamaEmbeddingConfig,
 	searchIndex,
 	searchIndexWithEmbeddings,
+	serializeSearchIndexForJson,
 } from "./index.ts";
 
 function makeProject(files: Record<string, string>): string {
@@ -199,6 +201,40 @@ test("Ollama embeddings are stored locally and used for semantic ranking", async
 	}
 });
 
+test("embedding index JSON stores vectors in compact float32 encoding", () => {
+	const dir = makeProject({
+		"src/billing/ledger.ts": "export function reconcileLedger() { return normalizeInvoiceBalance(); }\n",
+	});
+	try {
+		const index = buildSearchIndex(dir, { writeToDisk: false });
+		const embedding = Array.from({ length: 768 }, (_value, offset) => Math.sin(offset + 0.123456789));
+		index.chunks = index.chunks.map((chunk) => ({ ...chunk, embedding }));
+		index.cards = index.cards.map((card) => ({ ...card, embedding }));
+		index.embedding = {
+			provider: "ollama",
+			model: "nomic-embed-text",
+			baseUrl: "http://ollama.test",
+			inputMaxChars: 6_000,
+			dimensions: embedding.length,
+			embeddedChunks: index.chunks.length,
+			embeddedCards: index.cards.length,
+			createdAt: new Date().toISOString(),
+		};
+
+		const numericJson = JSON.stringify(index);
+		const compactJson = serializeSearchIndexForJson(index);
+		assert.match(compactJson, /"encoding":"base64-f32"/);
+		assert.ok(compactJson.length < numericJson.length / 2, "expected compact embedding storage to avoid huge JSON strings");
+
+		const parsed = parseSearchIndexJson(compactJson);
+		assert.equal(parsed.embedding?.dimensions, embedding.length);
+		assert.equal(parsed.chunks[0]?.embedding?.length, embedding.length);
+		assert.ok(Math.abs((parsed.chunks[0]?.embedding?.[123] ?? 0) - embedding[123]) < 1e-6);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("Ollama embedding client caps oversized inputs before sending them to Ollama", async () => {
 	const dir = makeProject({
 		"src/large.ts": `export const oversized = "${"token ".repeat(1_000)}";\n`,
@@ -318,6 +354,53 @@ test("repo map clusters indexed files by reusable code concepts", () => {
 		assert.match(formatted, /src\/payments\/checkout\.ts/);
 		assert.match(formatted, /src\/auth\/login\.ts/);
 	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("index command treats build as rebuild instead of an embedding model", async () => {
+	const commands = new Map<string, any>();
+	semanticSearchExtension({
+		registerTool() {},
+		registerCommand(name: string, definition: any) {
+			commands.set(name, definition);
+		},
+	} as any);
+
+	const dir = makeProject({
+		"src/search/index.ts": "export function semanticSearch(query: string) { return vectorIndex.search(query); }\n",
+	});
+	const originalFetch = globalThis.fetch;
+	const previousPiModel = process.env.PI_SEMANTIC_SEARCH_EMBED_MODEL;
+	const previousOllamaModel = process.env.OLLAMA_EMBED_MODEL;
+	const seenModels: string[] = [];
+	globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+		const body = JSON.parse(String(init?.body ?? "{}")) as { model?: string; input?: string | string[] };
+		seenModels.push(body.model ?? "");
+		const inputs = Array.isArray(body.input) ? body.input : [body.input ?? ""];
+		return new Response(JSON.stringify({ embeddings: inputs.map(fakeEmbeddingFor) }), {
+			status: 200,
+			headers: { "content-type": "application/json" },
+		});
+	}) as typeof fetch;
+	delete process.env.PI_SEMANTIC_SEARCH_EMBED_MODEL;
+	delete process.env.OLLAMA_EMBED_MODEL;
+
+	try {
+		await commands.get("index").handler("build", {
+			cwd: dir,
+			ui: { notify() {}, setStatus() {} },
+		} as any);
+
+		assert.ok(seenModels.length > 0, "expected the command to request embeddings");
+		assert.ok(!seenModels.includes("build"), "build should be parsed as a command alias, not a model");
+		assert.ok(seenModels.every((model) => model === "nomic-embed-text"));
+	} finally {
+		globalThis.fetch = originalFetch;
+		if (previousPiModel === undefined) delete process.env.PI_SEMANTIC_SEARCH_EMBED_MODEL;
+		else process.env.PI_SEMANTIC_SEARCH_EMBED_MODEL = previousPiModel;
+		if (previousOllamaModel === undefined) delete process.env.OLLAMA_EMBED_MODEL;
+		else process.env.OLLAMA_EMBED_MODEL = previousOllamaModel;
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
