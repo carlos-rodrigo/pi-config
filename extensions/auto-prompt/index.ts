@@ -65,6 +65,14 @@ let statusClearTimer: ReturnType<typeof setTimeout> | null = null;
 
 type ContentBlock = { type?: string; text?: string; thinking?: string };
 type SessionEntry = { type: string; message?: { role?: string; content?: unknown } };
+export type OwnershipSuggestionState = {
+	active?: boolean;
+	mode?: "passive" | "strict" | "off";
+	task?: string;
+	phase?: string;
+	changedSinceStory?: boolean;
+	reownRequested?: boolean;
+};
 
 function extractTextFromContent(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -323,6 +331,35 @@ export function detectUnverifiedImplementation(conversationContext: string): boo
 	return hasImplementation && !hasVerification;
 }
 
+export function extractOwnershipSuggestionState(
+	entries: Array<{ type?: string; customType?: string; data?: OwnershipSuggestionState }>,
+): OwnershipSuggestionState | undefined {
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry = entries[i];
+		if (entry.type === "custom" && entry.customType === "ownership-loop") return entry.data;
+	}
+	return undefined;
+}
+
+function getOwnershipGuidance(ownershipState?: OwnershipSuggestionState): string {
+	if (!ownershipState?.active || ownershipState.mode === "off") return "";
+	const task = ownershipState.task ? ` for ${ownershipState.task}` : "";
+	if (ownershipState.changedSinceStory && !ownershipState.reownRequested) {
+		return `
+- Ownership loop active${task}: code changed after the ownership story. Prefer suggesting /reown to compare intended story, actual diff, verification evidence, and what is left.`;
+	}
+	if (ownershipState.phase === "story-requested") {
+		return `
+- Ownership loop active${task}: prefer prompts that approve/refine the Initial Change Story before implementation, not prompts that skip straight to coding.`;
+	}
+	if (ownershipState.phase === "idle") {
+		return `
+- Ownership loop passive: for non-trivial implementation prompts, consider suggesting /own or a short Initial Change Story first; skip this for tiny tasks.`;
+	}
+	return `
+- Ownership loop active${task}: keep prompts anchored to the ownership story and proof plan.`;
+}
+
 function getWorkflowModeGuidance(workflowMode?: string): string {
 	switch (workflowMode) {
 		case "smart":
@@ -354,9 +391,11 @@ export function buildSuggestionPrompt(
 	phase?: ConversationPhase,
 	baselineGuidelines?: string[],
 	unverifiedImplementation?: boolean,
+	ownershipState?: OwnershipSuggestionState,
 ): string {
 	const modeHint = workflowMode ? `\n- Current agent mode: ${workflowMode}` : "";
 	const modeGuidance = getWorkflowModeGuidance(workflowMode);
+	const ownershipGuidance = getOwnershipGuidance(ownershipState);
 
 	const fileContext =
 		filePaths && filePaths.length > 0
@@ -416,7 +455,7 @@ Keep it concise: 10-45 words. One or two sentences max. Never exceed 240 charact
 - When the user was told to do something manually, suggest that manual step
 - Assume baseline AGENTS/system guidelines are already enforced by the coding agent
 - Do NOT restate generic process defaults (e.g. "follow AGENTS", "run/feed the loop") unless it is the specific blocking action now
-- Prefer delta guidance: what concrete next action should happen now${modeHint}${modeGuidance}
+- Prefer delta guidance: what concrete next action should happen now${modeHint}${modeGuidance}${ownershipGuidance}
 - Return ONLY the prompt text. No quotes, no explanation, no markdown.
 - Hard limit: 240 characters maximum.${phaseGuidance}${unverifiedImplementation ? `
 
@@ -755,7 +794,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 	const entries = ctx.sessionManager.getEntries() as Array<{
 		type: string;
 		customType?: string;
-		data?: { mode?: string };
+		data?: { mode?: string } & OwnershipSuggestionState;
 	}>;
 	for (let i = entries.length - 1; i >= 0; i--) {
 		if (entries[i].type === "custom" && entries[i].customType === "workflow-mode") {
@@ -763,6 +802,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 			break;
 		}
 	}
+	const ownershipState = extractOwnershipSuggestionState(entries);
 
 	// Extract context signals for richer prompt generation
 	const filePaths = extractFilePaths(conversationContext);
@@ -783,6 +823,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 			phase,
 			baselineGuidelines,
 			unverifiedImplementation,
+			ownershipState,
 		);
 		const prompt = revisionHint
 			? `${basePrompt}\n\n<revision_request>\n${revisionHint}\n</revision_request>`
@@ -825,7 +866,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 			return;
 		}
 
-		if (suggestion.length >= 200) {
+		if (suggestion.length >= 240) {
 			stopLoading();
 			stopLoading = null;
 			showTransientAutoPromptStatus(ctx, "Suggestion skipped — too long");

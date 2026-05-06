@@ -39,6 +39,7 @@ Suggestions follow a "devil's advocate" approach to verification:
 - **Challenge the implementation**: Verification should prove the code works to someone who didn't write it
 - **Action + proof**: Suggestions should push the next step forward and include how to prove it worked
 - **Preflight when coding**: For behavior-changing edits, suggestions can ask the agent to call `verification_plan` before editing
+- **Ownership loop aware**: When ownership-loop passive/strict mode is active and files changed, suggestions bias toward `/reown` so the user can compare intended story vs actual diff
 
 This addresses the blind spot problem: when an agent writes code AND writes unit tests, both can share the same misconception.
 
@@ -86,6 +87,7 @@ Example: If the agent says "Done! I've created the webhook handler" without ment
   - `deep1`: narrow implementation step + focused proof check
   - `deep`/`deep2`: outcome/constraints + `verification_plan` or focused/regression checks
   - `deep3`: reproduce/diagnose first, patch only if localized, then focused + regression checks
+- Ownership context from `ownership-loop` is included when active, especially to suggest `/reown` after changed files or `/own` before non-trivial implementation
 
 ## Architecture
 

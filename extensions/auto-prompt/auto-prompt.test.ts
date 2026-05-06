@@ -15,6 +15,7 @@ import {
 	shouldRetryAutoPromptWithFallback,
 	detectPhase,
 	detectUnverifiedImplementation,
+	extractOwnershipSuggestionState,
 	type ConversationPhase,
 } from "./index.ts";
 
@@ -124,6 +125,53 @@ test("buildSuggestionPrompt is mode-aware for smart work", () => {
 	assert.match(prompt, /Current agent mode: smart/i);
 	assert.match(prompt, /GPT-5\.5 low/i);
 	assert.match(prompt, /focused check/i);
+});
+
+test("buildSuggestionPrompt nudges active ownership loops toward re-own", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Implement the ownership loop.\n\nAssistant: Done, tests passed.",
+		"deep",
+		[],
+		[],
+		"shipping",
+		undefined,
+		false,
+		{ active: true, task: "ownership loop", phase: "changes-detected", changedSinceStory: true, reownRequested: false },
+	);
+
+	assert.match(prompt, /Ownership loop active/i);
+	assert.match(prompt, /prefer suggesting \/reown/i);
+	assert.match(prompt, /intended story/i);
+	assert.match(prompt, /what is left/i);
+});
+
+test("buildSuggestionPrompt nudges passive idle ownership toward story-first work", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Build this feature.\n\nAssistant: I can do that.",
+		"deep",
+		[],
+		[],
+		"building",
+		undefined,
+		false,
+		{ active: true, mode: "passive", phase: "idle" },
+	);
+
+	assert.match(prompt, /Ownership loop passive/i);
+	assert.match(prompt, /consider suggesting \/own/i);
+	assert.match(prompt, /skip this for tiny tasks/i);
+});
+
+test("extractOwnershipSuggestionState returns latest ownership-loop entry", () => {
+	const state = extractOwnershipSuggestionState([
+		{ type: "custom", customType: "ownership-loop", data: { active: true, task: "old" } },
+		{ type: "custom", customType: "workflow-mode", data: { mode: "deep2" } as any },
+		{ type: "custom", customType: "ownership-loop", data: { active: true, mode: "passive", task: "new", changedSinceStory: true } },
+	]);
+
+	assert.equal(state?.task, "new");
+	assert.equal(state?.mode, "passive");
+	assert.equal(state?.changedSinceStory, true);
 });
 
 // --- File path extraction ---
