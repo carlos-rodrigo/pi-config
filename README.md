@@ -28,8 +28,8 @@ pi install ./extensions/dumb-zone
 pi install ./extensions/feature-flow
 pi install ./extensions/file-opener
 pi install ./extensions/git-blame
-pi install ./extensions/handoff
 pi install ./extensions/lazygit
+pi install ./extensions/ownership-loop
 pi install ./extensions/review-mode
 pi install ./extensions/semantic-search
 pi install ./extensions/session-query
@@ -69,15 +69,15 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[branch-switcher](extensions/branch-switcher/)** — Interactive `/branch` command for local and remote branches.
 - **[code-intel](extensions/code-intel/)** — `code_find` orchestration plus symbol, dependency, git-history, and AST search tools.
 - **[document-reviewer](extensions/document-reviewer/)** — Browser-based document and PR review with inline comments.
-- **[dumb-zone](extensions/dumb-zone/)** — Context-window monitor with auto-handoff before degradation.
+- **[dumb-zone](extensions/dumb-zone/)** — Context-window monitor with auto-compaction before degradation.
 - **[feature-flow](extensions/feature-flow/)** — Lightweight feature orchestration with Git worktrees.
 - **[file-opener](extensions/file-opener/)** — Syntax-highlighted file viewer, nvim opener, and diff viewer.
 - **[git-blame](extensions/git-blame/)** — Interactive git blame overlay.
-- **[handoff](extensions/handoff/)** — `/handoff` command and LLM-callable session handoff tool.
 - **[lazygit](extensions/lazygit/)** — LazyGit launcher via tmux.
+- **[ownership-loop](extensions/ownership-loop/)** — Always-live story-driven ownership, `/own`, `/reown`, and ownership cards.
 - **[review-mode](extensions/review-mode/)** — Overlay review workbench for local/staged/unstaged/outgoing diffs.
 - **[semantic-search](extensions/semantic-search/)** — Local Ollama-backed hybrid code index, semantic search, and repo concept map.
-- **[session-query](extensions/session-query/)** — Query previous Pi session files from fresh handoff sessions.
+- **[session-query](extensions/session-query/)** — Query previous Pi session files for context and decisions.
 - **[subagent](extensions/subagent/)** — Delegate tasks to specialized sub-agents with isolated context windows (synchronous/blocking).
 - **[verify](extensions/verify/)** — Preflight `verification_plan`, back-pressure verification hook, and `/setup-verify` scaffolder.
 - **[web-tools](extensions/web-tools/)** — Web search and fetch tools.
@@ -90,6 +90,16 @@ Sub-agent definitions used by the subagent and agent-jobs extensions:
 
 - **oracle** — Deep reasoning second opinion (gpt-5.5). For complex debugging, architecture decisions, and thorough code analysis. Read-only.
 - **researcher** — Concise research specialist (gpt-5.5). Investigates technologies, reads docs/source, compares approaches, and returns evidence-first briefs with bounded tool/output budgets. Uses `websearch`/`webfetch` instead of shelling out.
+
+### Ownership loop
+
+- `/own-mode passive | strict | off` — Configure always-live ownership behavior (default: passive).
+- `/own <task>` — Create an approval-gated Initial Change Story before implementation.
+- `/own-approve` — Mark the story approved; required before edits in strict mode.
+- `/reown [scope]` — Compare the Initial Change Story to the actual diff and verification evidence.
+- `/own-remember [title]` — Draft a `docs/ownership/` memory card for semantic search.
+- `/own-status` — Show current ownership-loop state.
+- `/own-off` — Disable the loop for the session.
 
 ### [Prompts](prompts/)
 
@@ -111,6 +121,12 @@ Workflow prompt templates:
 # Direct — the main agent decides when to use sub-agents
 Use the oracle to review the auth logic in src/auth/. I want to make sure there are no edge cases.
 Use the researcher agent to investigate how Next.js App Router handles parallel routes.
+
+# Ownership loop commands
+/own-mode passive
+/own Change workflow modes so all deep levels are visible and keyboard-switchable
+/reown workflow modes
+/own-remember workflow modes
 
 # Via prompt templates
 /oracle Is there a better way to handle the state machine in src/parser.ts?

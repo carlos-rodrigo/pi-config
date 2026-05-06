@@ -1,5 +1,4 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { HANDOFF_SESSION_STARTED_EVENT } from "../handoff/events.ts";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
@@ -631,9 +630,6 @@ export default function (pi: ExtensionAPI) {
 		resetSessionState(ctx);
 	});
 
-	pi.events.on(HANDOFF_SESSION_STARTED_EVENT, () => {
-		resetSessionState();
-	});
 
 	pi.on("tool_call", async (event, ctx) => {
 		syncSessionState(ctx);

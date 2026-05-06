@@ -2,21 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import dumbZoneExtension, { getContextPercent, getZoneLabel, getZoneStatus } from "./index.ts";
-import { HANDOFF_SESSION_STARTED_EVENT } from "../handoff/events.ts";
 
 type PiEventHandler = (...args: any[]) => unknown;
 
 function createHarness() {
 	const eventHandlers = new Map<string, PiEventHandler>();
-	const sentMessages: Array<{ message: any; options: any }> = [];
 	const eventBusHandlers = new Map<string, ((data: unknown) => void)[]>();
 
 	dumbZoneExtension({
 		on(name: string, handler: PiEventHandler) {
 			eventHandlers.set(name, handler);
-		},
-		sendMessage(message: any, options: any) {
-			sentMessages.push({ message, options });
 		},
 		events: {
 			emit(name: string, data: unknown) {
@@ -33,19 +28,24 @@ function createHarness() {
 		},
 	} as any);
 
-	return { eventHandlers, sentMessages, emit(name: string, data?: unknown) { for (const handler of eventBusHandlers.get(name) ?? []) handler(data); } };
+	return { eventHandlers, emit(name: string, data?: unknown) { for (const handler of eventBusHandlers.get(name) ?? []) handler(data); } };
 }
 
 function createCtx(options?: { percent?: number; sessionId?: string; setStatus?: (key: string, value: string | undefined) => void }) {
 	const percent = options?.percent ?? 50;
 	const statuses: Array<{ key: string; value: string | undefined }> = [];
+	const compactCalls: any[] = [];
+	const notifications: Array<{ message: string; level: string }> = [];
 	const setStatus = options?.setStatus ?? ((key: string, value: string | undefined) => {
 		statuses.push({ key, value });
 	});
 
 	return {
 		statuses,
+		compactCalls,
+		notifications,
 		ctx: {
+			hasUI: true,
 			ui: {
 				theme: {
 					fg(_color: string, text: string) {
@@ -53,6 +53,9 @@ function createCtx(options?: { percent?: number; sessionId?: string; setStatus?:
 					},
 				},
 				setStatus,
+				notify(message: string, level: string) {
+					notifications.push({ message, level });
+				},
 			},
 			getContextUsage() {
 				return { percent, tokens: Math.round(percent * 10), contextWindow: 1000 };
@@ -61,6 +64,9 @@ function createCtx(options?: { percent?: number; sessionId?: string; setStatus?:
 				getSessionId() {
 					return options?.sessionId ?? "session-a";
 				},
+			},
+			compact(options?: any) {
+				compactCalls.push(options);
 			},
 		},
 	};
@@ -78,7 +84,7 @@ test("getZoneLabel uses default threshold (101% = effectively disabled)", () => 
 	assert.equal(getZoneLabel(101), "dumb");
 });
 
-test("getZoneLabel uses stricter thresholds for large context models (20% handoff)", () => {
+test("getZoneLabel uses stricter thresholds for large context models (20% compaction)", () => {
 	assert.equal(getZoneLabel(10, "claude-opus-4-6"), "smart");
 	assert.equal(getZoneLabel(19, "claude-opus-4-6"), "smart");
 	assert.equal(getZoneLabel(20, "claude-sonnet-4-6"), "dumb");
@@ -93,7 +99,6 @@ test("getZoneLabel uses 40% threshold for Opus 4.5", () => {
 });
 
 
-
 test("getZoneStatus returns a single colored label for the active zone", () => {
 	const theme = {
 		fg(color: string, text: string) {
@@ -105,67 +110,83 @@ test("getZoneStatus returns a single colored label for the active zone", () => {
 	assert.equal(getZoneStatus(10, theme), "<success>smart</success>");
 	assert.equal(getZoneStatus(100, theme), "<success>smart</success>");
 
-	// Large context models: 20% handoff
+	// Large context models: 20% compaction
 	assert.equal(getZoneStatus(10, theme, "claude-opus-4-6"), "<success>smart</success>");
 	assert.equal(getZoneStatus(25, theme, "claude-opus-4-6"), "<error>dumb</error>");
-
-
 });
 
-test("turn_end updates status and triggers handoff once at threshold", async () => {
-	const { eventHandlers, sentMessages } = createHarness();
+test("turn_end updates status and triggers compaction once at threshold", async () => {
+	const { eventHandlers } = createHarness();
 	const turnEnd = eventHandlers.get("turn_end");
 	assert.ok(turnEnd);
 
-	// Default handoff threshold is 101% (effectively disabled), so use a large-context model
-	const { statuses, ctx } = createCtx({ percent: 20 });
+	// Default compaction threshold is 101% (effectively disabled), so use a large-context model
+	const { statuses, compactCalls, ctx } = createCtx({ percent: 20 });
 	(ctx as any).model = { id: "claude-opus-4-6" };
 
 	await turnEnd!({}, ctx as any);
 	await turnEnd!({}, ctx as any);
 
 	assert.deepEqual(statuses.at(-1), { key: "dumb-zone", value: "dumb" });
-	assert.equal(sentMessages.length, 1);
-	assert.match(sentMessages[0].message.content, /MUST hand off immediately/i);
-	assert.deepEqual(sentMessages[0].options, { deliverAs: "followUp", triggerTurn: true });
+	assert.equal(compactCalls.length, 1);
+	assert.match(compactCalls[0].customInstructions, /active goal/);
 });
 
-test("session_switch resets handoff state and immediately restores the legend", async () => {
-	const { eventHandlers, sentMessages } = createHarness();
+test("session_switch resets compaction state and immediately restores the legend", async () => {
+	const { eventHandlers } = createHarness();
 	const turnEnd = eventHandlers.get("turn_end");
 	const sessionSwitch = eventHandlers.get("session_switch");
 	assert.ok(turnEnd);
 	assert.ok(sessionSwitch);
 
-	const { statuses, ctx } = createCtx({ percent: 25 });
+	const { statuses, compactCalls, ctx } = createCtx({ percent: 25 });
 	(ctx as any).model = { id: "claude-opus-4-6" };
 
 	await turnEnd!({ model: { id: "claude-opus-4-6" } }, ctx as any);
-	assert.equal(sentMessages.length, 1);
+	assert.equal(compactCalls.length, 1);
 
 	await sessionSwitch!({}, ctx as any);
 	await turnEnd!({}, ctx as any);
 
 	assert.deepEqual(statuses.at(-1), { key: "dumb-zone", value: "dumb" });
-	assert.equal(sentMessages.length, 2);
+	assert.equal(compactCalls.length, 2);
 });
 
-test("handoff session-start event resets the gate and marks the fresh session as smart", async () => {
-	const { eventHandlers, sentMessages, emit } = createHarness();
+test("successful compaction resets the gate and marks the context as smart", async () => {
+	const { eventHandlers } = createHarness();
 	const turnEnd = eventHandlers.get("turn_end");
 	assert.ok(turnEnd);
 
-	const { statuses, ctx } = createCtx({ percent: 25, sessionId: "session-a" });
+	const { statuses, compactCalls, notifications, ctx } = createCtx({ percent: 25, sessionId: "session-a" });
 	(ctx as any).model = { id: "claude-opus-4-6" };
 
 	await turnEnd!({ model: { id: "claude-opus-4-6" } }, ctx as any);
-	assert.equal(sentMessages.length, 1);
+	assert.equal(compactCalls.length, 1);
 
-	emit(HANDOFF_SESSION_STARTED_EVENT, { mode: "tool" });
+	compactCalls[0].onComplete({});
 	assert.deepEqual(statuses.at(-1), { key: "dumb-zone", value: "smart" });
+	assert.deepEqual(notifications.at(-1), { message: "Compaction completed — continuing in this session.", level: "info" });
 
 	await turnEnd!({}, ctx as any);
-	assert.equal(sentMessages.length, 2);
+	assert.equal(compactCalls.length, 2);
+});
+
+test("failed compaction resets the gate so a later turn can retry", async () => {
+	const { eventHandlers } = createHarness();
+	const turnEnd = eventHandlers.get("turn_end");
+	assert.ok(turnEnd);
+
+	const { compactCalls, notifications, ctx } = createCtx({ percent: 25, sessionId: "session-a" });
+	(ctx as any).model = { id: "claude-opus-4-6" };
+
+	await turnEnd!({ model: { id: "claude-opus-4-6" } }, ctx as any);
+	assert.equal(compactCalls.length, 1);
+
+	compactCalls[0].onError(new Error("boom"));
+	assert.deepEqual(notifications.at(-1), { message: "Compaction failed: boom", level: "error" });
+
+	await turnEnd!({}, ctx as any);
+	assert.equal(compactCalls.length, 2);
 });
 
 test("model_select updates status to reflect new context window", async () => {
@@ -179,8 +200,8 @@ test("model_select updates status to reflect new context window", async () => {
 	assert.deepEqual(statuses.at(-1), { key: "dumb-zone", value: "smart" });
 });
 
-test("model_select resets handoff gate when new model drops below threshold", async () => {
-	const { eventHandlers, sentMessages } = createHarness();
+test("model_select resets compaction gate when new model drops below threshold", async () => {
+	const { eventHandlers } = createHarness();
 	const turnEnd = eventHandlers.get("turn_end");
 	const modelSelect = eventHandlers.get("model_select");
 	assert.ok(turnEnd);
@@ -190,7 +211,7 @@ test("model_select resets handoff gate when new model drops below threshold", as
 	const dumb = createCtx({ percent: 25, sessionId: "session-a" });
 	(dumb.ctx as any).model = { id: "claude-opus-4-6" };
 	await turnEnd!({ model: { id: "claude-opus-4-6" } }, dumb.ctx as any);
-	assert.equal(sentMessages.length, 1);
+	assert.equal(dumb.compactCalls.length, 1);
 
 	// Switch to model with larger context that drops below threshold
 	const biggerModel = createCtx({ percent: 15, sessionId: "session-a" });
@@ -198,11 +219,11 @@ test("model_select resets handoff gate when new model drops below threshold", as
 	assert.deepEqual(biggerModel.statuses.at(-1), { key: "dumb-zone", value: "smart" });
 
 	await turnEnd!({}, dumb.ctx as any);
-	assert.equal(sentMessages.length, 2);
+	assert.equal(dumb.compactCalls.length, 2);
 });
 
-test("model_select does not reset handoff gate when still above threshold", async () => {
-	const { eventHandlers, sentMessages } = createHarness();
+test("model_select does not reset compaction gate when still above threshold", async () => {
+	const { eventHandlers } = createHarness();
 	const turnEnd = eventHandlers.get("turn_end");
 	const modelSelect = eventHandlers.get("model_select");
 	assert.ok(turnEnd);
@@ -212,7 +233,7 @@ test("model_select does not reset handoff gate when still above threshold", asyn
 	const dumb = createCtx({ percent: 25, sessionId: "session-a" });
 	(dumb.ctx as any).model = { id: "claude-opus-4-6" };
 	await turnEnd!({ model: { id: "claude-opus-4-6" } }, dumb.ctx as any);
-	assert.equal(sentMessages.length, 1);
+	assert.equal(dumb.compactCalls.length, 1);
 
 	// Still above 20% threshold after model switch
 	const stillDumb = createCtx({ percent: 22, sessionId: "session-a" });
@@ -220,23 +241,24 @@ test("model_select does not reset handoff gate when still above threshold", asyn
 	await modelSelect!({ model: { id: "claude-opus-4-6" } }, stillDumb.ctx as any);
 	await turnEnd!({ model: { id: "claude-opus-4-6" } }, stillDumb.ctx as any);
 
-	assert.equal(sentMessages.length, 1);
+	assert.equal(dumb.compactCalls.length, 1);
+	assert.equal(stillDumb.compactCalls.length, 0);
 });
 
 test("session id drift resets the gate even without lifecycle events", async () => {
-	const { eventHandlers, sentMessages } = createHarness();
+	const { eventHandlers } = createHarness();
 	const turnEnd = eventHandlers.get("turn_end");
 	assert.ok(turnEnd);
 
 	const sessionA = createCtx({ percent: 25, sessionId: "session-a" });
 	(sessionA.ctx as any).model = { id: "claude-opus-4-6" };
 	await turnEnd!({ model: { id: "claude-opus-4-6" } }, sessionA.ctx as any);
-	assert.equal(sentMessages.length, 1);
+	assert.equal(sessionA.compactCalls.length, 1);
 
 	const sessionB = createCtx({ percent: 25, sessionId: "session-b" });
 	(sessionB.ctx as any).model = { id: "claude-opus-4-6" };
 	await turnEnd!({ model: { id: "claude-opus-4-6" } }, sessionB.ctx as any);
-	assert.equal(sentMessages.length, 2);
+	assert.equal(sessionB.compactCalls.length, 1);
 });
 
 test("workflow:mode event updates status immediately", async () => {

@@ -257,32 +257,6 @@ test("verification failure message points the agent at the correct repo root", a
 	assert.deepEqual(sendUserMessages[0].options, { deliverAs: "followUp" });
 });
 
-test("handoff session-start event clears pending verification work", async (t) => {
-	const fixture = makeTempProject();
-	t.after(() => fixture.cleanup());
-
-	fs.mkdirSync(path.join(fixture.root, "scripts"), { recursive: true });
-	fs.writeFileSync(path.join(fixture.root, "scripts", "verify.sh"), "#!/bin/bash\nexit 1\n", "utf8");
-
-	const { eventHandlers, execCalls, sendUserMessages, emit } = createHarness(async (command, args) => {
-		if (command === "bash" && args[0] === "scripts/verify.sh") {
-			return { stdout: "", stderr: "tests failed", code: 2, killed: false };
-		}
-		return { stdout: "", stderr: "fatal: not a git repository", code: 1, killed: false };
-	});
-	const toolCall = eventHandlers.get("tool_call");
-	const agentEnd = eventHandlers.get("agent_end");
-	assert.ok(toolCall);
-	assert.ok(agentEnd);
-
-	await toolCall({ toolName: "edit", input: { path: path.join(fixture.root, "feature.ts") } }, createCtx(fixture.root, { sessionId: "session-a" }).ctx as any);
-	emit("handoff:session_started", { mode: "tool" });
-	await agentEnd({}, createCtx(fixture.root, { sessionId: "session-a" }).ctx as any);
-
-	assert.equal(execCalls.some((call) => call.command === "bash" && call.args[0] === "scripts/verify.sh"), false);
-	assert.equal(sendUserMessages.length, 0);
-});
-
 test("session id drift clears touched paths even if no lifecycle event fired", async (t) => {
 	const fixture = makeTempProject();
 	t.after(() => fixture.cleanup());

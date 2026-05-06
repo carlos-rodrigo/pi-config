@@ -27,8 +27,8 @@ pi install ./extensions/dumb-zone
 pi install ./extensions/feature-flow
 pi install ./extensions/file-opener
 pi install ./extensions/git-blame
-pi install ./extensions/handoff
 pi install ./extensions/lazygit
+pi install ./extensions/ownership-loop
 pi install ./extensions/review-mode
 pi install ./extensions/semantic-search
 pi install ./extensions/session-query
@@ -49,15 +49,15 @@ pi install ./extensions/worktree-manager
 | [branch-switcher](branch-switcher/) | Interactive git branch switching with local + remote-only branch support |
 | [code-intel](code-intel/) | `code_find` orchestration plus symbol, dependency, git-history, and AST search tools |
 | [document-reviewer](document-reviewer/) | Markdown review sessions with browser UI |
-| [dumb-zone](dumb-zone/) | Context-window monitor with auto-handoff before degradation |
+| [dumb-zone](dumb-zone/) | Context-window monitor with auto-compaction before degradation |
 | [feature-flow](feature-flow/) | Lightweight-first feature orchestration with Git worktrees and docs on demand |
 | [file-opener](file-opener/) | Syntax-highlighted file viewer with diff support |
 | [git-blame](git-blame/) | Interactive git blame overlay |
-| [handoff](handoff/) | `/handoff` command + LLM-callable `handoff` tool for session transfer |
 | [lazygit](lazygit/) | LazyGit launcher via tmux |
+| [ownership-loop](ownership-loop/) | Always-live story-driven ownership, `/own`, `/reown`, and ownership cards |
 | [review-mode](review-mode/) | Overlay review workbench for local/staged/unstaged/outgoing diffs with colorized preview, hunk/file/all scopes, same-session questions, and saved review notes |
 | [semantic-search](semantic-search/) | Local Ollama-backed hybrid code index, semantic search tool, and repo concept map |
-| [session-query](session-query/) | Query previous Pi session files from fresh handoff sessions |
+| [session-query](session-query/) | Query previous Pi session files for context and decisions |
 | [subagent](subagent/) | Delegate tasks to specialized sub-agents (synchronous/blocking) |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
 | [workflow-modes](workflow-modes/) | Smart/deep1/deep2/deep3/fast mode switching |
@@ -66,8 +66,9 @@ pi install ./extensions/worktree-manager
 
 ## Notes
 
+- **ownership-loop** defaults to passive always-live mode: story guidance, edit/write tracking, and re-own follow-ups without blocking.
+- **ownership-loop** + **auto-prompt** work together via session entries — auto-prompt nudges toward `/reown` when changed files need ownership review.
 - **auto-prompt** + **bordered-editor** work together via `pi.events` — auto-prompt generates suggestions, bordered-editor renders the ghost text.
 - **feature-flow** and **worktree-manager** share the same worktree core but are independent extensions.
-- **handoff** provides both the user `/handoff` command and the LLM-callable `handoff` tool.
 - **agent-jobs** requires Pi to be running inside tmux; it uses detached windows and persists results under `.pi/agent-jobs/`.
 - Researcher, oracle, and deep-review prompt templates default to **agent-jobs**; use `subagent` only when you explicitly want to block.

@@ -1930,7 +1930,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({
 			query: Type.String({ description: "Natural-language query, feature name, behavior, symbol, or error concept to find." }),
 			topK: Type.Optional(Type.Number({ description: `Maximum results to return (default ${DEFAULT_TOP_K}, max ${MAX_TOP_K}).`, minimum: 1, maximum: MAX_TOP_K })),
-			paths: Type.Optional(Type.Array(Type.String(), { description: "Optional path prefixes/substrings to constrain search, e.g. ['extensions/handoff', 'docs/']." })),
+			paths: Type.Optional(Type.Array(Type.String(), { description: "Optional path prefixes/substrings to constrain search, e.g. ['extensions/dumb-zone', 'docs/']." })),
 			includeTests: Type.Optional(Type.Boolean({ description: "Whether test files may appear in results. Defaults to true." })),
 			refresh: Type.Optional(Type.Boolean({ description: "Refresh a missing/stale index before searching. Defaults to true." })),
 			useEmbeddings: Type.Optional(Type.Boolean({ description: "Use local Ollama embeddings when available. Defaults to true; set false for lexical-only search." })),

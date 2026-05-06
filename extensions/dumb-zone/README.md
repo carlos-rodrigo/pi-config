@@ -1,6 +1,6 @@
 # Dumb Zone Detector
 
-Monitors context window usage and forces a session handoff before the agent enters the "dumb zone" — where reasoning quality degrades due to context length.
+Monitors context window usage and triggers Pi compaction before the agent enters the "dumb zone" — where reasoning quality degrades due to context length.
 
 ## How it works
 
@@ -8,13 +8,13 @@ Monitors context window usage and forces a session handoff before the agent ente
 | Context % | Zone | Footer label | Action |
 |-----------|------|--------------|--------|
 | 0–20% | Smart | `smart` (green) | None |
-| 20%+ | Dumb | `dumb` (red) | Auto-triggers handoff |
+| 20%+ | Dumb | `dumb` (red) | Auto-triggers compaction |
 
 **Opus 4.5:**
 | Context % | Zone | Footer label | Action |
 |-----------|------|--------------|--------|
 | 0–40% | Smart | `smart` (green) | None |
-| 40%+ | Dumb | `dumb` (red) | Auto-triggers handoff |
+| 40%+ | Dumb | `dumb` (red) | Auto-triggers compaction |
 
 **All other models:**
 | Context % | Zone | Footer label | Action |
@@ -24,14 +24,7 @@ Monitors context window usage and forces a session handoff before the agent ente
 
 The bordered editor appends the single active zone label to the raw usage readout, e.g. `31% of 272k . $3.36 - smart`.
 
-When the agent crosses the threshold, a follow-up message is injected that forces the agent to:
-1. Summarize progress, decisions, and remaining work
-2. Call the `handoff` tool to transfer to a fresh session
-3. Stop working in the current (degraded) session
-
-## Dependencies
-
-Requires the `handoff` extension (provides both the `/handoff` command and the `handoff` tool).
+When the agent crosses the threshold, the extension calls `ctx.compact()` with instructions to preserve the active goal, constraints, decisions, files changed, verification state, blockers, and next action.
 
 ## Installation
 

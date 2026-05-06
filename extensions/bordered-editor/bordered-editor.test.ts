@@ -16,14 +16,14 @@ test("pickPrimaryExtensionStatus prefers active auto-prompt status over ambient 
 test("pickPrimaryExtensionStatus prefers review over dumb-zone", () => {
 	const statuses = new Map<string, string>([
 		["review", "reviewing"],
-		["dumb-zone", "handoff now"],
+		["dumb-zone", "compact now"],
 	]);
 
 	assert.equal(pickPrimaryExtensionStatus(statuses), "reviewing");
 });
 
 test("pickPrimaryExtensionStatus falls back to ambient statuses when nothing else is active", () => {
-	assert.equal(pickPrimaryExtensionStatus(new Map<string, string>([["dumb-zone", "handoff now"]])), "handoff now");
+	assert.equal(pickPrimaryExtensionStatus(new Map<string, string>([["dumb-zone", "compact now"]])), "compact now");
 	assert.equal(pickPrimaryExtensionStatus(new Map<string, string>([["workflow-mode", "mode: Smart"]])), "mode: Smart");
 	assert.equal(pickPrimaryExtensionStatus(new Map()), null);
 });

@@ -1,7 +1,7 @@
 /**
  * Session query tool - inspect prior Pi sessions on demand.
  *
- * Works with handoff prompts that include parent and ancestor session paths.
+ * Useful when a prior session path is available and only targeted details are needed.
  */
 
 import { existsSync } from "node:fs";
