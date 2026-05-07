@@ -12,6 +12,11 @@ export type OwnershipState = {
 	reownRequested?: boolean;
 	storyApproved?: boolean;
 	touchedPaths?: string[];
+	memoryCardPending?: boolean;
+	memoryCardTitle?: string;
+	memoryCardPath?: string;
+	memoryCardWriteRequested?: boolean;
+	memoryCardWriteObserved?: boolean;
 	updatedAt?: string;
 };
 
@@ -21,7 +26,10 @@ type SessionEntry = {
 	data?: Partial<OwnershipState>;
 };
 
+export type OwnershipMemoryReply = { action: "save"; title?: string } | { action: "skip" };
+
 const OWNERSHIP_ENTRY_TYPE = "ownership-loop";
+const OWNERSHIP_CARD_DIR = "docs/ownership/";
 const TRACKED_WRITE_TOOLS = new Set(["edit", "write"]);
 
 function nowIso(): string {
@@ -51,6 +59,11 @@ export function normalizeOwnershipState(data: Partial<OwnershipState> | undefine
 		reownRequested: data?.reownRequested ?? false,
 		storyApproved: data?.storyApproved ?? false,
 		touchedPaths: [...new Set(data?.touchedPaths ?? [])],
+		memoryCardPending: data?.memoryCardPending ?? false,
+		memoryCardTitle: data?.memoryCardTitle,
+		memoryCardPath: data?.memoryCardPath,
+		memoryCardWriteRequested: data?.memoryCardWriteRequested ?? false,
+		memoryCardWriteObserved: data?.memoryCardWriteObserved ?? false,
 		updatedAt: data?.updatedAt,
 	};
 }
@@ -119,6 +132,7 @@ Required output:
 5. What is left — divergences, unproven behavior, manual caveats, or follow-up prompts if needed.
 6. Verification evidence — commands/manual checks actually run and results; distinguish planned-but-not-run proof.
 7. Ownership path — 2–5 files/functions to read in order to re-own the change.
+8. Memory recommendation — say whether this should become a short ownership card. Recommend saving when the change affects recurring workflow, harness behavior, architecture, or a non-obvious decision; recommend skipping tiny/obvious changes. Suggested title: ${subject}. Suggested path: ${buildOwnershipCardPath(subject)}. Tell me I can reply "save it", "skip", or "revise title: <better title>".
 
 Be concise, specific, and evidence-first. Mark uncertainty. This is a review surface, not a victory lap.`;
 }
@@ -132,12 +146,16 @@ export function slugifyOwnershipTitle(title: string): string {
 		.slice(0, 80) || "current-change";
 }
 
+export function buildOwnershipCardPath(title: string): string {
+	return `${OWNERSHIP_CARD_DIR}${slugifyOwnershipTitle(title)}.md`;
+}
+
 export function buildRememberPrompt(title: string | undefined, state?: OwnershipState): string {
-	const subject = title?.trim() || state?.task || "current change";
-	const slug = slugifyOwnershipTitle(subject);
+	const subject = title?.trim() || state?.memoryCardTitle || state?.task || "current change";
+	const path = buildOwnershipCardPath(subject);
 	return `Create an ownership memory card for: ${subject}
 
-Write or update docs/ownership/${slug}.md. Keep it concise and searchable for semantic_search.
+Write or update ${path}. Keep it concise and searchable for semantic_search.
 
 Use the latest Initial Change Story, re-own comparison, git diff, and verification evidence from this conversation. If any source is missing, state that uncertainty in the card.
 
@@ -155,12 +173,31 @@ Required card sections:
 After writing the card, report the file path and one sentence on what semantic_search should now be able to answer.`;
 }
 
+export function parseOwnershipMemoryReply(text: string): OwnershipMemoryReply | undefined {
+	const trimmed = text.trim();
+	if (!trimmed) return undefined;
+
+	const titleMatch = trimmed.match(/^revise\s+title\s*:\s*(.+)$/i);
+	if (titleMatch?.[1]?.trim()) return { action: "save", title: titleMatch[1].trim() };
+
+	const normalized = trimmed.toLowerCase().replace(/[.!]+$/g, "").trim();
+	if (["save it", "save this", "remember it", "remember this", "save card", "create card", "yes save it", "yes, save it"].includes(normalized)) {
+		return { action: "save" };
+	}
+	if (["skip", "skip it", "don't save", "dont save", "do not save", "not now"].includes(normalized)) {
+		return { action: "skip" };
+	}
+	return undefined;
+}
+
 export function buildOwnershipSystemPrompt(mode: OwnershipMode, state: OwnershipState): string {
 	if (mode === "off") return "";
 	const base = [
 		"Ownership loop is active: optimize for the user retaining authorship, not just receiving a finished diff.",
 		"For non-trivial behavior changes, keep a concise change story in view: current flow → intended flow → proof.",
 		"When finishing changed work, explain old flow → new flow, key files/functions, verification evidence, and what remains uncertain.",
+		"After re-owning a non-trivial change, recommend whether to save a short docs/ownership/ card; the user can reply 'save it', 'skip', or 'revise title: ...'.",
+		"For recall questions about prior decisions or harness behavior, search docs/ownership/ first, then inspect code if needed.",
 		"For tiny or docs-only tasks, stay lightweight and avoid ceremony.",
 	];
 
@@ -188,6 +225,9 @@ export function buildOwnershipStatus(state: OwnershipState): string {
 	if (state.touchedPaths?.length) {
 		lines.push("Touched paths:", ...state.touchedPaths.map((path) => `- ${path}`));
 	}
+	if (state.memoryCardPending) {
+		lines.push(`Memory card pending: ${state.memoryCardPath ?? buildOwnershipCardPath(state.memoryCardTitle ?? state.task ?? "current change")}`);
+	}
 	return lines.join("\n");
 }
 
@@ -207,6 +247,26 @@ function extractToolPath(input: unknown): string | undefined {
 
 function deliveryOptions(ctx: ExtensionContext): { deliverAs?: "followUp" } | undefined {
 	return typeof ctx.isIdle === "function" && ctx.isIdle() ? undefined : { deliverAs: "followUp" };
+}
+
+function ownershipCardTitle(title: string | undefined, state: OwnershipState): string {
+	return title?.trim() || state.memoryCardTitle || state.task || "current change";
+}
+
+function withPendingMemoryCard(state: OwnershipState, title: string): OwnershipState {
+	return normalizeOwnershipState({
+		...state,
+		memoryCardPending: true,
+		memoryCardTitle: title,
+		memoryCardPath: buildOwnershipCardPath(title),
+		memoryCardWriteRequested: false,
+		memoryCardWriteObserved: false,
+	});
+}
+
+function isOwnershipCardPath(path: string | undefined): boolean {
+	const normalized = path?.replace(/\\/g, "/").replace(/^\.\//, "");
+	return !!normalized && normalized.startsWith(OWNERSHIP_CARD_DIR) && normalized.endsWith(".md");
 }
 
 export default function (pi: ExtensionAPI) {
@@ -273,6 +333,35 @@ export default function (pi: ExtensionAPI) {
 		currentCtx = ctx;
 	}
 
+	pi.on("input", async (event, ctx) => {
+		syncSession(ctx);
+		if (!state.active || state.mode === "off" || !state.memoryCardPending) return;
+		if (event.source === "extension") return;
+		if (Array.isArray(event.images) && event.images.length > 0) return;
+
+		const reply = parseOwnershipMemoryReply(event.text ?? "");
+		if (!reply) return;
+
+		if (reply.action === "skip") {
+			persist({ ...state, memoryCardPending: false, memoryCardWriteRequested: false, memoryCardWriteObserved: false }, ctx);
+			ctx.ui.notify("Ownership memory card skipped", "info");
+			return { action: "handled" as const };
+		}
+
+		const title = ownershipCardTitle(reply.title, state);
+		const next = normalizeOwnershipState({
+			...state,
+			memoryCardPending: false,
+			memoryCardTitle: title,
+			memoryCardPath: buildOwnershipCardPath(title),
+			memoryCardWriteRequested: true,
+			memoryCardWriteObserved: false,
+		});
+		persist(next, ctx);
+		ctx.ui.notify(`Saving ownership card: ${next.memoryCardPath}`, "info");
+		return { action: "transform" as const, text: buildRememberPrompt(title, next) };
+	});
+
 	pi.on("before_agent_start", async (event, ctx) => {
 		syncSession(ctx);
 		if (state.mode === "off") return;
@@ -295,6 +384,14 @@ export default function (pi: ExtensionAPI) {
 		syncSession(ctx);
 		if (!state.active || state.mode === "off" || !shouldTrackToolCall(event.toolName)) return;
 
+		const path = extractToolPath(event.input);
+		if (state.memoryCardWriteRequested && isOwnershipCardPath(path)) {
+			if (!state.memoryCardWriteObserved || path !== state.memoryCardPath) {
+				persist({ ...state, memoryCardPath: path ?? state.memoryCardPath, memoryCardWriteObserved: true }, ctx);
+			}
+			return;
+		}
+
 		if (shouldBlockStrictWrite(state, event.toolName)) {
 			return {
 				block: true,
@@ -302,7 +399,6 @@ export default function (pi: ExtensionAPI) {
 			};
 		}
 
-		const path = extractToolPath(event.input);
 		const touchedPaths = [...new Set([...(state.touchedPaths ?? []), ...(path ? [path] : [])])];
 		const alreadyTracked = state.changedSinceStory && touchedPaths.length === (state.touchedPaths?.length ?? 0) && !state.reownRequested;
 		if (alreadyTracked) return;
@@ -322,9 +418,33 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("agent_end", async (_event, ctx) => {
 		syncSession(ctx);
-		if (!state.active || state.mode === "off" || !state.changedSinceStory || state.reownRequested) return;
+		if (!state.active || state.mode === "off") return;
 
-		const reownState = { ...state, phase: "reown-requested" as const, reownRequested: true, storyApproved: false };
+		if (state.memoryCardWriteRequested) {
+			const wroteCard = state.memoryCardWriteObserved;
+			persist(
+				{
+					...state,
+					phase: wroteCard ? "idle" : state.phase,
+					changedSinceStory: wroteCard ? false : state.changedSinceStory,
+					reownRequested: wroteCard ? false : state.reownRequested,
+					storyApproved: false,
+					touchedPaths: wroteCard ? [] : state.touchedPaths,
+					memoryCardPending: false,
+					memoryCardWriteRequested: false,
+					memoryCardWriteObserved: false,
+				},
+				ctx,
+			);
+			if (wroteCard) return;
+		}
+
+		if (!state.changedSinceStory || state.reownRequested) return;
+
+		const reownState = withPendingMemoryCard(
+			normalizeOwnershipState({ ...state, phase: "reown-requested", reownRequested: true, storyApproved: false }),
+			ownershipCardTitle(undefined, state),
+		);
 		persist(reownState, ctx);
 		pi.sendUserMessage(buildReownPrompt(undefined, reownState, true), { deliverAs: "followUp" });
 	});
@@ -390,15 +510,18 @@ export default function (pi: ExtensionAPI) {
 		handler: async (args, ctx) => {
 			syncSession(ctx);
 			const scope = args.trim() || state.task || "current change";
-			const next = normalizeOwnershipState({
-				...state,
-				active: true,
-				mode: state.mode === "off" ? "passive" : state.mode,
-				task: state.task ?? scope,
-				phase: "reown-requested",
-				reownRequested: true,
-				storyApproved: false,
-			});
+			const next = withPendingMemoryCard(
+				normalizeOwnershipState({
+					...state,
+					active: true,
+					mode: state.mode === "off" ? "passive" : state.mode,
+					task: state.task ?? scope,
+					phase: "reown-requested",
+					reownRequested: true,
+					storyApproved: false,
+				}),
+				scope,
+			);
 			persist(next, ctx);
 			ctx.ui.notify("Asking agent to re-own the change", "info");
 			pi.sendUserMessage(buildReownPrompt(scope, next), deliveryOptions(ctx));
@@ -409,8 +532,17 @@ export default function (pi: ExtensionAPI) {
 		description: "Draft an ownership memory card under docs/ownership/",
 		handler: async (args, ctx) => {
 			syncSession(ctx);
-			const prompt = buildRememberPrompt(args.trim() || undefined, state);
-			ctx.ui.setEditorText(prompt);
+			const title = ownershipCardTitle(args.trim() || undefined, state);
+			const next = normalizeOwnershipState({
+				...state,
+				memoryCardPending: false,
+				memoryCardTitle: title,
+				memoryCardPath: buildOwnershipCardPath(title),
+				memoryCardWriteRequested: true,
+				memoryCardWriteObserved: false,
+			});
+			persist(next, ctx);
+			ctx.ui.setEditorText(buildRememberPrompt(title, next));
 			ctx.ui.notify("Ownership memory-card prompt written to editor", "info");
 		},
 	});

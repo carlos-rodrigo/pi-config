@@ -66,8 +66,8 @@ pi install ./extensions/worktree-manager
 
 ## Notes
 
-- **ownership-loop** defaults to passive always-live mode: story guidance, edit/write tracking, and re-own follow-ups without blocking.
-- **ownership-loop** + **auto-prompt** work together via session entries — auto-prompt nudges toward `/reown` when changed files need ownership review.
+- **ownership-loop** defaults to passive always-live mode: story guidance, edit/write tracking, re-own follow-ups, and conversational ownership-card memory (`save it` / `skip`).
+- **ownership-loop** + **auto-prompt** work together via session entries — auto-prompt nudges toward `/reown` when changed files need ownership review, then toward `save it` / `skip` when memory is pending.
 - **auto-prompt** + **bordered-editor** work together via `pi.events` — auto-prompt generates suggestions, bordered-editor renders the ghost text.
 - **feature-flow** and **worktree-manager** share the same worktree core but are independent extensions.
 - **agent-jobs** requires Pi to be running inside tmux; it uses detached windows and persists results under `.pi/agent-jobs/`.

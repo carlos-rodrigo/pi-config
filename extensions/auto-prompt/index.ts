@@ -72,6 +72,8 @@ export type OwnershipSuggestionState = {
 	phase?: string;
 	changedSinceStory?: boolean;
 	reownRequested?: boolean;
+	memoryCardPending?: boolean;
+	memoryCardPath?: string;
 };
 
 function extractTextFromContent(content: unknown): string {
@@ -344,6 +346,11 @@ export function extractOwnershipSuggestionState(
 function getOwnershipGuidance(ownershipState?: OwnershipSuggestionState): string {
 	if (!ownershipState?.active || ownershipState.mode === "off") return "";
 	const task = ownershipState.task ? ` for ${ownershipState.task}` : "";
+	if (ownershipState.memoryCardPending) {
+		const path = ownershipState.memoryCardPath ? ` at ${ownershipState.memoryCardPath}` : "";
+		return `
+- Ownership loop active${task}: re-own is done enough to decide memory. Prefer suggesting a conversational reply like "save it" or "skip" for the pending ownership card${path}.`;
+	}
 	if (ownershipState.changedSinceStory && !ownershipState.reownRequested) {
 		return `
 - Ownership loop active${task}: code changed after the ownership story. Prefer suggesting /reown to compare intended story, actual diff, verification evidence, and what is left.`;

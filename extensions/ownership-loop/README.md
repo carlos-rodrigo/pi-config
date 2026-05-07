@@ -27,7 +27,7 @@ Default mode is `passive`: the harness does not block work, but it keeps a chang
 ## Flow
 
 ```text
-Working Story → Patch → Proof → Re-own Story → Ownership Card
+ask → story → patch → proof → re-own → save it/skip → future recall
 ```
 
 For explicit planning:
@@ -47,7 +47,14 @@ The re-own prompt asks for:
 - what is left
 - verification evidence, including planned-but-not-run checks
 - ownership path through the files/functions
+- memory recommendation: save a `docs/ownership/*.md` card or skip it
 
-`/own-remember` turns the re-own story into a durable `docs/ownership/*.md` card so semantic search can answer future “how does this work / why is it this way?” questions.
+After re-own, reply conversationally:
 
-Auto Prompt also reads the ownership state and nudges toward `/reown` when code changed after an ownership story.
+- `save it` — transforms into a prompt that writes/updates the suggested ownership card
+- `skip` — clears the pending memory recommendation
+- `revise title: <better title>` — saves the card with that title
+
+`/own-remember` remains a manual escape hatch for drafting a card. For future recall questions, ownership guidance tells the agent to search `docs/ownership/` first, then inspect code if needed.
+
+Auto Prompt also reads the ownership state and nudges toward `/reown` when code changed after an ownership story, or toward `save it` / `skip` when a memory card is pending.

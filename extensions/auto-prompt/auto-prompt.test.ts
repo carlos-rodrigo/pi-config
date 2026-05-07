@@ -162,6 +162,24 @@ test("buildSuggestionPrompt nudges passive idle ownership toward story-first wor
 	assert.match(prompt, /skip this for tiny tasks/i);
 });
 
+test("buildSuggestionPrompt nudges pending ownership cards toward conversational save or skip", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Re-own this change.\n\nAssistant: Memory recommendation: save it.",
+		"deep",
+		[],
+		[],
+		"shipping",
+		undefined,
+		false,
+		{ active: true, mode: "passive", phase: "reown-requested", memoryCardPending: true, memoryCardPath: "docs/ownership/workflow-modes.md" },
+	);
+
+	assert.match(prompt, /re-own is done enough to decide memory/i);
+	assert.match(prompt, /save it/);
+	assert.match(prompt, /skip/);
+	assert.match(prompt, /docs\/ownership\/workflow-modes\.md/);
+});
+
 test("extractOwnershipSuggestionState returns latest ownership-loop entry", () => {
 	const state = extractOwnershipSuggestionState([
 		{ type: "custom", customType: "ownership-loop", data: { active: true, task: "old" } },

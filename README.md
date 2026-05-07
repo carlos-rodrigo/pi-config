@@ -96,8 +96,9 @@ Sub-agent definitions used by the subagent and agent-jobs extensions:
 - `/own-mode passive | strict | off` — Configure always-live ownership behavior (default: passive).
 - `/own <task>` — Create an approval-gated Initial Change Story before implementation.
 - `/own-approve` — Mark the story approved; required before edits in strict mode.
-- `/reown [scope]` — Compare the Initial Change Story to the actual diff and verification evidence.
-- `/own-remember [title]` — Draft a `docs/ownership/` memory card for semantic search.
+- `/reown [scope]` — Compare the Initial Change Story to the actual diff and verification evidence, then recommend whether to save an ownership card.
+- Reply `save it`, `skip`, or `revise title: <title>` after re-own to handle the pending `docs/ownership/` memory card conversationally.
+- `/own-remember [title]` — Manual escape hatch to draft a `docs/ownership/` memory card for semantic search.
 - `/own-status` — Show current ownership-loop state.
 - `/own-off` — Disable the loop for the session.
 
@@ -122,11 +123,11 @@ Workflow prompt templates:
 Use the oracle to review the auth logic in src/auth/. I want to make sure there are no edge cases.
 Use the researcher agent to investigate how Next.js App Router handles parallel routes.
 
-# Ownership loop commands
+# Ownership loop
 /own-mode passive
 /own Change workflow modes so all deep levels are visible and keyboard-switchable
 /reown workflow modes
-/own-remember workflow modes
+save it
 
 # Via prompt templates
 /oracle Is there a better way to handle the state machine in src/parser.ts?
