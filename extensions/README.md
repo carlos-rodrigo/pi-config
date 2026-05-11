@@ -29,6 +29,7 @@ pi install ./extensions/file-opener
 pi install ./extensions/git-blame
 pi install ./extensions/lazygit
 pi install ./extensions/ownership-loop
+pi install ./extensions/prompt-queue
 pi install ./extensions/review-mode
 pi install ./extensions/semantic-search
 pi install ./extensions/session-query
@@ -55,6 +56,7 @@ pi install ./extensions/worktree-manager
 | [git-blame](git-blame/) | Interactive git blame overlay |
 | [lazygit](lazygit/) | LazyGit launcher via tmux |
 | [ownership-loop](ownership-loop/) | Always-live story-driven ownership, `/own`, `/reown`, and ownership cards |
+| [prompt-queue](prompt-queue/) | Interactive queue palette for staging prompts, pasting them into the editor, or running them serially |
 | [review-mode](review-mode/) | Overlay review workbench for local/staged/unstaged/outgoing diffs with colorized preview, hunk/file/all scopes, same-session questions, and saved review notes |
 | [semantic-search](semantic-search/) | Local Ollama-backed hybrid code index, semantic search tool, and repo concept map |
 | [session-query](session-query/) | Query previous Pi session files for context and decisions |
