@@ -11,6 +11,7 @@ import ownershipLoopExtension, {
 	normalizeOwnershipMode,
 	normalizeOwnershipState,
 	parseOwnershipMemoryReply,
+	parseReownArgs,
 	restoreOwnershipState,
 	shouldBlockStrictWrite,
 	shouldTrackToolCall,
@@ -110,7 +111,7 @@ test("buildOwnPrompt creates an approval-gated initial story prompt", () => {
 	assert.match(prompt, /Do not implement until I approve/i);
 });
 
-test("buildReownPrompt compares story to diff and verification evidence", () => {
+test("buildReownPrompt compares story to diff without asking for card decisions", () => {
 	const prompt = buildReownPrompt("workflow modes", {
 		active: true,
 		mode: "passive",
@@ -126,10 +127,22 @@ test("buildReownPrompt compares story to diff and verification evidence", () => 
 	assert.match(prompt, /Story comparison/i);
 	assert.match(prompt, /planned-but-not-run/i);
 	assert.match(prompt, /Ownership path/i);
-	assert.match(prompt, /Memory recommendation/i);
-	assert.match(prompt, /docs\/ownership\/workflow-modes\.md/);
-	assert.match(prompt, /save it/);
+	assert.match(prompt, /\/reown --remember/i);
+	assert.doesNotMatch(prompt, /Memory recommendation/i);
+	assert.doesNotMatch(prompt, /save it/i);
 	assert.match(prompt, /extensions\/workflow-modes\/index\.ts/);
+});
+
+test("buildReownPrompt --remember includes card write instructions", () => {
+	const prompt = buildReownPrompt("workflow modes", normalizeOwnershipState({ task: "workflow modes" }), {
+		remember: true,
+		memoryTitle: "Workflow Modes Memory",
+	});
+
+	assert.match(prompt, /write or update docs\/ownership\/workflow-modes-memory\.md/i);
+	assert.match(prompt, /Ownership Card: Workflow Modes Memory/);
+	assert.match(prompt, /semantic_search/i);
+	assert.match(prompt, /Do not ask whether to save a card/i);
 });
 
 test("ownership system prompt makes passive mode always-live without blocking", () => {
@@ -137,7 +150,8 @@ test("ownership system prompt makes passive mode always-live without blocking", 
 
 	assert.match(prompt, /Ownership loop is active/i);
 	assert.match(prompt, /current flow → intended flow → proof/i);
-	assert.match(prompt, /docs\/ownership\//i);
+	assert.match(prompt, /normal task finishes, stay lightweight/i);
+	assert.match(prompt, /\/reown --remember/i);
 	assert.match(prompt, /search docs\/ownership\/ first/i);
 	assert.match(prompt, /Passive mode: do not block execution/i);
 });
@@ -152,12 +166,23 @@ test("ownership memory card prompt targets docs/ownership", () => {
 	assert.match(prompt, /How to explain it back/i);
 });
 
-test("parseOwnershipMemoryReply handles conversational memory decisions", () => {
+test("parseOwnershipMemoryReply handles legacy conversational memory decisions", () => {
 	assert.deepEqual(parseOwnershipMemoryReply("save it"), { action: "save" });
 	assert.deepEqual(parseOwnershipMemoryReply("remember this."), { action: "save" });
 	assert.deepEqual(parseOwnershipMemoryReply("revise title: Workflow Modes"), { action: "save", title: "Workflow Modes" });
 	assert.deepEqual(parseOwnershipMemoryReply("skip"), { action: "skip" });
 	assert.equal(parseOwnershipMemoryReply("what changed?"), undefined);
+});
+
+test("parseReownArgs supports explicit remember flags and titles", () => {
+	assert.deepEqual(parseReownArgs(""), { remember: false, scope: undefined, title: undefined });
+	assert.deepEqual(parseReownArgs("workflow modes --remember"), { remember: true, scope: "workflow modes", title: undefined });
+	assert.deepEqual(parseReownArgs("- remember workflow modes title: Quiet ownership memory"), {
+		remember: true,
+		scope: "workflow modes",
+		title: "Quiet ownership memory",
+	});
+	assert.deepEqual(parseReownArgs("remember title: Ownership Loop"), { remember: true, scope: undefined, title: "Ownership Loop" });
 });
 
 test("restoreOwnershipState reads latest ownership-loop session entry", () => {
@@ -182,12 +207,12 @@ test("ownership commands start, approve, report, and stop session state", async 
 	assert.equal(harness.appended.at(-1)?.data.task, "change workflow modes");
 	assert.equal(harness.appended.at(-1)?.data.phase, "story-requested");
 	assert.match(harness.sentUserMessages.at(-1)?.content ?? "", /Initial Change Story/i);
-	assert.match(harness.statuses.at(-1)?.value ?? "", /own: story/i);
+	assert.equal(harness.statuses.at(-1)?.value, undefined);
 
 	await harness.commands.get("own-approve")?.handler("", harness.ctx as any);
 	assert.equal(harness.appended.at(-1)?.data.phase, "story-approved");
 	assert.equal(harness.appended.at(-1)?.data.storyApproved, true);
-	assert.match(harness.statuses.at(-1)?.value ?? "", /own: approved/i);
+	assert.equal(harness.statuses.at(-1)?.value, undefined);
 
 	await harness.commands.get("own-status")?.handler("", harness.ctx as any);
 	assert.match(harness.getEditorText(), /Ownership loop: story-approved/i);
@@ -198,7 +223,7 @@ test("ownership commands start, approve, report, and stop session state", async 
 	assert.equal(harness.statuses.at(-1)?.value, undefined);
 });
 
-test("passive ownership queues re-own prompt after tracked edits even without /own", async () => {
+test("passive ownership tracks edits silently without composer status or follow-up", async () => {
 	const harness = createHarness();
 	ownershipLoopExtension(harness.pi as any);
 
@@ -207,18 +232,16 @@ test("passive ownership queues re-own prompt after tracked edits even without /o
 	assert.equal(harness.appended.at(-1)?.data.mode, "passive");
 	assert.equal(harness.appended.at(-1)?.data.phase, "changes-detected");
 	assert.equal(harness.appended.at(-1)?.data.changedSinceStory, true);
+	assert.equal(harness.statuses.at(-1)?.value, undefined);
+	const messageCount = harness.sentUserMessages.length;
 
 	await harness.eventHandlers.get("agent_end")?.({}, harness.ctx as any);
 
-	assert.equal(harness.appended.at(-1)?.data.phase, "reown-requested");
-	assert.equal(harness.appended.at(-1)?.data.reownRequested, true);
-	assert.equal(harness.appended.at(-1)?.data.memoryCardPending, true);
-	assert.match(harness.sentUserMessages.at(-1)?.content ?? "", /re-own the completed change/i);
-	assert.match(harness.sentUserMessages.at(-1)?.content ?? "", /If there was no Initial Change Story/i);
-	assert.match(harness.sentUserMessages.at(-1)?.content ?? "", /save it/);
+	assert.equal(harness.appended.at(-1)?.data.phase, "changes-detected");
+	assert.equal(harness.sentUserMessages.length, messageCount);
 });
 
-test("manual /reown prevents duplicate automatic re-own prompt until another edit", async () => {
+test("manual /reown sends only the re-own prompt and clears status after the turn", async () => {
 	const harness = createHarness();
 	ownershipLoopExtension(harness.pi as any);
 
@@ -226,47 +249,45 @@ test("manual /reown prevents duplicate automatic re-own prompt until another edi
 	await harness.commands.get("reown")?.handler("workflow modes", harness.ctx as any);
 	const messageCountAfterCommand = harness.sentUserMessages.length;
 
+	assert.equal(harness.appended.at(-1)?.data.phase, "reown-requested");
+	assert.equal(harness.appended.at(-1)?.data.memoryCardPending, false);
+	assert.equal(harness.appended.at(-1)?.data.memoryCardWriteRequested, false);
+	assert.match(harness.sentUserMessages.at(-1)?.content ?? "", /re-own the completed change/i);
+	assert.doesNotMatch(harness.sentUserMessages.at(-1)?.content ?? "", /save it/i);
+	assert.ok(harness.commands.has("re-own"));
+
 	await harness.eventHandlers.get("agent_end")?.({}, harness.ctx as any);
 	assert.equal(harness.sentUserMessages.length, messageCountAfterCommand);
+	assert.equal(harness.appended.at(-1)?.data.phase, "idle");
+	assert.equal(harness.appended.at(-1)?.data.changedSinceStory, false);
 });
 
-test("pending memory card can be saved conversationally without a slash command", async () => {
+test("plain /reown does not enable conversational save-or-skip interception", async () => {
 	const harness = createHarness();
 	ownershipLoopExtension(harness.pi as any);
 
 	await harness.commands.get("reown")?.handler("Workflow Modes", harness.ctx as any);
-	assert.equal(harness.appended.at(-1)?.data.memoryCardPending, true);
+	assert.equal(harness.appended.at(-1)?.data.memoryCardPending, false);
 
 	const result = await harness.eventHandlers.get("input")?.({ text: "save it", source: "interactive", images: [] }, harness.ctx as any) as any;
 
-	assert.equal(result.action, "transform");
-	assert.match(result.text, /Create an ownership memory card for: Workflow Modes/);
-	assert.match(result.text, /docs\/ownership\/workflow-modes\.md/);
-	assert.equal(harness.appended.at(-1)?.data.memoryCardPending, false);
-	assert.equal(harness.appended.at(-1)?.data.memoryCardWriteRequested, true);
+	assert.equal(result, undefined);
 });
 
-test("pending memory card can be skipped conversationally", async () => {
+test("/reown --remember asks the agent to re-own and write a card in the same turn", async () => {
 	const harness = createHarness();
 	ownershipLoopExtension(harness.pi as any);
 
-	await harness.commands.get("reown")?.handler("Workflow Modes", harness.ctx as any);
-	const result = await harness.eventHandlers.get("input")?.({ text: "skip", source: "interactive", images: [] }, harness.ctx as any) as any;
-
-	assert.equal(result.action, "handled");
-	assert.equal(harness.appended.at(-1)?.data.memoryCardPending, false);
-	assert.match(harness.notifications.at(-1)?.message ?? "", /skipped/i);
-});
-
-test("ownership card writes do not trigger another automatic re-own", async () => {
-	const harness = createHarness();
-	ownershipLoopExtension(harness.pi as any);
-
-	await harness.commands.get("reown")?.handler("Workflow Modes", harness.ctx as any);
-	await harness.eventHandlers.get("input")?.({ text: "save it", source: "interactive", images: [] }, harness.ctx as any);
+	await harness.commands.get("reown")?.handler("--remember Workflow Modes title: Workflow Ownership", harness.ctx as any);
 	const messageCount = harness.sentUserMessages.length;
 
-	await harness.eventHandlers.get("tool_call")?.({ toolName: "write", input: { path: "docs/ownership/workflow-modes.md" } }, harness.ctx as any);
+	assert.equal(harness.appended.at(-1)?.data.memoryCardPending, false);
+	assert.equal(harness.appended.at(-1)?.data.memoryCardWriteRequested, true);
+	assert.equal(harness.appended.at(-1)?.data.memoryCardPath, "docs/ownership/workflow-ownership.md");
+	assert.match(harness.sentUserMessages.at(-1)?.content ?? "", /write or update docs\/ownership\/workflow-ownership\.md/i);
+	assert.match(harness.sentUserMessages.at(-1)?.content ?? "", /Ownership Card: Workflow Ownership/);
+
+	await harness.eventHandlers.get("tool_call")?.({ toolName: "write", input: { path: "docs/ownership/workflow-ownership.md" } }, harness.ctx as any);
 	assert.equal(harness.appended.at(-1)?.data.memoryCardWriteObserved, true);
 
 	await harness.eventHandlers.get("agent_end")?.({}, harness.ctx as any);
@@ -275,13 +296,12 @@ test("ownership card writes do not trigger another automatic re-own", async () =
 	assert.equal(harness.appended.at(-1)?.data.changedSinceStory, false);
 });
 
-test("ownership card writes are allowed in strict mode after conversational save", async () => {
+test("ownership card writes are allowed in strict mode after /reown --remember", async () => {
 	const harness = createHarness();
 	ownershipLoopExtension(harness.pi as any);
 
 	await harness.commands.get("own-mode")?.handler("strict", harness.ctx as any);
-	await harness.commands.get("reown")?.handler("Workflow Modes", harness.ctx as any);
-	await harness.eventHandlers.get("input")?.({ text: "save it", source: "interactive", images: [] }, harness.ctx as any);
+	await harness.commands.get("reown")?.handler("Workflow Modes --remember", harness.ctx as any);
 
 	const allowed = await harness.eventHandlers.get("tool_call")?.({ toolName: "write", input: { path: "docs/ownership/workflow-modes.md" } }, harness.ctx as any);
 	assert.equal(allowed, undefined);

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { formatWorkflowModeLabel, getWorkflowModeColor, pickPrimaryExtensionStatus } from "./index.ts";
+import { formatBackgroundJobIndicator, formatWorkflowModeLabel, getWorkflowModeColor, pickPrimaryExtensionStatus } from "./index.ts";
 
 test("pickPrimaryExtensionStatus prefers active auto-prompt status over ambient statuses", () => {
 	const statuses = new Map<string, string>([
@@ -44,4 +44,10 @@ test("getWorkflowModeColor colors deep levels as deep mode", () => {
 	assert.equal(getWorkflowModeColor("Deep²"), "error");
 	assert.equal(getWorkflowModeColor("Deep³"), "error");
 	assert.equal(getWorkflowModeColor("Fast"), "warning");
+});
+
+test("formatBackgroundJobIndicator only appears for running jobs", () => {
+	assert.equal(formatBackgroundJobIndicator(0), null);
+	assert.equal(formatBackgroundJobIndicator(1), "1 bg job");
+	assert.equal(formatBackgroundJobIndicator(2), "2 bg jobs");
 });

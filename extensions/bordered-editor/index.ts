@@ -62,6 +62,11 @@ export function getWorkflowModeColor(label: string | null | undefined): Workflow
 	return "success";
 }
 
+export function formatBackgroundJobIndicator(count: number): string | null {
+	if (!Number.isFinite(count) || count <= 0) return null;
+	return count === 1 ? "1 bg job" : `${count} bg jobs`;
+}
+
 interface WorktreeEntry {
 	path: string;
 	branch?: string;
@@ -151,6 +156,7 @@ class BorderedEditor extends CustomEditor {
 	private getWorktreeInfo: () => string | null = () => null;
 	private getThinkingLevel: () => string = () => "off";
 	private getExtensionStatus: () => string | null = () => null;
+	private backgroundJobCount = 0;
 
 	// --- Mode label state ---
 	private modeLabel: string | null = null;
@@ -183,6 +189,10 @@ class BorderedEditor extends CustomEditor {
 			this.modeColor = getWorkflowModeColor(this.modeLabel);
 			this.borderColor = (s: string) => this.ctx!.ui.theme.fg(this.modeColor, s);
 		}
+	}
+
+	setBackgroundJobCount(count: number): void {
+		this.backgroundJobCount = Math.max(0, Math.floor(count));
 	}
 
 	setGhostText(text: string | null): void {
@@ -304,7 +314,9 @@ class BorderedEditor extends CustomEditor {
 				: this.ctx.cwd;
 			const branch = this.getGitBranch();
 			const worktreeInfo = this.getWorktreeInfo();
-			bottomRight = theme.fg("muted", cwd);
+			const jobIndicator = formatBackgroundJobIndicator(this.backgroundJobCount);
+			bottomRight = jobIndicator ? theme.fg("warning", jobIndicator) + theme.fg("dim", " · ") : "";
+			bottomRight += theme.fg("muted", cwd);
 			if (worktreeInfo) {
 				bottomRight += theme.fg("dim", " ") + theme.fg("thinkingHigh", `[WT ${worktreeInfo}]`);
 			} else if (branch) {
@@ -393,6 +405,7 @@ class BorderedEditor extends CustomEditor {
 export default function (pi: ExtensionAPI) {
 	let editorInstance: BorderedEditor | undefined;
 	let requestRender: (() => void) | undefined;
+	let backgroundJobCount = 0;
 
 	// --- Agent mode events ---
 
@@ -400,6 +413,17 @@ export default function (pi: ExtensionAPI) {
 		const { mode, label } = data as { mode?: string; label?: string };
 		if (editorInstance) {
 			editorInstance.setModeLabel(label ?? mode ?? null);
+			requestRender?.();
+		}
+	});
+
+	// --- Background job count events ---
+
+	pi.events.on("agent-jobs:running-count", (data) => {
+		const { count } = data as { count?: number };
+		backgroundJobCount = count ?? 0;
+		if (editorInstance) {
+			editorInstance.setBackgroundJobCount(backgroundJobCount);
 			requestRender?.();
 		}
 	});
@@ -456,6 +480,7 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.setEditorComponent((tui, theme, kb) => {
 			requestRender = () => tui.requestRender();
 			const editor = new BorderedEditor(tui, theme, kb, { paddingX: PADDING_X });
+			editor.setBackgroundJobCount(backgroundJobCount);
 			editor.setDataProviders(
 				ctx,
 				() => gitBranch,

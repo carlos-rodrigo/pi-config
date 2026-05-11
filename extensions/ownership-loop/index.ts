@@ -27,6 +27,16 @@ type SessionEntry = {
 };
 
 export type OwnershipMemoryReply = { action: "save"; title?: string } | { action: "skip" };
+export type ReownCommandOptions = {
+	scope?: string;
+	remember: boolean;
+	title?: string;
+};
+export type ReownPromptOptions = {
+	automatic?: boolean;
+	remember?: boolean;
+	memoryTitle?: string;
+};
 
 const OWNERSHIP_ENTRY_TYPE = "ownership-loop";
 const OWNERSHIP_CARD_DIR = "docs/ownership/";
@@ -87,6 +97,44 @@ export function normalizeOwnershipMode(raw: string | undefined): OwnershipMode |
 	return undefined;
 }
 
+function stripWrappedQuotes(value: string): string {
+	return value.replace(/^(["'])(.*)\1$/, "$2").trim();
+}
+
+export function parseReownArgs(rawArgs: string): ReownCommandOptions {
+	let remember = false;
+	let titleFromFlag: string | undefined;
+	let text = rawArgs.trim();
+
+	text = text.replace(/(^|\s)--remember(?:=([^\s]+))?/gi, (_match, _prefix, rawTitle?: string) => {
+		remember = true;
+		if (rawTitle && !titleFromFlag) titleFromFlag = stripWrappedQuotes(rawTitle);
+		return " ";
+	});
+	text = text.replace(/(^|\s)-\s*remember\b/gi, () => {
+		remember = true;
+		return " ";
+	});
+	if (/^remember\b/i.test(text.trim())) {
+		remember = true;
+		text = text.trim().replace(/^remember\b/i, "");
+	}
+
+	let title = titleFromFlag;
+	const titleMatch = text.match(/\btitle\s*:\s*(.+)$/i);
+	if (titleMatch?.[1]?.trim()) {
+		title = titleMatch[1].trim();
+		text = text.slice(0, titleMatch.index).trim();
+	}
+
+	const scope = text.replace(/\s+/g, " ").trim() || undefined;
+	return { remember, scope, title };
+}
+
+function normalizeReownPromptOptions(options: boolean | ReownPromptOptions | undefined): ReownPromptOptions {
+	return typeof options === "boolean" ? { automatic: options } : (options ?? {});
+}
+
 export function buildOwnPrompt(task: string): string {
 	return `Help me own this change before implementation: ${task}
 
@@ -108,18 +156,30 @@ Required output:
 Stop after the story. Do not implement until I approve.`;
 }
 
-export function buildReownPrompt(scope: string | undefined, state?: OwnershipState, automatic = false): string {
+export function buildReownPrompt(scope: string | undefined, state?: OwnershipState, options: boolean | ReownPromptOptions = false): string {
+	const { automatic = false, remember = false, memoryTitle } = normalizeReownPromptOptions(options);
 	const subject = scope?.trim() || state?.task || "the current change";
+	const memorySubject = memoryTitle?.trim() || subject;
+	const memoryPath = buildOwnershipCardPath(memorySubject);
 	const automaticContext = automatic
-		? "\n\nOwnership loop detected code changes. Re-own the result before continuing. If there was no Initial Change Story, reconstruct the intended story from the task and diff."
+		? "\n\nOwnership loop detected code changes. Re-own the result if useful. If there was no Initial Change Story, reconstruct the intended story from the task and diff."
 		: "";
 	const touched = state?.touchedPaths?.length
 		? `\n\nKnown touched paths from the ownership loop:\n${state.touchedPaths.map((path) => `- ${path}`).join("\n")}`
 		: "";
+	const editBoundary = remember
+		? `Do not edit implementation files. You may write or update only the ownership card at ${memoryPath}.`
+		: "Do not edit files.";
+	const memoryOutput = remember
+		? `\n8. Memory card — after writing ${memoryPath}, report the path and one sentence on what semantic_search should now be able to answer.`
+		: "";
+	const memoryInstruction = remember
+		? `\n\nMemory action requested: after the re-own analysis, write or update ${memoryPath}. Keep it concise and searchable for semantic_search. Use these card sections:\n\n# Ownership Card: ${memorySubject}\n\n## Why this changed\n## System story now\n## Key files / functions\n## Verification evidence\n## How to explain it back\n## Open questions / caveats\n\nDo not ask whether to save a card; writing it is part of this request.`
+		: "\n\nDo not ask whether to save an ownership card. If I want searchable memory, I will run /reown --remember.";
 
 	return `Help me re-own the completed change for: ${subject}${automaticContext}${touched}
 
-Do not edit files unless I explicitly ask. Inspect the actual git status/diff and relevant files. Find the latest "Initial Change Story" in this conversation; if none exists, say so and reconstruct the intended story from the task and diff.
+${editBoundary} Inspect the actual git status/diff and relevant files. Find the latest "Initial Change Story" in this conversation; if none exists, say so and reconstruct the intended story from the task and diff.
 
 Compare the intended story against the actual implementation.
 
@@ -131,8 +191,7 @@ Required output:
 4. Story comparison — Intended / Actual / Match? / Notes.
 5. What is left — divergences, unproven behavior, manual caveats, or follow-up prompts if needed.
 6. Verification evidence — commands/manual checks actually run and results; distinguish planned-but-not-run proof.
-7. Ownership path — 2–5 files/functions to read in order to re-own the change.
-8. Memory recommendation — say whether this should become a short ownership card. Recommend saving when the change affects recurring workflow, harness behavior, architecture, or a non-obvious decision; recommend skipping tiny/obvious changes. Suggested title: ${subject}. Suggested path: ${buildOwnershipCardPath(subject)}. Tell me I can reply "save it", "skip", or "revise title: <better title>".
+7. Ownership path — 2–5 files/functions to read in order to re-own the change.${memoryOutput}${memoryInstruction}
 
 Be concise, specific, and evidence-first. Mark uncertainty. This is a review surface, not a victory lap.`;
 }
@@ -195,8 +254,8 @@ export function buildOwnershipSystemPrompt(mode: OwnershipMode, state: Ownership
 	const base = [
 		"Ownership loop is active: optimize for the user retaining authorship, not just receiving a finished diff.",
 		"For non-trivial behavior changes, keep a concise change story in view: current flow → intended flow → proof.",
-		"When finishing changed work, explain old flow → new flow, key files/functions, verification evidence, and what remains uncertain.",
-		"After re-owning a non-trivial change, recommend whether to save a short docs/ownership/ card; the user can reply 'save it', 'skip', or 'revise title: ...'.",
+		"For normal task finishes, stay lightweight: summarize changed paths, verification evidence, and uncertainty; do not produce a full re-own report unless asked.",
+		"Use /reown when the user asks to explain or compare the completed work; use /reown --remember when the user asks to also save searchable docs/ownership/ memory.",
 		"For recall questions about prior decisions or harness behavior, search docs/ownership/ first, then inspect code if needed.",
 		"For tiny or docs-only tasks, stay lightweight and avoid ceremony.",
 	];
@@ -253,17 +312,6 @@ function ownershipCardTitle(title: string | undefined, state: OwnershipState): s
 	return title?.trim() || state.memoryCardTitle || state.task || "current change";
 }
 
-function withPendingMemoryCard(state: OwnershipState, title: string): OwnershipState {
-	return normalizeOwnershipState({
-		...state,
-		memoryCardPending: true,
-		memoryCardTitle: title,
-		memoryCardPath: buildOwnershipCardPath(title),
-		memoryCardWriteRequested: false,
-		memoryCardWriteObserved: false,
-	});
-}
-
 function isOwnershipCardPath(path: string | undefined): boolean {
 	const normalized = path?.replace(/\\/g, "/").replace(/^\.\//, "");
 	return !!normalized && normalized.startsWith(OWNERSHIP_CARD_DIR) && normalized.endsWith(".md");
@@ -274,25 +322,10 @@ export default function (pi: ExtensionAPI) {
 	let lastSessionId: string | undefined;
 	let currentCtx: ExtensionContext | undefined;
 
-	function statusText(ctx: ExtensionContext, text: string, color: "success" | "warning" | "error" = "warning"): string {
-		return ctx.ui.theme.fg(color, text);
-	}
-
 	function updateStatus(ctx: ExtensionContext): void {
-		if (!state.active || state.phase === "idle") {
-			ctx.ui.setStatus("ownership-loop", undefined);
-			return;
-		}
-		const color = state.phase === "changes-detected" ? "error" : state.phase === "reown-requested" || state.phase === "story-approved" ? "success" : "warning";
-		const label =
-			state.phase === "story-requested"
-				? "own: story"
-				: state.phase === "story-approved"
-					? "own: approved"
-					: state.phase === "changes-detected"
-						? "own: reown needed"
-						: "own: reown queued";
-		ctx.ui.setStatus("ownership-loop", statusText(ctx, label, color));
+		// Ownership should stay out of the composer/status bar; commands such as
+		// /own-status remain available when the user explicitly wants state.
+		ctx.ui.setStatus("ownership-loop", undefined);
 	}
 
 	function persist(next: OwnershipState, ctx?: ExtensionContext): void {
@@ -439,14 +472,25 @@ export default function (pi: ExtensionAPI) {
 			if (wroteCard) return;
 		}
 
-		if (!state.changedSinceStory || state.reownRequested) return;
+		if (state.reownRequested) {
+			persist(
+				{
+					...state,
+					phase: "idle",
+					changedSinceStory: false,
+					reownRequested: false,
+					storyApproved: false,
+					touchedPaths: [],
+					memoryCardPending: false,
+				},
+				ctx,
+			);
+			return;
+		}
 
-		const reownState = withPendingMemoryCard(
-			normalizeOwnershipState({ ...state, phase: "reown-requested", reownRequested: true, storyApproved: false }),
-			ownershipCardTitle(undefined, state),
-		);
-		persist(reownState, ctx);
-		pi.sendUserMessage(buildReownPrompt(undefined, reownState, true), { deliverAs: "followUp" });
+		// Passive mode is intentionally quiet: changed files are tracked for
+		// explicit /reown without injecting follow-ups or composer status.
+		if (!state.changedSinceStory) return;
 	});
 
 	pi.registerCommand("own", {
@@ -505,27 +549,38 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	async function handleReownCommand(args: string, ctx: ExtensionContext): Promise<void> {
+		syncSession(ctx);
+		const parsed = parseReownArgs(args);
+		const scope = parsed.scope || state.task || "current change";
+		const memoryTitle = parsed.title?.trim() || scope;
+		const next = normalizeOwnershipState({
+			...state,
+			active: true,
+			mode: state.mode === "off" ? "passive" : state.mode,
+			task: state.task ?? scope,
+			phase: "reown-requested",
+			reownRequested: true,
+			storyApproved: false,
+			memoryCardPending: false,
+			memoryCardTitle: parsed.remember ? memoryTitle : state.memoryCardTitle,
+			memoryCardPath: parsed.remember ? buildOwnershipCardPath(memoryTitle) : state.memoryCardPath,
+			memoryCardWriteRequested: parsed.remember,
+			memoryCardWriteObserved: false,
+		});
+		persist(next, ctx);
+		ctx.ui.notify(parsed.remember ? `Asking agent to re-own and remember: ${next.memoryCardPath}` : "Asking agent to re-own the change", "info");
+		pi.sendUserMessage(buildReownPrompt(scope, next, { remember: parsed.remember, memoryTitle }), deliveryOptions(ctx));
+	}
+
 	pi.registerCommand("reown", {
-		description: "Compare the Initial Change Story to the actual diff",
-		handler: async (args, ctx) => {
-			syncSession(ctx);
-			const scope = args.trim() || state.task || "current change";
-			const next = withPendingMemoryCard(
-				normalizeOwnershipState({
-					...state,
-					active: true,
-					mode: state.mode === "off" ? "passive" : state.mode,
-					task: state.task ?? scope,
-					phase: "reown-requested",
-					reownRequested: true,
-					storyApproved: false,
-				}),
-				scope,
-			);
-			persist(next, ctx);
-			ctx.ui.notify("Asking agent to re-own the change", "info");
-			pi.sendUserMessage(buildReownPrompt(scope, next), deliveryOptions(ctx));
-		},
+		description: "Compare the Initial Change Story to the actual diff; add --remember to write an ownership card",
+		handler: handleReownCommand,
+	});
+
+	pi.registerCommand("re-own", {
+		description: "Alias for /reown; add --remember to write an ownership card",
+		handler: handleReownCommand,
 	});
 
 	pi.registerCommand("own-remember", {

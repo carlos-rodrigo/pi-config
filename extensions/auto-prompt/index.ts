@@ -60,6 +60,8 @@ let pendingController: AbortController | null = null;
 let currentCtx: ExtensionContext | undefined;
 let configuredModel: ModelSelection = { ...PRIMARY_MODEL };
 let statusClearTimer: ReturnType<typeof setTimeout> | null = null;
+let activeGeneration = 0;
+const pendingSuggestionTimers = new Set<ReturnType<typeof setTimeout>>();
 
 // --- Helpers ---
 
@@ -349,11 +351,11 @@ function getOwnershipGuidance(ownershipState?: OwnershipSuggestionState): string
 	if (ownershipState.memoryCardPending) {
 		const path = ownershipState.memoryCardPath ? ` at ${ownershipState.memoryCardPath}` : "";
 		return `
-- Ownership loop active${task}: re-own is done enough to decide memory. Prefer suggesting a conversational reply like "save it" or "skip" for the pending ownership card${path}.`;
+- Ownership loop active${task}: legacy memory-card state exists${path}; do not suggest conversational save/skip. If searchable memory is explicitly wanted, suggest /reown --remember or /own-remember.`;
 	}
 	if (ownershipState.changedSinceStory && !ownershipState.reownRequested) {
 		return `
-- Ownership loop active${task}: code changed after the ownership story. Prefer suggesting /reown to compare intended story, actual diff, verification evidence, and what is left.`;
+- Ownership loop active${task}: code changed and re-own is available. Mention /reown only when the user wants to explain/compare the work, or /reown --remember when they want searchable memory; do not force it as the next step.`;
 	}
 	if (ownershipState.phase === "story-requested") {
 		return `
@@ -676,6 +678,29 @@ function ensureCompletionSucceeded(response: { stopReason: string; errorMessage?
 	}
 }
 
+function isStaleExtensionContextError(err: unknown): boolean {
+	return err instanceof Error && /extension ctx is stale/i.test(err.message);
+}
+
+function safeHasUI(ctx: ExtensionContext): boolean {
+	try {
+		return ctx.hasUI;
+	} catch (err) {
+		if (isStaleExtensionContextError(err)) return false;
+		throw err;
+	}
+}
+
+function safeSetAutoPromptStatus(ctx: ExtensionContext, text: string | undefined): boolean {
+	try {
+		ctx.ui.setStatus("auto-prompt", text);
+		return true;
+	} catch (err) {
+		if (isStaleExtensionContextError(err)) return false;
+		throw err;
+	}
+}
+
 function clearAutoPromptTransientStatus(): void {
 	if (statusClearTimer) {
 		clearTimeout(statusClearTimer);
@@ -685,17 +710,17 @@ function clearAutoPromptTransientStatus(): void {
 
 function setAutoPromptStatus(ctx: ExtensionContext, text: string | undefined): void {
 	clearAutoPromptTransientStatus();
-	ctx.ui.setStatus("auto-prompt", text);
+	safeSetAutoPromptStatus(ctx, text);
 }
 
 function showTransientAutoPromptStatus(ctx: ExtensionContext, text: string, durationMs = 2500): void {
 	clearAutoPromptTransientStatus();
-	ctx.ui.setStatus("auto-prompt", text);
+	if (!safeSetAutoPromptStatus(ctx, text)) return;
 	const timer = setTimeout(() => {
 		if (statusClearTimer === timer) {
 			statusClearTimer = null;
 		}
-		ctx.ui.setStatus("auto-prompt", undefined);
+		safeSetAutoPromptStatus(ctx, undefined);
 	}, durationMs);
 	statusClearTimer = timer;
 }
@@ -772,8 +797,8 @@ function cancelPending(): void {
 	}
 }
 
-async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-	if (!enabled || !ctx.hasUI) return;
+async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext, generation = activeGeneration): Promise<void> {
+	if (generation !== activeGeneration || !enabled || !safeHasUI(ctx)) return;
 
 	cancelPending();
 
@@ -892,13 +917,18 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 		pi.events.emit("auto-prompt:suggest", { text: suggestion });
 	} catch (err: unknown) {
 		if (err instanceof Error && err.name === "AbortError") return;
+		if (isStaleExtensionContextError(err)) return;
 		if (stopLoading) {
 			stopLoading();
 			stopLoading = null;
 		}
 		const shortReason = formatAutoPromptError(err);
 		showTransientAutoPromptStatus(ctx, "Auto Prompt failed");
-		ctx.ui.notify(`Auto Prompt failed: ${shortReason}`, "warning");
+		try {
+			ctx.ui.notify(`Auto Prompt failed: ${shortReason}`, "warning");
+		} catch (notifyErr) {
+			if (!isStaleExtensionContextError(notifyErr)) throw notifyErr;
+		}
 	} finally {
 		if (stopLoading) stopLoading();
 		if (pendingController === controller) {
@@ -908,7 +938,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext): Prom
 }
 
 async function improveCurrentDraft(pi: ExtensionAPI, ctx: ExtensionContext, explicitDraft?: string): Promise<void> {
-	if (!ctx.hasUI) return;
+	if (!safeHasUI(ctx)) return;
 
 	const draft = (explicitDraft ?? ctx.ui.getEditorText()).trim();
 	if (!draft) {
@@ -995,11 +1025,16 @@ async function improveCurrentDraft(pi: ExtensionAPI, ctx: ExtensionContext, expl
 
 		const changed = hasMeaningfulPromptChange(draft, improved);
 		ctx.ui.setEditorText(improved);
-		ctx.ui.notify(changed ? "Prompt improved" : "Prompt already looked good — no meaningful changes", changed ? "success" : "info");
+		ctx.ui.notify(changed ? "Prompt improved" : "Prompt already looked good — no meaningful changes", "info");
 	} catch (err: unknown) {
 		if (err instanceof Error && err.name === "AbortError") return;
+		if (isStaleExtensionContextError(err)) return;
 		const shortReason = formatAutoPromptError(err);
-		ctx.ui.notify(`Failed to improve prompt: ${shortReason}`, "warning");
+		try {
+			ctx.ui.notify(`Failed to improve prompt: ${shortReason}`, "warning");
+		} catch (notifyErr) {
+			if (!isStaleExtensionContextError(notifyErr)) throw notifyErr;
+		}
 	} finally {
 		if (stopLoading) stopLoading();
 		if (pendingController === controller) {
@@ -1026,8 +1061,15 @@ export default function (pi: ExtensionAPI) {
 	// Generate suggestion after agent finishes
 	pi.on("agent_end", async (_event, ctx) => {
 		currentCtx = ctx;
-		// Small delay so the response renders before we fire the LLM call
-		setTimeout(() => generateSuggestion(pi, ctx), 300);
+		const generation = activeGeneration;
+		// Small delay so the response renders before we fire the LLM call.
+		// Track and generation-gate the timer so it cannot use a stale ctx after
+		// /reload, /new, /resume, /fork, or any other session replacement.
+		const timer = setTimeout(() => {
+			pendingSuggestionTimers.delete(timer);
+			void generateSuggestion(pi, ctx, generation);
+		}, 300);
+		pendingSuggestionTimers.add(timer);
 	});
 
 	// Track acceptance/dismissal
@@ -1039,8 +1081,20 @@ export default function (pi: ExtensionAPI) {
 		cancelPending();
 	});
 
+	pi.on("session_shutdown", async () => {
+		activeGeneration += 1;
+		currentCtx = undefined;
+		cancelPending();
+		for (const timer of pendingSuggestionTimers) {
+			clearTimeout(timer);
+		}
+		pendingSuggestionTimers.clear();
+		clearAutoPromptTransientStatus();
+	});
+
 	// Restore state on session start
 	pi.on("session_start", async (_event, ctx) => {
+		activeGeneration += 1;
 		currentCtx = ctx;
 
 		for (const entry of ctx.sessionManager.getEntries()) {

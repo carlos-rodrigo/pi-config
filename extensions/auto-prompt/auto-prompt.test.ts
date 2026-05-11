@@ -127,7 +127,7 @@ test("buildSuggestionPrompt is mode-aware for smart work", () => {
 	assert.match(prompt, /focused check/i);
 });
 
-test("buildSuggestionPrompt nudges active ownership loops toward re-own", () => {
+test("buildSuggestionPrompt treats re-own as available rather than forced", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Implement the ownership loop.\n\nAssistant: Done, tests passed.",
 		"deep",
@@ -140,9 +140,9 @@ test("buildSuggestionPrompt nudges active ownership loops toward re-own", () => 
 	);
 
 	assert.match(prompt, /Ownership loop active/i);
-	assert.match(prompt, /prefer suggesting \/reown/i);
-	assert.match(prompt, /intended story/i);
-	assert.match(prompt, /what is left/i);
+	assert.match(prompt, /re-own is available/i);
+	assert.match(prompt, /\/reown --remember/i);
+	assert.match(prompt, /do not force it as the next step/i);
 });
 
 test("buildSuggestionPrompt nudges passive idle ownership toward story-first work", () => {
@@ -162,7 +162,7 @@ test("buildSuggestionPrompt nudges passive idle ownership toward story-first wor
 	assert.match(prompt, /skip this for tiny tasks/i);
 });
 
-test("buildSuggestionPrompt nudges pending ownership cards toward conversational save or skip", () => {
+test("buildSuggestionPrompt avoids conversational save-or-skip for legacy pending cards", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Re-own this change.\n\nAssistant: Memory recommendation: save it.",
 		"deep",
@@ -174,9 +174,9 @@ test("buildSuggestionPrompt nudges pending ownership cards toward conversational
 		{ active: true, mode: "passive", phase: "reown-requested", memoryCardPending: true, memoryCardPath: "docs/ownership/workflow-modes.md" },
 	);
 
-	assert.match(prompt, /re-own is done enough to decide memory/i);
-	assert.match(prompt, /save it/);
-	assert.match(prompt, /skip/);
+	assert.match(prompt, /legacy memory-card state exists/i);
+	assert.match(prompt, /do not suggest conversational save\/skip/i);
+	assert.match(prompt, /\/reown --remember/i);
 	assert.match(prompt, /docs\/ownership\/workflow-modes\.md/);
 });
 

@@ -74,6 +74,15 @@ const MAX_UNTRACKED_TOTAL_CHARS = 8000;
 
 const watchedJobs = new Map<string, NodeJS.Timeout>();
 
+function runningJobCount(cwd: string): number {
+	const prefix = `${cwd}:`;
+	return [...watchedJobs.keys()].filter((key) => key.startsWith(prefix)).length;
+}
+
+function emitRunningJobCount(pi: ExtensionAPI, cwd: string): void {
+	pi.events?.emit("agent-jobs:running-count", { cwd, count: runningJobCount(cwd) });
+}
+
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 	description: 'Which agent directories to use. Default: "user". Use "both" to include project-local agents.',
 	default: "user",
@@ -509,19 +518,25 @@ function watchJob(pi: ExtensionAPI, cwd: string, jobId: string): void {
 				if (status.state !== "running") {
 					clearInterval(interval);
 					watchedJobs.delete(key);
+					emitRunningJobCount(pi, cwd);
 				}
 			})
 			.catch(() => {
 				clearInterval(interval);
 				watchedJobs.delete(key);
+				emitRunningJobCount(pi, cwd);
 			});
 	}, WATCH_INTERVAL_MS);
 	watchedJobs.set(key, interval);
+	emitRunningJobCount(pi, cwd);
 }
 
 async function resumeRunningJobs(pi: ExtensionAPI, cwd: string): Promise<void> {
 	const root = jobsRoot(cwd);
-	if (!fileExists(root)) return;
+	if (!fileExists(root)) {
+		emitRunningJobCount(pi, cwd);
+		return;
+	}
 	const entries = await fs.promises.readdir(root, { withFileTypes: true });
 	for (const entry of entries) {
 		if (!entry.isDirectory()) continue;
@@ -532,6 +547,7 @@ async function resumeRunningJobs(pi: ExtensionAPI, cwd: string): Promise<void> {
 			// Ignore malformed old job dirs.
 		}
 	}
+	emitRunningJobCount(pi, cwd);
 }
 
 async function listStatuses(cwd: string): Promise<AgentJobStatus[]> {
@@ -871,6 +887,13 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			}
 			const updated = { ...status, state: "cancelled" as const, updatedAt: nowIso(), completedAt: nowIso(), summary: "Cancelled by user." };
 			await writeStatus(updated);
+			const key = `${status.cwd}:${status.jobId}`;
+			const interval = watchedJobs.get(key);
+			if (interval) {
+				clearInterval(interval);
+				watchedJobs.delete(key);
+				emitRunningJobCount(pi, status.cwd);
+			}
 			return { content: [{ type: "text" as const, text: `Cancelled job ${status.jobId}.` }], details: updated };
 		},
 	});
