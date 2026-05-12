@@ -23,7 +23,6 @@ pi install ./extensions/bordered-editor
 pi install ./extensions/code-intel
 pi install ./extensions/branch-switcher
 pi install ./extensions/document-reviewer
-pi install ./extensions/dumb-zone
 pi install ./extensions/feature-flow
 pi install ./extensions/file-opener
 pi install ./extensions/git-blame
@@ -50,7 +49,6 @@ pi install ./extensions/worktree-manager
 | [branch-switcher](branch-switcher/) | Interactive git branch switching with local + remote-only branch support |
 | [code-intel](code-intel/) | `code_find` orchestration plus symbol, dependency, git-history, and AST search tools |
 | [document-reviewer](document-reviewer/) | Markdown review sessions with browser UI |
-| [dumb-zone](dumb-zone/) | Context-window monitor with auto-compaction before degradation |
 | [feature-flow](feature-flow/) | Lightweight-first feature orchestration with Git worktrees and docs on demand |
 | [file-opener](file-opener/) | Syntax-highlighted file viewer with diff support |
 | [git-blame](git-blame/) | Interactive git blame overlay |

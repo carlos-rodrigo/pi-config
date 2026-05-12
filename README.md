@@ -24,7 +24,6 @@ pi install ./extensions/bordered-editor
 pi install ./extensions/branch-switcher
 pi install ./extensions/code-intel
 pi install ./extensions/document-reviewer
-pi install ./extensions/dumb-zone
 pi install ./extensions/feature-flow
 pi install ./extensions/file-opener
 pi install ./extensions/git-blame
@@ -69,7 +68,6 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[branch-switcher](extensions/branch-switcher/)** — Interactive `/branch` command for local and remote branches.
 - **[code-intel](extensions/code-intel/)** — `code_find` orchestration plus symbol, dependency, git-history, and AST search tools.
 - **[document-reviewer](extensions/document-reviewer/)** — Browser-based document and PR review with inline comments.
-- **[dumb-zone](extensions/dumb-zone/)** — Context-window monitor with auto-compaction before degradation.
 - **[feature-flow](extensions/feature-flow/)** — Lightweight feature orchestration with Git worktrees.
 - **[file-opener](extensions/file-opener/)** — Syntax-highlighted file viewer, nvim opener, and diff viewer.
 - **[git-blame](extensions/git-blame/)** — Interactive git blame overlay.

@@ -4,11 +4,11 @@
  *
  * ╭─ mode:smart ──────────────── claude-opus-4-6 · high ─╮
  * │   ▌Implement the error handling changes                │  ← gray ghost text
- * ╰─ 42% of 200k · $1.14 ───────────── ~/project (main) ─╯
+ * ╰─ 42% of 200k · 84k ctx · 1.2M burned · $1.14 ─ ~/project (main) ─╯
  *
  * Top left:     agent mode (Smart in green, Deep¹/²/³ in red, Fast in yellow)
  * Top right:    model · thinking-level (level in green)
- * Bottom left:  context% of Nk . $cost - status
+ * Bottom left:  context% of Nk · current context tokens · cumulative tokens burned · $cost - status
  * Bottom right: cwd plus git state — branch (main checkout) or worktree info
  *
  * Ghost text: appears when editor is empty, right arrow accepts, any key dismisses.
@@ -17,7 +17,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { CURSOR_MARKER, matchesKey, Key, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
 
@@ -34,10 +33,10 @@ export function pickPrimaryExtensionStatus(statuses: ReadonlyMap<string, string>
 	}
 
 	for (const [key, value] of statuses) {
-		if (key !== "dumb-zone" && key !== "workflow-mode") return value;
+		if (key !== "workflow-mode") return value;
 	}
 
-	return statuses.get("dumb-zone") ?? statuses.get("workflow-mode") ?? statuses.values().next().value ?? null;
+	return statuses.get("workflow-mode") ?? statuses.values().next().value ?? null;
 }
 
 export type WorkflowModeColor = "success" | "error" | "warning";
@@ -65,6 +64,52 @@ export function getWorkflowModeColor(label: string | null | undefined): Workflow
 export function formatBackgroundJobIndicator(count: number): string | null {
 	if (!Number.isFinite(count) || count <= 0) return null;
 	return count === 1 ? "1 bg job" : `${count} bg jobs`;
+}
+
+export function formatTokenCount(count: number): string {
+	if (!Number.isFinite(count) || count <= 0) return "0";
+	if (count < 1000) return Math.round(count).toString();
+	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+	if (count < 1000000) return `${Math.round(count / 1000)}k`;
+	return `${(count / 1000000).toFixed(1)}M`;
+}
+
+function numberFrom(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function objectFrom(value: unknown): Record<string, unknown> | undefined {
+	return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
+}
+
+export function getAssistantUsageTotals(entries: readonly unknown[]): { cost: number; tokensBurned: number } {
+	let cost = 0;
+	let tokensBurned = 0;
+
+	for (const entryValue of entries) {
+		const entry = objectFrom(entryValue);
+		if (entry?.type !== "message") continue;
+		const message = objectFrom(entry.message);
+		if (message?.role !== "assistant") continue;
+		const usage = objectFrom(message.usage);
+		if (!usage) continue;
+
+		cost += numberFrom(objectFrom(usage.cost)?.total);
+		const explicitTotal = numberFrom(usage.totalTokens);
+		tokensBurned += explicitTotal || numberFrom(usage.input) + numberFrom(usage.output) + numberFrom(usage.cacheRead) + numberFrom(usage.cacheWrite);
+	}
+
+	return { cost, tokensBurned };
+}
+
+export function formatBottomLeftUsage(
+	usage: { percent?: number; tokens: number; contextWindow: number } | undefined,
+	session: { cost: number; tokensBurned: number },
+): string {
+	const pct = usage?.percent != null ? `${Math.round(usage.percent)}%` : "—";
+	const ctxWin = usage ? `${Math.round(usage.contextWindow / 1000)}k` : "—";
+	const ctxTokens = usage ? formatTokenCount(usage.tokens) : "—";
+	return `${pct} of ${ctxWin} · ${ctxTokens} ctx · ${formatTokenCount(session.tokensBurned)} burned · $${session.cost.toFixed(2)}`;
 }
 
 interface WorktreeEntry {
@@ -280,25 +325,12 @@ class BorderedEditor extends CustomEditor {
 				theme.fg("success", level);
 		}
 
-		// --- Bottom-left: context . cost - primary extension status ---
+		// --- Bottom-left: context · tokens burned · cost - primary extension status ---
 		let bottomLeft = "";
 		if (this.ctx && theme) {
 			const usage = this.ctx.getContextUsage();
-			let cost = 0;
-			for (const e of this.ctx.sessionManager.getBranch()) {
-				if (e.type === "message" && e.message.role === "assistant") {
-					cost += (e.message as AssistantMessage).usage.cost.total;
-				}
-			}
-			const pct =
-				usage?.percent != null ? `${Math.round(usage.percent)}%` : "—";
-			const ctxWin = usage
-				? `${Math.round(usage.contextWindow / 1000)}k`
-				: "—";
-			bottomLeft = theme.fg(
-				"muted",
-				`${pct} of ${ctxWin} . $${cost.toFixed(2)}`,
-			);
+			const sessionUsage = getAssistantUsageTotals(this.ctx.sessionManager.getBranch());
+			bottomLeft = theme.fg("muted", formatBottomLeftUsage(usage, sessionUsage));
 			const extensionStatus = this.getExtensionStatus();
 			if (extensionStatus) {
 				bottomLeft += theme.fg("dim", " - ") + extensionStatus;

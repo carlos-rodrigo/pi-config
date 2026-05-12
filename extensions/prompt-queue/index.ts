@@ -325,6 +325,19 @@ export default function promptQueueExtension(pi: ExtensionAPI) {
 		return item;
 	}
 
+	function addEditorPromptToQueue(ctx: ExtensionContext): void {
+		const text = ctx.ui.getEditorText().trim();
+		if (!text) {
+			ctx.ui.notify("Editor is empty — nothing to queue", "warning");
+			return;
+		}
+		const item = addPrompt(text);
+		if (!item) return;
+		ctx.ui.setEditorText("");
+		updateStatus(ctx);
+		ctx.ui.notify(`Queued editor prompt #${item.id}`, "info");
+	}
+
 	function setItemStatus(id: number, status: PromptQueueStatus): void {
 		persist({ action: "status", id, status, updatedAt: Date.now() });
 	}
@@ -458,6 +471,13 @@ export default function promptQueueExtension(pi: ExtensionAPI) {
 		description: "Open prompt queue",
 		handler: async (ctx) => {
 			await showQueue(ctx as ExtensionContext);
+		},
+	});
+
+	pi.registerShortcut("alt+q", {
+		description: "Add current editor text to the prompt queue",
+		handler: async (ctx) => {
+			addEditorPromptToQueue(ctx as ExtensionContext);
 		},
 	});
 

@@ -21,7 +21,7 @@ export function activate(ctx: ExtensionContext) {
 
 ### Cross-extension status contracts
 
-Extensions publish status via `ctx.setStatus()`. The `bordered-editor` extension uses `pickPrimaryExtensionStatus()` to choose what to display in the footer — it prefers `dumb-zone` status (zone label + cost).
+Extensions publish status via `ctx.setStatus()`. The `bordered-editor` extension uses `pickPrimaryExtensionStatus()` to choose what to display in the footer — active overlays and workflow helpers should expose concise status strings.
 
 ### sendMessage with deliverAs/triggerTurn
 

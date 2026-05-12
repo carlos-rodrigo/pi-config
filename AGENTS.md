@@ -7,7 +7,7 @@ Personal Pi configuration: extensions, themes, agents, prompts, and harness tool
 ```bash
 npm test                # all tests
 npm run test:direct     # unit tests only, skips document-reviewer integration
-npm run test:<name>     # one extension/agent test, e.g. test:dumb-zone
+npm run test:<name>     # one extension/agent test, e.g. test:prompt-queue
 bash scripts/verify.sh  # project verification entrypoint
 ```
 

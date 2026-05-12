@@ -13,7 +13,7 @@ pi install ./extensions/bordered-editor
 ```
 ╭─ Claude 4 Opus · xhigh ──────────────────────────────────────╮
 │   your prompt here                                             │
-╰─ 42% of 200k · $1.14 ──────────────── ~/project (main) ─╯
+╰─ 42% of 200k · 84k ctx · 1.3M burned · $1.14 ─ ~/project (main) ─╯
 ```
 
 ## What it shows
@@ -21,7 +21,7 @@ pi install ./extensions/bordered-editor
 | Position | Info | Styling |
 |---|---|---|
 | Top left | Model name · thinking level | Level in **green** |
-| Bottom left | Context usage % of window · session cost | Muted |
+| Bottom left | Context usage % of window · current context tokens · cumulative tokens burned · session cost | Muted |
 | Bottom right | Working directory + git state | Branch in **violet** for main checkout, **WT ...** tag for linked worktrees |
 
 ## How it works

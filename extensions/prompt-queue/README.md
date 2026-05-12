@@ -12,6 +12,7 @@ Interactive prompt queue for Pi.
 ## Shortcut
 
 - `Ctrl+Q` — open the queue palette
+- `Alt+Q` — add the current editor text to the queue and clear the editor
 
 ## Palette keys
 
