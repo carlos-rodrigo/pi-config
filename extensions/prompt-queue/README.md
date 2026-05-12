@@ -17,8 +17,8 @@ Interactive prompt queue for Pi.
 ## Palette keys
 
 - `↑/↓` or `j/k` — select prompt
-- `Enter` or `p` — paste selected prompt into the editor
-- `r` — run selected prompt
+- `Enter` or `r` — run selected prompt and remove it from the queue after it finishes
+- `p` — paste selected prompt into the editor without changing queue state
 - `R` — run all queued prompts serially
 - `a` — add prompt
 - `e` — edit prompt

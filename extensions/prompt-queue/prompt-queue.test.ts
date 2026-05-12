@@ -61,6 +61,19 @@ test("delete clears active prompt when the running item is removed", () => {
 	assert.deepEqual(state.items, []);
 });
 
+test("running queue items are represented by status then delete lifecycle", () => {
+	let state = createInitialState();
+	state = applyPromptQueueAction(state, { action: "add", item: createPromptQueueItem(1, "One", 100) });
+	state = applyPromptQueueAction(state, { action: "status", id: 1, status: "running", updatedAt: 200 });
+
+	assert.equal(state.activeId, 1);
+	assert.equal(state.items[0]?.status, "running");
+
+	state = applyPromptQueueAction(state, { action: "delete", id: 1 });
+	assert.deepEqual(state.items, []);
+	assert.equal(formatQueueStatus(state), "queue: empty");
+});
+
 test("extension registers queue commands, shortcut, and lifecycle hooks", () => {
 	const commands: string[] = [];
 	const shortcuts: string[] = [];

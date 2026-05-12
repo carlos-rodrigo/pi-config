@@ -173,7 +173,7 @@ class PromptQueuePalette {
 		}
 		if (matchesKey(data, Key.enter)) {
 			const item = this.selectedItem();
-			if (item) this.done({ type: "paste", id: item.id });
+			if (item) this.done({ type: "run", id: item.id });
 			return;
 		}
 		if (data === "a") {
@@ -232,7 +232,7 @@ class PromptQueuePalette {
 		const border = th.fg("borderMuted", "─".repeat(Math.max(0, width - 15)));
 
 		lines.push(truncateToWidth(`${th.fg("borderMuted", "┌──")}${title}${border}`, width));
-		lines.push(truncateToWidth(`  ${queued} queued · ${running} running · ${done} done · Enter: paste · r: run · R: run all`, width));
+		lines.push(truncateToWidth(`  ${queued} queued · ${running} running · ${done} done · Enter/r: run · p: paste · R: run all`, width));
 		lines.push("");
 
 		if (total === 0) {
@@ -462,8 +462,10 @@ export default function promptQueueExtension(pi: ExtensionAPI) {
 	pi.on("agent_end", async (_event, ctx) => {
 		const activeId = state.activeId;
 		if (activeId === undefined) return;
-		setItemStatus(activeId, "done");
-		if (state.draining) runNext(ctx);
+		const shouldContinue = state.draining;
+		persist({ action: "delete", id: activeId });
+		state.draining = shouldContinue;
+		if (shouldContinue) runNext(ctx);
 		else updateStatus(ctx);
 	});
 
