@@ -476,7 +476,7 @@ export default function promptQueueExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerShortcut("alt+q", {
+	pi.registerShortcut("ctrl+shift+a", {
 		description: "Add current editor text to the prompt queue",
 		handler: async (ctx) => {
 			addEditorPromptToQueue(ctx as ExtensionContext);

@@ -12,6 +12,7 @@ import semanticSearchExtension, {
 	formatSearchResults,
 	parseSearchIndexJson,
 	resolveOllamaEmbeddingConfig,
+	resolveOllamaSummaryConfig,
 	searchIndex,
 	searchIndexWithEmbeddings,
 	serializeSearchIndexForJson,
@@ -33,10 +34,24 @@ function fakeEmbeddingFor(text: string): number[] {
 	return [0, 0, 1];
 }
 
+function fakeSummaryFor(prompt: string): string {
+	if (/createBudgetBucket|budget/i.test(prompt)) return "Creates budget buckets from request data and calls createBudgetBucket for personal budget tracking.";
+	if (/ledger|invoice|reconcile/i.test(prompt)) return "Reconciles invoice ledger balances for billing workflows.";
+	if (/canvas|palette|paint/i.test(prompt)) return "Paints the UI canvas using the configured color palette.";
+	return "Explains the code element's responsibility, important calls, and where it fits in the project.";
+}
+
 async function withMockOllamaFetch<T>(fn: () => Promise<T>): Promise<T> {
 	const originalFetch = globalThis.fetch;
-	globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+	globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+		const href = String(url);
 		const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string | string[]; prompt?: string };
+		if (href.endsWith("/api/generate")) {
+			return new Response(JSON.stringify({ response: fakeSummaryFor(body.prompt ?? "") }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}
 		const inputs = Array.isArray(body.input) ? body.input : [body.input ?? body.prompt ?? ""];
 		return new Response(JSON.stringify({ embeddings: inputs.map(fakeEmbeddingFor) }), {
 			status: 200,
@@ -97,6 +112,42 @@ export async function createCheckoutSession(customerId: string) {
 		assert.equal(results[0]?.path, "src/payments/checkout.ts");
 		assert.ok(results[0]?.score && results[0].score > 0, "expected a positive search score");
 		assert.ok(results[0]?.reason.some((part) => /billing|stripe|checkout|payment/i.test(part)));
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("implementation-location queries prefer source creation code over docs and tests", () => {
+	const dir = makeProject({
+		"docs/prd.md": `# Personal budget
+
+Users need a personal budget. The budget is created during onboarding and tracked monthly.`,
+		"packages/domain/test/finance.test.mjs": `export function budgetBucket() {
+	return { type: "Personal budget", createdAt: new Date() };
+}
+`,
+		"apps/web/app/api/circles/[circleId]/budgets/route.ts": `export async function GET() {
+	return listBudgets();
+}
+
+export async function POST(request: Request) {
+	const body = await request.json();
+	return createBudgetBucket(body.circleId, body.amount);
+}
+`,
+	});
+	try {
+		const index = buildSearchIndex(dir, { writeToDisk: false });
+		const results = searchIndex(index, { query: "where the budget is created", topK: 3 });
+
+		assert.equal(results[0]?.path, "apps/web/app/api/circles/[circleId]/budgets/route.ts");
+		assert.ok(results[0]?.reason.some((part) => /implementation\/creation intent match/i.test(part)));
+		assert.ok(!results.slice(0, 2).some((result) => /^docs\//.test(result.path)), "docs should not crowd out implementation answers");
+
+		const formatted = formatSearchResults("where the budget is created", results, index);
+		assert.match(formatted, /Why: function POST covers post/i);
+		assert.match(formatted, /createBudgetBucket/);
+		assert.match(formatted, /Matched because:/);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
@@ -197,6 +248,60 @@ test("Ollama embeddings are stored locally and used for semantic ranking", async
 			assert.ok(results[0]?.embeddingScore && results[0].embeddingScore > 0.9);
 		});
 	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("embedding index uses Ollama-generated card summaries by default and caches them", async () => {
+	const dir = makeProject({
+		"src/finance/budget.ts": `export async function createBudgetBucket(circleId: string, amount: number) {
+	return db.budgetBucket.create({ data: { circleId, amount } });
+}
+`,
+	});
+	const originalFetch = globalThis.fetch;
+	let generateCalls = 0;
+	globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+		const href = String(url);
+		const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string | string[]; prompt?: string };
+		if (href.endsWith("/api/generate")) {
+			generateCalls++;
+			return new Response(JSON.stringify({ response: fakeSummaryFor(body.prompt ?? "") }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}
+		const inputs = Array.isArray(body.input) ? body.input : [body.input ?? body.prompt ?? ""];
+		return new Response(JSON.stringify({ embeddings: inputs.map(fakeEmbeddingFor) }), {
+			status: 200,
+			headers: { "content-type": "application/json" },
+		});
+	}) as typeof fetch;
+	try {
+		const first = await buildSearchIndexWithEmbeddings(dir, {
+			writeToDisk: true,
+			ollama: { model: "nomic-embed-text", baseUrl: "http://ollama.test" },
+			summary: { model: "qwen2.5-coder:14b", baseUrl: "http://ollama.test", concurrency: 2 },
+		});
+		const generatedCalls = generateCalls;
+		const card = first.cards.find((candidate) => candidate.name === "createBudgetBucket");
+
+		assert.ok(generatedCalls > 0, "expected Ollama summary generation calls");
+		assert.equal(first.summary?.model, "qwen2.5-coder:14b");
+		assert.equal(first.summary?.failedCards, 0);
+		assert.match(card?.summary ?? "", /Creates budget buckets/i);
+		assert.match(card?.text ?? "", /Summary: Creates budget buckets/i);
+
+		const second = await buildSearchIndexWithEmbeddings(dir, {
+			writeToDisk: true,
+			ollama: { model: "nomic-embed-text", baseUrl: "http://ollama.test" },
+			summary: { model: "qwen2.5-coder:14b", baseUrl: "http://ollama.test", concurrency: 2 },
+		});
+
+		assert.equal(generateCalls, generatedCalls, "unchanged cards should use the summary cache");
+		assert.ok((second.summary?.cachedCards ?? 0) > 0);
+	} finally {
+		globalThis.fetch = originalFetch;
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
@@ -325,7 +430,7 @@ test("Ollama embedding client falls back to the legacy embeddings endpoint", asy
 	}
 });
 
-test("Ollama config defaults to the local embedding model and accepts OLLAMA_HOST", () => {
+test("Ollama config defaults to local embedding and strong summary models", () => {
 	assert.deepEqual(resolveOllamaEmbeddingConfig({}, {}), {
 		model: "nomic-embed-text",
 		baseUrl: "http://127.0.0.1:11434",
@@ -333,9 +438,19 @@ test("Ollama config defaults to the local embedding model and accepts OLLAMA_HOS
 		timeoutMs: 30_000,
 		maxInputChars: 6_000,
 	});
+	assert.deepEqual(resolveOllamaSummaryConfig({}, {}), {
+		model: "qwen2.5-coder:14b",
+		baseUrl: "http://127.0.0.1:11434",
+		timeoutMs: 180_000,
+		maxInputChars: 10_000,
+		concurrency: 2,
+		enabled: true,
+	});
 	assert.equal(resolveOllamaEmbeddingConfig({}, { OLLAMA_HOST: "localhost:11434", OLLAMA_EMBED_MODEL: "mxbai-embed-large" }).baseUrl, "http://localhost:11434");
 	assert.equal(resolveOllamaEmbeddingConfig({}, { OLLAMA_HOST: "localhost:11434", OLLAMA_EMBED_MODEL: "mxbai-embed-large" }).model, "mxbai-embed-large");
 	assert.equal(resolveOllamaEmbeddingConfig({}, { PI_SEMANTIC_SEARCH_EMBED_MAX_CHARS: "256" }).maxInputChars, 256);
+	assert.equal(resolveOllamaSummaryConfig({}, { PI_SEMANTIC_SEARCH_SUMMARY_MODEL: "qwen2.5-coder:32b", PI_SEMANTIC_SEARCH_SUMMARIES: "false" }).model, "qwen2.5-coder:32b");
+	assert.equal(resolveOllamaSummaryConfig({}, { PI_SEMANTIC_SEARCH_SUMMARIES: "false" }).enabled, false);
 });
 
 test("repo map clusters indexed files by reusable code concepts", () => {
@@ -374,9 +489,16 @@ test("index command treats build as rebuild instead of an embedding model", asyn
 	const previousPiModel = process.env.PI_SEMANTIC_SEARCH_EMBED_MODEL;
 	const previousOllamaModel = process.env.OLLAMA_EMBED_MODEL;
 	const seenModels: string[] = [];
-	globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
-		const body = JSON.parse(String(init?.body ?? "{}")) as { model?: string; input?: string | string[] };
+	globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+		const href = String(url);
+		const body = JSON.parse(String(init?.body ?? "{}")) as { model?: string; input?: string | string[]; prompt?: string };
 		seenModels.push(body.model ?? "");
+		if (href.endsWith("/api/generate")) {
+			return new Response(JSON.stringify({ response: fakeSummaryFor(body.prompt ?? "") }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}
 		const inputs = Array.isArray(body.input) ? body.input : [body.input ?? ""];
 		return new Response(JSON.stringify({ embeddings: inputs.map(fakeEmbeddingFor) }), {
 			status: 200,
@@ -392,15 +514,71 @@ test("index command treats build as rebuild instead of an embedding model", asyn
 			ui: { notify() {}, setStatus() {} },
 		} as any);
 
-		assert.ok(seenModels.length > 0, "expected the command to request embeddings");
+		assert.ok(seenModels.length > 0, "expected the command to request Ollama");
 		assert.ok(!seenModels.includes("build"), "build should be parsed as a command alias, not a model");
-		assert.ok(seenModels.every((model) => model === "nomic-embed-text"));
+		assert.ok(seenModels.includes("nomic-embed-text"));
+		assert.ok(seenModels.includes("qwen2.5-coder:14b"));
+
+		seenModels.length = 0;
+		await commands.get("index").handler("build --summary-model qwen2.5-coder:32b", {
+			cwd: dir,
+			ui: { notify() {}, setStatus() {} },
+		} as any);
+		assert.ok(seenModels.includes("nomic-embed-text"));
+		assert.ok(seenModels.includes("qwen2.5-coder:32b"));
 	} finally {
 		globalThis.fetch = originalFetch;
 		if (previousPiModel === undefined) delete process.env.PI_SEMANTIC_SEARCH_EMBED_MODEL;
 		else process.env.PI_SEMANTIC_SEARCH_EMBED_MODEL = previousPiModel;
 		if (previousOllamaModel === undefined) delete process.env.OLLAMA_EMBED_MODEL;
 		else process.env.OLLAMA_EMBED_MODEL = previousOllamaModel;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("index rebuild status reports the last background rebuild state", async () => {
+	const commands = new Map<string, any>();
+	const messages: any[] = [];
+	semanticSearchExtension({
+		registerTool() {},
+		registerCommand(name: string, definition: any) {
+			commands.set(name, definition);
+		},
+		sendMessage(message: any) {
+			messages.push(message);
+		},
+	} as any);
+
+	const dir = makeProject({
+		"src/search/index.ts": "export function semanticSearch(query: string) { return vectorIndex.search(query); }\n",
+	});
+	try {
+		const statusDir = join(dir, ".pi", "semantic-search");
+		mkdirSync(statusDir, { recursive: true });
+		const logPath = join(statusDir, "rebuild.log");
+		writeFileSync(logPath, "[2026-05-17T13:09:44.855Z] semantic-search background rebuild started for test (pid 123)\n[2026-05-17T13:09:45.499Z] Summarizing semantic cards\n", "utf8");
+		writeFileSync(join(statusDir, "rebuild-status.json"), JSON.stringify({
+			status: "running",
+			cwd: dir,
+			logPath,
+			pid: process.pid,
+			startedAt: "2026-05-17T13:09:44.855Z",
+			embeddingModel: "nomic-embed-text",
+			summaryModel: "qwen2.5-coder:14b",
+		}), "utf8");
+
+		await commands.get("index").handler("rebuild --status", {
+			cwd: dir,
+			ui: { notify() {}, setStatus() {} },
+		} as any);
+
+		const text = messages[messages.length - 1]?.content ?? "";
+		assert.match(text, /Semantic index background rebuild status/);
+		assert.match(text, /State: running \(process active\)/);
+		assert.match(text, /Summary model: qwen2\.5-coder:14b/);
+		assert.match(text, /Current index: stale/);
+		assert.match(text, /Recent log:/);
+	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
 });

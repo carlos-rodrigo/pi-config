@@ -94,6 +94,6 @@ test("extension registers queue commands, shortcut, and lifecycle hooks", () => 
 	} as any);
 
 	assert.deepEqual(commands, ["queue", "queue-add", "queue-run", "queue-stop"]);
-	assert.deepEqual(shortcuts, ["ctrl+q", "alt+q"]);
+	assert.deepEqual(shortcuts, ["ctrl+q", "ctrl+shift+a"]);
 	assert.deepEqual(events, ["session_start", "session_tree", "agent_end"]);
 });

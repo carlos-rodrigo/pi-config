@@ -1,8 +1,10 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+	closeSync,
 	existsSync,
 	mkdirSync,
+	openSync,
 	readdirSync,
 	readFileSync,
 	statSync,
@@ -20,9 +22,12 @@ import {
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
-const INDEX_VERSION = 3;
+const INDEX_VERSION = 5;
 const INDEX_DIR = ".pi/semantic-search";
 const INDEX_FILE = "index.json";
+const SUMMARY_CACHE_FILE = "summaries.json";
+const INDEX_REBUILD_LOG_FILE = "rebuild.log";
+const INDEX_REBUILD_STATUS_FILE = "rebuild-status.json";
 const DEFAULT_CHUNK_LINES = 80;
 const DEFAULT_CHUNK_OVERLAP = 12;
 const DEFAULT_MAX_FILE_BYTES = 512 * 1024;
@@ -38,11 +43,17 @@ const MAX_CARD_COMMENTS = 6;
 const MAX_CARD_TERMS = 28;
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_EMBED_MODEL = "nomic-embed-text";
+const DEFAULT_OLLAMA_SUMMARY_MODEL = "qwen2.5-coder:14b";
 const DEFAULT_OLLAMA_BATCH_SIZE = 16;
 const DEFAULT_OLLAMA_TIMEOUT_MS = 30_000;
+const DEFAULT_OLLAMA_SUMMARY_TIMEOUT_MS = 180_000;
 const DEFAULT_OLLAMA_EMBED_INPUT_MAX_CHARS = 6_000;
+const DEFAULT_OLLAMA_SUMMARY_INPUT_MAX_CHARS = 10_000;
+const DEFAULT_OLLAMA_SUMMARY_CONCURRENCY = 2;
 const MIN_OLLAMA_EMBED_INPUT_CHARS = 128;
 const MAX_OLLAMA_EMBED_INPUT_MAX_CHARS = 100_000;
+const MIN_OLLAMA_SUMMARY_INPUT_CHARS = 512;
+const MAX_OLLAMA_SUMMARY_INPUT_CHARS = 100_000;
 const EMBEDDING_TRUNCATION_MARKER = "\n\n[...semantic-search input truncated...]\n\n";
 const EMBEDDING_VECTOR_JSON_ENCODING = "base64-f32";
 
@@ -324,6 +335,15 @@ export type OllamaEmbeddingConfig = {
 	maxInputChars: number;
 };
 
+export type OllamaSummaryConfig = {
+	model: string;
+	baseUrl: string;
+	timeoutMs: number;
+	maxInputChars: number;
+	concurrency: number;
+	enabled: boolean;
+};
+
 export type EmbeddingMetadata = {
 	provider: "ollama";
 	model: string;
@@ -332,6 +352,17 @@ export type EmbeddingMetadata = {
 	dimensions: number;
 	embeddedChunks: number;
 	embeddedCards: number;
+	createdAt: string;
+};
+
+export type SummaryMetadata = {
+	provider: "ollama";
+	model: string;
+	baseUrl: string;
+	inputMaxChars: number;
+	summarizedCards: number;
+	cachedCards: number;
+	failedCards: number;
 	createdAt: string;
 };
 
@@ -386,6 +417,7 @@ export type SearchIndex = {
 	chunks: IndexedChunk[];
 	cards: IndexedCard[];
 	embedding?: EmbeddingMetadata;
+	summary?: SummaryMetadata;
 };
 
 type SerializedEmbeddingVector = {
@@ -433,6 +465,7 @@ type BuildOptions = {
 
 type EmbeddingBuildOptions = BuildOptions & {
 	ollama?: Partial<OllamaEmbeddingConfig>;
+	summary?: false | Partial<OllamaSummaryConfig>;
 	signal?: AbortSignal;
 	onProgress?: (message: string) => void;
 };
@@ -456,6 +489,21 @@ type IndexStatus = {
 	cards: number;
 	updatedAt?: string;
 	embedding?: EmbeddingMetadata;
+	summary?: SummaryMetadata;
+};
+
+type BackgroundRebuildStatus = {
+	status: "running" | "succeeded" | "failed" | "unknown";
+	cwd: string;
+	logPath: string;
+	pid?: number;
+	startedAt?: string;
+	finishedAt?: string;
+	embeddingModel?: string;
+	summaryModel?: string;
+	summariesDisabled?: boolean;
+	message?: string;
+	error?: string;
 };
 
 const memoryIndexes = new Map<string, SearchIndex>();
@@ -466,6 +514,18 @@ function normalizeRelativePath(path: string): string {
 
 function getIndexPath(cwd: string): string {
 	return join(cwd, INDEX_DIR, INDEX_FILE);
+}
+
+function getSummaryCachePath(cwd: string): string {
+	return join(cwd, INDEX_DIR, SUMMARY_CACHE_FILE);
+}
+
+function getIndexRebuildLogPath(cwd: string): string {
+	return join(cwd, INDEX_DIR, INDEX_REBUILD_LOG_FILE);
+}
+
+function getIndexRebuildStatusPath(cwd: string): string {
+	return join(cwd, INDEX_DIR, INDEX_REBUILD_STATUS_FILE);
 }
 
 function languageForPath(path: string): string {
@@ -561,6 +621,8 @@ function normalizeTokenBase(token: string): string | undefined {
 	else if (normalized.length > 4 && normalized.endsWith("ed")) normalized = normalized.slice(0, -2);
 	else if (normalized.length > 4 && normalized.endsWith("ies")) normalized = `${normalized.slice(0, -3)}y`;
 	else if (normalized.length > 3 && normalized.endsWith("s")) normalized = normalized.slice(0, -1);
+	const stemAliases: Record<string, string> = { creat: "create", defin: "define", handl: "handle", sav: "save" };
+	normalized = stemAliases[normalized] ?? normalized;
 	if (normalized.length < 2) return undefined;
 	if (STOPWORDS.has(normalized)) return undefined;
 	return normalized;
@@ -729,6 +791,25 @@ export function resolveOllamaEmbeddingConfig(
 	};
 }
 
+function envFlagEnabled(value: string | undefined, fallback: boolean): boolean {
+	if (value === undefined) return fallback;
+	return !/^(0|false|no|off)$/i.test(value.trim());
+}
+
+export function resolveOllamaSummaryConfig(
+	input: Partial<OllamaSummaryConfig> = {},
+	env: Record<string, string | undefined> = process.env,
+): OllamaSummaryConfig {
+	return {
+		model: input.model ?? env.PI_SEMANTIC_SEARCH_SUMMARY_MODEL ?? DEFAULT_OLLAMA_SUMMARY_MODEL,
+		baseUrl: normalizeOllamaBaseUrl(input.baseUrl ?? env.OLLAMA_BASE_URL ?? env.OLLAMA_HOST ?? DEFAULT_OLLAMA_BASE_URL),
+		timeoutMs: clampInteger(input.timeoutMs ?? env.PI_SEMANTIC_SEARCH_SUMMARY_TIMEOUT_MS, DEFAULT_OLLAMA_SUMMARY_TIMEOUT_MS, 1_000, 600_000),
+		maxInputChars: clampInteger(input.maxInputChars ?? env.PI_SEMANTIC_SEARCH_SUMMARY_MAX_CHARS, DEFAULT_OLLAMA_SUMMARY_INPUT_MAX_CHARS, MIN_OLLAMA_SUMMARY_INPUT_CHARS, MAX_OLLAMA_SUMMARY_INPUT_CHARS),
+		concurrency: clampInteger(input.concurrency ?? env.PI_SEMANTIC_SEARCH_SUMMARY_CONCURRENCY, DEFAULT_OLLAMA_SUMMARY_CONCURRENCY, 1, 8),
+		enabled: input.enabled ?? envFlagEnabled(env.PI_SEMANTIC_SEARCH_SUMMARIES, true),
+	};
+}
+
 async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: number, signal?: AbortSignal): Promise<unknown> {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -889,6 +970,185 @@ function embeddingInputForChunk(chunk: IndexedChunk): string {
 
 function embeddingInputForCard(card: IndexedCard): string {
 	return card.text;
+}
+
+type SummaryCacheEntry = {
+	model: string;
+	inputHash: string;
+	summary: string;
+	updatedAt: string;
+};
+
+type SummaryCache = {
+	version: number;
+	entries: Record<string, SummaryCacheEntry>;
+};
+
+const SUMMARY_CACHE_VERSION = 1;
+const SUMMARY_PROMPT_VERSION = 1;
+
+function loadSummaryCache(cwd: string): SummaryCache {
+	const cachePath = getSummaryCachePath(cwd);
+	if (!existsSync(cachePath)) return { version: SUMMARY_CACHE_VERSION, entries: {} };
+	try {
+		const parsed = JSON.parse(readFileSync(cachePath, "utf8")) as Partial<SummaryCache>;
+		if (parsed.version !== SUMMARY_CACHE_VERSION || !parsed.entries || typeof parsed.entries !== "object") return { version: SUMMARY_CACHE_VERSION, entries: {} };
+		return { version: SUMMARY_CACHE_VERSION, entries: parsed.entries };
+	} catch {
+		return { version: SUMMARY_CACHE_VERSION, entries: {} };
+	}
+}
+
+function saveSummaryCache(cwd: string, cache: SummaryCache): void {
+	const cachePath = getSummaryCachePath(cwd);
+	mkdirSync(dirname(cachePath), { recursive: true });
+	writeFileSync(cachePath, JSON.stringify(cache), "utf8");
+}
+
+function summaryInputForCard(card: IndexedCard, config: OllamaSummaryConfig): string {
+	return truncateEmbeddingInput(card.text, config.maxInputChars);
+}
+
+function summaryCacheKey(config: OllamaSummaryConfig, input: string): { key: string; inputHash: string } {
+	const inputHash = hashBuffer(Buffer.from(input, "utf8"));
+	return { key: `${SUMMARY_CACHE_VERSION}:${SUMMARY_PROMPT_VERSION}:${config.model}:${inputHash}`, inputHash };
+}
+
+function cleanGeneratedSummary(value: string): string {
+	const cleaned = value
+		.replace(/<think>[\s\S]*?<\/think>/gi, "")
+		.replace(/^\s*(?:summary|answer)\s*:\s*/i, "")
+		.replace(/^[-*]\s+/, "")
+		.replace(/["'`]+$/g, "")
+		.replace(/^["'`]+/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+	return cleaned.length > 500 ? `${cleaned.slice(0, 499)}…` : cleaned;
+}
+
+function summaryPromptForCard(card: IndexedCard, input: string): string {
+	return [
+		"You summarize code for semantic code-search results.",
+		"Return exactly one concise factual sentence, max 45 words, plain text only.",
+		"Explain what this file/class/function/method does and why it would answer a developer's where/how question.",
+		"Prefer concrete behavior, domain entities, route/action names, important calls, and create/update/delete/read responsibilities.",
+		"Do not mention that you are summarizing. Do not use markdown.",
+		"",
+		`Card: ${card.kind} ${card.name}`,
+		`Path: ${card.path}:${card.startLine}-${card.endLine}`,
+		input,
+	].join("\n");
+}
+
+async function fetchOllamaSummary(card: IndexedCard, input: string, config: OllamaSummaryConfig, signal?: AbortSignal): Promise<string> {
+	const payload = await fetchJsonWithTimeout(
+		`${config.baseUrl}/api/generate`,
+		{
+			method: "POST",
+			headers: { "content-type": "application/json", "user-agent": "pi-config-semantic-search/0.1" },
+			body: JSON.stringify({
+				model: config.model,
+				prompt: summaryPromptForCard(card, input),
+				stream: false,
+				options: { temperature: 0, num_predict: 120 },
+			}),
+		},
+		config.timeoutMs,
+		signal,
+	);
+	const response = (payload as { response?: unknown }).response;
+	if (typeof response !== "string" || !response.trim()) throw new Error("Ollama returned an empty summary response.");
+	return cleanGeneratedSummary(response);
+}
+
+function cardWithGeneratedSummary(card: IndexedCard, summary: string): IndexedCard {
+	const text = card.text.includes("Summary:")
+		? card.text.replace(/^Summary:.*$/m, `Summary: ${summary}`)
+		: `${card.text}\nSummary: ${summary}`;
+	return {
+		...card,
+		summary,
+		text,
+		vector: makeVector([
+			{ text, weight: 1.8 },
+			{ text: summary, weight: 3.2 },
+			{ text: card.path, weight: 2.8 },
+			{ text: card.symbols.join(" "), weight: 3.6 },
+		]),
+	};
+}
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T, index: number) => Promise<R>): Promise<R[]> {
+	const results = new Array<R>(items.length);
+	let nextIndex = 0;
+	const workerCount = Math.min(Math.max(1, concurrency), items.length);
+	await Promise.all(Array.from({ length: workerCount }, async () => {
+		while (nextIndex < items.length) {
+			const currentIndex = nextIndex++;
+			results[currentIndex] = await mapper(items[currentIndex]!, currentIndex);
+		}
+	}));
+	return results;
+}
+
+async function applyOllamaCardSummaries(
+	index: SearchIndex,
+	config: OllamaSummaryConfig,
+	options: { writeCache: boolean; signal?: AbortSignal; onProgress?: (message: string) => void },
+): Promise<SummaryMetadata> {
+	const cache = options.writeCache ? loadSummaryCache(index.cwd) : { version: SUMMARY_CACHE_VERSION, entries: {} };
+	const pending: Array<{ cardIndex: number; card: IndexedCard; input: string; key: string; inputHash: string }> = [];
+	let cachedCards = 0;
+
+	index.cards = index.cards.map((card, cardIndex) => {
+		const input = summaryInputForCard(card, config);
+		const { key, inputHash } = summaryCacheKey(config, input);
+		const cached = cache.entries[key];
+		if (cached?.summary && cached.inputHash === inputHash && cached.model === config.model) {
+			cachedCards++;
+			return cardWithGeneratedSummary(card, cached.summary);
+		}
+		pending.push({ cardIndex, card, input, key, inputHash });
+		return card;
+	});
+
+	if (pending.length > 0) {
+		options.onProgress?.(`Summarizing ${pending.length} semantic cards with Ollama model ${config.model} (${config.concurrency} parallel)`);
+		const generated = await mapWithConcurrency(pending, config.concurrency, async (item, offset) => {
+			if (offset > 0 && offset % 25 === 0) options.onProgress?.(`Summarized ${offset}/${pending.length} semantic cards with ${config.model}`);
+			const summary = await fetchOllamaSummary(item.card, item.input, config, options.signal);
+			return { ...item, summary };
+		});
+		for (const item of generated) {
+			index.cards[item.cardIndex] = cardWithGeneratedSummary(index.cards[item.cardIndex]!, item.summary);
+			cache.entries[item.key] = { model: config.model, inputHash: item.inputHash, summary: item.summary, updatedAt: new Date().toISOString() };
+		}
+		if (options.writeCache) saveSummaryCache(index.cwd, cache);
+	}
+
+	return {
+		provider: "ollama",
+		model: config.model,
+		baseUrl: config.baseUrl,
+		inputMaxChars: config.maxInputChars,
+		summarizedCards: pending.length,
+		cachedCards,
+		failedCards: 0,
+		createdAt: new Date().toISOString(),
+	};
+}
+
+function failedSummaryMetadata(config: OllamaSummaryConfig, failedCards: number): SummaryMetadata {
+	return {
+		provider: "ollama",
+		model: config.model,
+		baseUrl: config.baseUrl,
+		inputMaxChars: config.maxInputChars,
+		summarizedCards: 0,
+		cachedCards: 0,
+		failedCards,
+		createdAt: new Date().toISOString(),
+	};
 }
 
 function hasOllamaEmbeddings(index: SearchIndex, config?: OllamaEmbeddingConfig): boolean {
@@ -1412,6 +1672,7 @@ export function buildSearchIndex(cwd: string, options: BuildOptions = {}): Searc
 
 export async function buildSearchIndexWithEmbeddings(cwd: string, options: EmbeddingBuildOptions = {}): Promise<SearchIndex> {
 	const config = resolveOllamaEmbeddingConfig(options.ollama);
+	const summaryConfig = options.summary === false ? undefined : resolveOllamaSummaryConfig(options.summary);
 	const index = buildSearchIndex(cwd, { ...options, writeToDisk: false });
 	if (index.chunks.length === 0) {
 		index.embedding = {
@@ -1427,6 +1688,21 @@ export async function buildSearchIndexWithEmbeddings(cwd: string, options: Embed
 		memoryIndexes.set(index.cwd, index);
 		if (options.writeToDisk ?? true) saveSearchIndex(index);
 		return index;
+	}
+
+	if (summaryConfig?.enabled && index.cards.length > 0) {
+		try {
+			index.summary = await applyOllamaCardSummaries(index, summaryConfig, {
+				writeCache: options.writeToDisk ?? true,
+				signal: options.signal,
+				onProgress: options.onProgress,
+			});
+			options.onProgress?.(`Semantic-card summaries ready: ${index.summary.summarizedCards} generated, ${index.summary.cachedCards} cached with ${summaryConfig.model}`);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			index.summary = failedSummaryMetadata(summaryConfig, index.cards.length);
+			options.onProgress?.(`Ollama summaries unavailable; using local summaries (${message})`);
+		}
 	}
 
 	options.onProgress?.(`Embedding ${index.chunks.length} chunks and ${index.cards.length} semantic cards with Ollama model ${config.model} (max ${config.maxInputChars} chars/input)`);
@@ -1515,6 +1791,7 @@ export function getIndexStatus(cwd: string, index = loadSearchIndex(cwd)): Index
 		cards: index.cards.length,
 		updatedAt: index.updatedAt,
 		embedding: index.embedding,
+		summary: index.summary,
 	};
 
 	if (index.version !== INDEX_VERSION) {
@@ -1559,6 +1836,7 @@ async function ensureIndexWithEmbeddings(
 	ollama: Partial<OllamaEmbeddingConfig> | undefined,
 	signal?: AbortSignal,
 	onProgress?: (message: string) => void,
+	summary?: false | Partial<OllamaSummaryConfig>,
 ): Promise<{ index: SearchIndex; status: IndexStatus; rebuilt: boolean; config: OllamaEmbeddingConfig }> {
 	const absoluteCwd = resolve(cwd);
 	const config = resolveOllamaEmbeddingConfig(ollama);
@@ -1566,7 +1844,7 @@ async function ensureIndexWithEmbeddings(
 	let status = getIndexStatus(absoluteCwd, index);
 	let rebuilt = false;
 	if (!index || (refresh && status.stale) || !hasOllamaEmbeddings(index, config)) {
-		index = await buildSearchIndexWithEmbeddings(absoluteCwd, { writeToDisk: true, ollama: config, signal, onProgress });
+		index = await buildSearchIndexWithEmbeddings(absoluteCwd, { writeToDisk: true, ollama: config, summary, signal, onProgress });
 		status = getIndexStatus(absoluteCwd, index);
 		rebuilt = true;
 	}
@@ -1604,6 +1882,48 @@ function scoreTextOverlap(queryTerms: string[], text: string): number {
 
 type SearchableVectorItem = Pick<IndexedChunk, "path" | "symbols" | "vector"> & Partial<Pick<IndexedCard, "kind" | "name" | "summary">>;
 
+type QueryIntent = {
+	implementation: boolean;
+	creation: boolean;
+	explicitDocs: boolean;
+	explicitTests: boolean;
+};
+
+const IMPLEMENTATION_QUERY_TERMS = new Set(["where", "how", "implemented", "implementation", "defined", "declared", "handled", "created", "create", "creates", "built", "called", "used"]);
+const CREATION_QUERY_TERMS = new Set(["created", "create", "creates", "creation", "new", "insert", "save", "saved", "post", "route", "mutation"]);
+const DOC_QUERY_TERMS = new Set(["doc", "docs", "document", "documentation", "readme", "prd", "design"]);
+const TEST_QUERY_TERMS = new Set(["test", "tests", "spec", "coverage", "fixture"]);
+const CREATION_SYMBOL_TERMS = ["create", "created", "creating", "insert", "save", "new", "post", "put", "mutation", "add"];
+
+function inferQueryIntent(query: string): QueryIntent {
+	const rawTerms = new Set(splitSearchText(query).map((term) => term.toLowerCase()));
+	const explicitDocs = [...rawTerms].some((term) => DOC_QUERY_TERMS.has(term));
+	const explicitTests = [...rawTerms].some((term) => TEST_QUERY_TERMS.has(term));
+	return {
+		implementation: [...rawTerms].some((term) => IMPLEMENTATION_QUERY_TERMS.has(term)) && !explicitDocs && !explicitTests,
+		creation: [...rawTerms].some((term) => CREATION_QUERY_TERMS.has(term)),
+		explicitDocs,
+		explicitTests,
+	};
+}
+
+function isDocPath(path: string): boolean {
+	return /(^|\/)(docs?|adr|rfcs?)(\/|$)/i.test(path) || /(^|\/)(readme|design|prd|architecture)\.mdx?$/i.test(path) || /\.mdx?$/i.test(path);
+}
+
+function scoreIntentFit(intent: QueryIntent, item: SearchableVectorItem, source: "chunk" | "card"): number {
+	if (!intent.implementation) return 1;
+	let multiplier = 1;
+	if (isDocPath(item.path) && !intent.explicitDocs) multiplier *= 0.72;
+	if (isTestPath(item.path) && !intent.explicitTests) multiplier *= 0.76;
+	if (source === "card" && (item.kind === "function" || item.kind === "method" || item.kind === "class" || item.kind === "module")) multiplier *= 1.08;
+	if (intent.creation) {
+		const targetText = `${item.path} ${item.symbols.join(" ")} ${item.name ?? ""} ${item.summary ?? ""}`.toLowerCase();
+		if (CREATION_SYMBOL_TERMS.some((term) => targetText.includes(term))) multiplier *= 1.14;
+	}
+	return multiplier;
+}
+
 function buildReason(queryTerms: string[], queryConcepts: string[], item: SearchableVectorItem, vectorTerms: Set<string>): string[] {
 	const exactMatches = queryTerms.filter((term) => vectorTerms.has(term)).slice(0, 6);
 	const conceptMatches = queryConcepts.filter((term) => vectorTerms.has(term)).map((term) => term.slice("concept:".length));
@@ -1639,6 +1959,7 @@ export function searchIndex(index: SearchIndex, options: SearchOptions): SearchR
 	const queryConcepts = queryTokens.filter((term) => term.startsWith("concept:"));
 	const minScore = options.minScore ?? 0.001;
 	const queryEmbedding = options.queryEmbedding ? normalizeEmbedding(options.queryEmbedding) : undefined;
+	const queryIntent = inferQueryIntent(options.query);
 	const results: SearchResult[] = [];
 
 	const addResult = (item: IndexedChunk | IndexedCard, source: "chunk" | "card") => {
@@ -1655,11 +1976,13 @@ export function searchIndex(index: SearchIndex, options: SearchOptions): SearchR
 			typeof embeddingScore === "number"
 				? embeddingScore * (source === "card" ? 0.7 : 0.62) + vectorScore * (source === "card" ? 0.16 : 0.2) + lexicalScore * 0.08 + pathScore * 0.04 + symbolScore * 0.02
 				: vectorScore * (source === "card" ? 0.78 : 0.72) + lexicalScore * 0.14 + pathScore * 0.05 + symbolScore * 0.03;
-		const score = source === "card" ? rawScore * 1.05 : rawScore;
+		const intentFit = scoreIntentFit(queryIntent, item, source);
+		const score = (source === "card" ? rawScore * 1.05 : rawScore) * intentFit;
 		if (score < minScore) return;
 
 		const reason = buildReason(queryTerms, queryConcepts, item, vectorTerms);
-		if (source === "card" && "summary" in item && item.summary) reason.push(`summary: ${item.summary.slice(0, 120)}${item.summary.length > 120 ? "…" : ""}`);
+		if (intentFit > 1.001) reason.push("implementation/creation intent match");
+		else if (intentFit < 0.999) reason.push("lower-ranked because query asks for implementation location");
 		if (typeof embeddingScore === "number" && embeddingScore > 0.05) reason.unshift(source === "card" ? "Ollama semantic-card similarity" : "Ollama embedding similarity");
 		results.push({
 			path: item.path,
@@ -1715,14 +2038,14 @@ export function formatSearchResults(query: string, results: SearchResult[], inde
 		`Semantic search results for "${query}" (${results.length} shown, index: ${index.files.length} files / ${index.chunks.length} chunks / ${index.cards.length} semantic cards${embeddingLabel}):`,
 		"",
 		...results.map((result, index) => {
-			const scoreParts = [`vector ${result.vectorScore.toFixed(3)}`, `lexical ${result.lexicalScore.toFixed(3)}`];
-			if (typeof result.embeddingScore === "number") scoreParts.unshift(`embedding ${result.embeddingScore.toFixed(3)}`);
-			const sourceLabel = result.source === "card" ? ` [semantic card${result.cardKind ? `: ${result.cardKind}` : ""}${result.cardName ? ` ${result.cardName}` : ""}]` : "";
+			const sourceLabel = result.source === "card" ? ` [${result.cardKind ?? "card"}${result.cardName ? ` ${result.cardName}` : ""}]` : "";
+			const why = result.cardSummary || result.reason.join("; ");
 			const lines = [
 				`${index + 1}. ${result.path}:${result.startLine}-${result.endLine}${sourceLabel}`,
-				`   Score: ${result.score.toFixed(3)} (${scoreParts.join(", ")})`,
-				`   Why: ${result.reason.join("; ")}`,
+				`   Score: ${result.score.toFixed(3)}`,
+				`   Why: ${why}`,
 			];
+			if (result.cardSummary && result.reason.length > 0) lines.push(`   Matched because: ${result.reason.join("; ")}`);
 			if (result.symbols.length > 0) lines.push(`   Symbols: ${result.symbols.slice(0, 8).join(", ")}`);
 			if (result.preview) {
 				lines.push("   Preview:");
@@ -1825,6 +2148,7 @@ function formatStatus(status: IndexStatus, rebuilt = false): string {
 		`Files: ${status.files}`,
 		`Chunks: ${status.chunks}`,
 		`Semantic cards: ${status.cards}`,
+		`Summaries: ${status.summary ? `ollama/${status.summary.model} (${status.summary.summarizedCards} generated, ${status.summary.cachedCards} cached, ${status.summary.failedCards} failed)` : "local"}`,
 		`Embeddings: ${status.embedding ? `ollama/${status.embedding.model} (${status.embedding.dimensions} dims, ${status.embedding.embeddedChunks} chunks, ${status.embedding.embeddedCards} cards, max ${status.embedding.inputMaxChars ?? "unknown"} chars/input)` : "none"}`,
 		`Updated: ${status.updatedAt ?? "never"}`,
 		`Reason: ${status.reason}`,
@@ -1848,9 +2172,169 @@ function compactResultDetails(results: SearchResult[]) {
 	}));
 }
 
+function isProcessRunning(pid: number | undefined): boolean {
+	if (!pid || !Number.isFinite(pid)) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return error instanceof Error && (error as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+function writeBackgroundRebuildStatus(status: BackgroundRebuildStatus): void {
+	const statusPath = getIndexRebuildStatusPath(status.cwd);
+	mkdirSync(dirname(statusPath), { recursive: true });
+	writeFileSync(statusPath, JSON.stringify(status, null, 2), "utf8");
+}
+
+function readBackgroundRebuildStatus(cwd: string): BackgroundRebuildStatus | undefined {
+	const absoluteCwd = resolve(cwd);
+	const statusPath = getIndexRebuildStatusPath(absoluteCwd);
+	if (!existsSync(statusPath)) return undefined;
+	try {
+		const parsed = JSON.parse(readFileSync(statusPath, "utf8")) as Partial<BackgroundRebuildStatus>;
+		if (!parsed.status || !parsed.cwd || !parsed.logPath) return undefined;
+		return parsed as BackgroundRebuildStatus;
+	} catch {
+		return undefined;
+	}
+}
+
+function lastLogLines(logPath: string, count = 8): string[] {
+	if (!existsSync(logPath)) return [];
+	try {
+		return readFileSync(logPath, "utf8").trimEnd().split("\n").slice(-count);
+	} catch {
+		return [];
+	}
+}
+
+function inferBackgroundStatusFromLog(cwd: string): BackgroundRebuildStatus | undefined {
+	const absoluteCwd = resolve(cwd);
+	const logPath = getIndexRebuildLogPath(absoluteCwd);
+	const lines = lastLogLines(logPath, 200);
+	if (lines.length === 0) return undefined;
+	const lastFinished = [...lines].reverse().find((line) => /semantic-search background rebuild finished/.test(line));
+	const lastFailed = [...lines].reverse().find((line) => /semantic-search background rebuild failed/.test(line));
+	const lastStarted = [...lines].reverse().find((line) => /semantic-search background rebuild started/.test(line));
+	const timestamp = (line: string | undefined) => line?.match(/^\[([^\]]+)\]/)?.[1];
+	if (lastFailed && (!lastFinished || lines.lastIndexOf(lastFailed) > lines.lastIndexOf(lastFinished))) {
+		return { status: "failed", cwd: absoluteCwd, logPath, startedAt: timestamp(lastStarted), finishedAt: timestamp(lastFailed), error: lastFailed };
+	}
+	if (lastFinished) return { status: "succeeded", cwd: absoluteCwd, logPath, startedAt: timestamp(lastStarted), finishedAt: timestamp(lastFinished), message: lastFinished };
+	if (lastStarted) return { status: "unknown", cwd: absoluteCwd, logPath, startedAt: timestamp(lastStarted), message: "rebuild started; no finish/failure line found yet" };
+	return undefined;
+}
+
+function currentBackgroundRebuildStatus(cwd: string): BackgroundRebuildStatus | undefined {
+	const status = readBackgroundRebuildStatus(cwd) ?? inferBackgroundStatusFromLog(cwd);
+	if (!status) return undefined;
+	if (status.status === "running" && !isProcessRunning(status.pid)) {
+		return { ...status, status: "unknown", message: "recorded as running, but the process is no longer active; check the log for finish/failure details" };
+	}
+	return status;
+}
+
+function formatBackgroundRebuildStatus(cwd: string, indexStatus: IndexStatus): string {
+	const status = currentBackgroundRebuildStatus(cwd);
+	const logPath = status?.logPath ?? getIndexRebuildLogPath(resolve(cwd));
+	const lines = ["Semantic index background rebuild status:"];
+	if (!status) {
+		lines.push("State: none recorded");
+		lines.push(`Log: ${logPath}`);
+	} else {
+		lines.push(`State: ${status.status}${status.status === "running" && isProcessRunning(status.pid) ? " (process active)" : ""}`);
+		if (status.pid) lines.push(`PID: ${status.pid}`);
+		if (status.startedAt) lines.push(`Started: ${status.startedAt}`);
+		if (status.finishedAt) lines.push(`Finished: ${status.finishedAt}`);
+		if (status.embeddingModel) lines.push(`Embedding model: ${status.embeddingModel}`);
+		if (status.summariesDisabled) lines.push("Summaries: disabled");
+		else if (status.summaryModel) lines.push(`Summary model: ${status.summaryModel}`);
+		if (status.message) lines.push(`Message: ${status.message}`);
+		if (status.error) lines.push(`Error: ${status.error}`);
+		lines.push(`Log: ${status.logPath}`);
+	}
+	lines.push("", `Current index: ${indexStatus.stale ? "stale" : "fresh"} (${indexStatus.reason})`);
+	if (indexStatus.summary) lines.push(`Summaries: ollama/${indexStatus.summary.model} (${indexStatus.summary.summarizedCards} generated, ${indexStatus.summary.cachedCards} cached, ${indexStatus.summary.failedCards} failed)`);
+	if (indexStatus.embedding) lines.push(`Embeddings: ollama/${indexStatus.embedding.model} (${indexStatus.embedding.embeddedChunks} chunks, ${indexStatus.embedding.embeddedCards} cards)`);
+	const recent = lastLogLines(logPath, 6);
+	if (recent.length > 0) lines.push("", "Recent log:", ...recent.map((line) => `  ${line}`));
+	return lines.join("\n");
+}
+
+function startBackgroundIndexBuild(cwd: string, options: { embeddingModel?: string; summaryModel?: string; summariesDisabled?: boolean } = {}): { pid?: number; logPath: string; statusPath: string } {
+	const absoluteCwd = resolve(cwd);
+	const logPath = getIndexRebuildLogPath(absoluteCwd);
+	const statusPath = getIndexRebuildStatusPath(absoluteCwd);
+	mkdirSync(dirname(logPath), { recursive: true });
+	const logFd = openSync(logPath, "a");
+	const parentStartedAt = new Date().toISOString();
+	const code = [
+		`import { writeFileSync } from "node:fs";`,
+		`import { buildSearchIndexWithEmbeddings } from ${JSON.stringify(import.meta.url)};`,
+		`const cwd = ${JSON.stringify(absoluteCwd)};`,
+		`const logPath = ${JSON.stringify(logPath)};`,
+		`const statusPath = ${JSON.stringify(statusPath)};`,
+		`const startedAt = new Date().toISOString();`,
+		`const baseStatus = { status: "running", cwd, logPath, pid: process.pid, startedAt, embeddingModel: ${JSON.stringify(options.embeddingModel)}, summaryModel: ${JSON.stringify(options.summaryModel)}, summariesDisabled: ${JSON.stringify(options.summariesDisabled ?? false)} };`,
+		`const writeStatus = (updates = {}) => writeFileSync(statusPath, JSON.stringify({ ...baseStatus, ...updates }, null, 2), "utf8");`,
+		`writeStatus();`,
+		`console.error(\`[\${startedAt}] semantic-search background rebuild started for \${cwd} (pid \${process.pid})\`);`,
+		`try {`,
+		`  const index = await buildSearchIndexWithEmbeddings(cwd, {`,
+		`    writeToDisk: true,`,
+		`    ollama: { model: ${JSON.stringify(options.embeddingModel ?? null)} ?? undefined },`,
+		`    summary: ${JSON.stringify(options.summariesDisabled ?? false)} ? false : { model: ${JSON.stringify(options.summaryModel ?? null)} ?? undefined },`,
+		`    onProgress: (message) => console.error(\`[\${new Date().toISOString()}] \${message}\`),`,
+		`  });`,
+		`  const message = \`semantic-search background rebuild finished: \${index.files.length} files / \${index.chunks.length} chunks / \${index.cards.length} semantic cards\`;`,
+		`  console.error(\`[\${new Date().toISOString()}] \${message}\`);`,
+		`  writeStatus({ status: "succeeded", finishedAt: new Date().toISOString(), message });`,
+		`} catch (error) {`,
+		`  const errorMessage = error instanceof Error ? error.stack ?? error.message : String(error);`,
+		`  console.error(\`[\${new Date().toISOString()}] semantic-search background rebuild failed: \${errorMessage}\`);`,
+		`  writeStatus({ status: "failed", finishedAt: new Date().toISOString(), error: errorMessage });`,
+		`  process.exitCode = 1;`,
+		`}`,
+	].join("\n");
+	try {
+		const child = spawn(process.execPath, ["--input-type=module", "-e", code], {
+			cwd: absoluteCwd,
+			detached: true,
+			stdio: ["ignore", logFd, logFd],
+			env: process.env,
+		});
+		child.unref();
+		writeBackgroundRebuildStatus({
+			status: "running",
+			cwd: absoluteCwd,
+			logPath,
+			pid: child.pid,
+			startedAt: parentStartedAt,
+			embeddingModel: options.embeddingModel,
+			summaryModel: options.summaryModel,
+			summariesDisabled: options.summariesDisabled,
+			message: "background rebuild process started",
+		});
+		writeFileSync(logPath, `[${parentStartedAt}] semantic-search background rebuild spawned${child.pid ? ` pid ${child.pid}` : ""}\n`, { flag: "a" });
+		return { pid: child.pid, logPath, statusPath };
+	} finally {
+		closeSync(logFd);
+	}
+}
+
+function flagValue(tokens: string[], flag: string): string | undefined {
+	const equals = `${flag}=`;
+	const inline = tokens.find((token) => token.startsWith(equals));
+	if (inline) return inline.slice(equals.length) || undefined;
+	const index = tokens.indexOf(flag);
+	return index >= 0 ? tokens[index + 1] : undefined;
+}
+
 export default function semanticSearchExtension(pi: ExtensionAPI) {
 	pi.registerCommand("index", {
-		description: "Build, rebuild, or show status for the semantic code-search index. Usage: /index [status|rebuild|build|lexical] [ollama-model]",
+		description: "Build, rebuild, or show status for the semantic code-search index. Usage: /index [status|rebuild|build|lexical] [ollama-model] [--summary-model model] [--background|--status]",
 		handler: async (args, ctx) => {
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			const action = tokens[0] ?? "rebuild";
@@ -1860,16 +2344,36 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 				pi.sendMessage?.({ customType: "semantic-search", content: formatStatus(status), display: true, details: status });
 				return;
 			}
+			if (action === "rebuild-status" || tokens.includes("--status")) {
+				const status = getIndexStatus(ctx.cwd);
+				const rebuildStatus = currentBackgroundRebuildStatus(ctx.cwd);
+				ctx.ui.notify(rebuildStatus ? `Background rebuild: ${rebuildStatus.status}` : "No background rebuild recorded", rebuildStatus?.status === "failed" ? "error" : "info");
+				pi.sendMessage?.({ customType: "semantic-search", content: formatBackgroundRebuildStatus(ctx.cwd, status), display: true, details: { index: status, rebuild: rebuildStatus } });
+				return;
+			}
 
 			const lexicalOnly = tokens.includes("lexical") || tokens.includes("--lexical");
-			const model = tokens.find((token) => !["rebuild", "build", "embeddings", "--embeddings", "--ollama", "lexical", "--lexical"].includes(token));
-			ctx.ui.setStatus?.("semantic-search", lexicalOnly ? "indexing…" : "embedding…");
+			const background = tokens.includes("--background") || tokens.includes("background") || tokens.includes("bg");
+			const summariesDisabled = tokens.includes("--no-summaries") || tokens.includes("no-summaries");
+			const summaryModel = flagValue(tokens, "--summary-model");
+			const valueIndexesToSkip = new Set<number>();
+			const summaryFlagIndex = tokens.indexOf("--summary-model");
+			if (summaryFlagIndex >= 0) valueIndexesToSkip.add(summaryFlagIndex + 1);
+			const model = tokens.find((token, index) => !valueIndexesToSkip.has(index) && !["rebuild", "build", "embeddings", "--embeddings", "--ollama", "lexical", "--lexical", "--background", "background", "bg", "--no-summaries", "no-summaries", "--summary-model"].includes(token) && !token.startsWith("--summary-model="));
+			if (background && !lexicalOnly) {
+				const started = startBackgroundIndexBuild(ctx.cwd, { embeddingModel: model, summaryModel, summariesDisabled });
+				ctx.ui.notify(`Started semantic index rebuild in background${started.pid ? ` (pid ${started.pid})` : ""}. Log: ${started.logPath}`, "info");
+				pi.sendMessage?.({ customType: "semantic-search", content: `Semantic index rebuild started in background${started.pid ? ` (pid ${started.pid})` : ""}.\nLog: ${started.logPath}\nRun /index status to check freshness.`, display: true, details: started });
+				return;
+			}
+			ctx.ui.setStatus?.("semantic-search", lexicalOnly ? "indexing…" : summariesDisabled ? "embedding…" : "summarizing…");
 			try {
 				const index = lexicalOnly
 					? buildSearchIndex(ctx.cwd, { writeToDisk: true })
 					: await buildSearchIndexWithEmbeddings(ctx.cwd, {
 							writeToDisk: true,
 							ollama: { model },
+							summary: summariesDisabled ? false : { model: summaryModel },
 							onProgress: (message) => ctx.ui.setStatus?.("semantic-search", message),
 						});
 				const status = getIndexStatus(ctx.cwd, index);
@@ -1934,7 +2438,9 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			includeTests: Type.Optional(Type.Boolean({ description: "Whether test files may appear in results. Defaults to true." })),
 			refresh: Type.Optional(Type.Boolean({ description: "Refresh a missing/stale index before searching. Defaults to true." })),
 			useEmbeddings: Type.Optional(Type.Boolean({ description: "Use local Ollama embeddings when available. Defaults to true; set false for lexical-only search." })),
+			useSummaries: Type.Optional(Type.Boolean({ description: "Generate Ollama summaries for semantic cards when rebuilding an embedding index. Defaults to true." })),
 			embeddingModel: Type.Optional(Type.String({ description: `Ollama embedding model to use. Defaults to ${DEFAULT_OLLAMA_EMBED_MODEL} or OLLAMA_EMBED_MODEL.` })),
+			summaryModel: Type.Optional(Type.String({ description: `Ollama generation model for semantic-card summaries. Defaults to ${DEFAULT_OLLAMA_SUMMARY_MODEL} or PI_SEMANTIC_SEARCH_SUMMARY_MODEL.` })),
 			embeddingMaxChars: Type.Optional(Type.Number({ description: `Maximum characters sent to Ollama per embedding input before adaptive retries (default ${DEFAULT_OLLAMA_EMBED_INPUT_MAX_CHARS}).`, minimum: MIN_OLLAMA_EMBED_INPUT_CHARS, maximum: MAX_OLLAMA_EMBED_INPUT_MAX_CHARS })),
 			ollamaUrl: Type.Optional(Type.String({ description: `Ollama base URL. Defaults to OLLAMA_BASE_URL/OLLAMA_HOST or ${DEFAULT_OLLAMA_BASE_URL}.` })),
 		}),
@@ -1947,6 +2453,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			let embeddingUsed = false;
 			let warning: string | undefined;
 			const ollama = { model: params.embeddingModel, baseUrl: params.ollamaUrl, maxInputChars: params.embeddingMaxChars };
+			const summary = params.useSummaries === false ? false : { model: params.summaryModel, baseUrl: params.ollamaUrl };
 
 			if (params.useEmbeddings === false) {
 				({ index, status, rebuilt } = ensureIndex(ctx.cwd, params.refresh ?? true));
@@ -1958,7 +2465,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 				});
 			} else {
 				try {
-					const ensured = await ensureIndexWithEmbeddings(ctx.cwd, params.refresh ?? true, ollama, signal, (message) => onUpdate?.({ content: [{ type: "text", text: message }], details: {} }));
+					const ensured = await ensureIndexWithEmbeddings(ctx.cwd, params.refresh ?? true, ollama, signal, (message) => onUpdate?.({ content: [{ type: "text", text: message }], details: {} }), summary);
 					index = ensured.index;
 					status = ensured.status;
 					rebuilt = ensured.rebuilt;
@@ -1993,7 +2500,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 					rebuilt,
 					embeddingUsed,
 					warning,
-					index: { files: index.files.length, chunks: index.chunks.length, cards: index.cards.length, updatedAt: index.updatedAt, stale: status.stale, reason: status.reason, embedding: index.embedding },
+					index: { files: index.files.length, chunks: index.chunks.length, cards: index.cards.length, updatedAt: index.updatedAt, stale: status.stale, reason: status.reason, embedding: index.embedding, summary: index.summary },
 					results: compactResultDetails(results),
 				},
 			};
