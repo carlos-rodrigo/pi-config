@@ -32,7 +32,6 @@ pi install ./extensions/prompt-queue
 pi install ./extensions/review-mode
 pi install ./extensions/semantic-search
 pi install ./extensions/session-query
-pi install ./extensions/subagent
 pi install ./extensions/verify
 pi install ./extensions/web-tools
 pi install ./extensions/workflow-modes
@@ -58,7 +57,6 @@ pi install ./extensions/worktree-manager
 | [review-mode](review-mode/) | Overlay review workbench for local/staged/unstaged/outgoing diffs with colorized preview, hunk/file/all scopes, same-session questions, and saved review notes |
 | [semantic-search](semantic-search/) | Local Ollama-backed hybrid code index, semantic search tool, and repo concept map |
 | [session-query](session-query/) | Query previous Pi session files for context and decisions |
-| [subagent](subagent/) | Delegate tasks to specialized sub-agents (synchronous/blocking) |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
 | [workflow-modes](workflow-modes/) | Smart/deep1/deep2/deep3/fast mode switching |
 | [verify](verify/) | Preflight `verification_plan`, back-pressure hook, and `scripts/verify.sh` scaffolding via `/setup-verify` |
@@ -71,4 +69,4 @@ pi install ./extensions/worktree-manager
 - **auto-prompt** + **bordered-editor** work together via `pi.events` — auto-prompt generates suggestions, bordered-editor renders the ghost text.
 - **feature-flow** and **worktree-manager** share the same worktree core but are independent extensions.
 - **agent-jobs** requires Pi to be running inside tmux; it uses detached windows and persists results under `.pi/agent-jobs/`.
-- Researcher, oracle, and deep-review prompt templates default to **agent-jobs**; use `subagent` only when you explicitly want to block.
+- Researcher, oracle, and deep-review prompt templates use **agent-jobs** for non-blocking background work.

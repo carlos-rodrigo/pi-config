@@ -32,7 +32,6 @@ pi install ./extensions/ownership-loop
 pi install ./extensions/review-mode
 pi install ./extensions/semantic-search
 pi install ./extensions/session-query
-pi install ./extensions/subagent
 pi install ./extensions/verify
 pi install ./extensions/web-tools
 pi install ./extensions/workflow-modes
@@ -76,7 +75,6 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[review-mode](extensions/review-mode/)** — Overlay review workbench for local/staged/unstaged/outgoing diffs.
 - **[semantic-search](extensions/semantic-search/)** — Local Ollama-backed hybrid code index, semantic search, and repo concept map.
 - **[session-query](extensions/session-query/)** — Query previous Pi session files for context and decisions.
-- **[subagent](extensions/subagent/)** — Delegate tasks to specialized sub-agents with isolated context windows (synchronous/blocking).
 - **[verify](extensions/verify/)** — Preflight `verification_plan`, back-pressure verification hook, and `/setup-verify` scaffolder.
 - **[web-tools](extensions/web-tools/)** — Web search and fetch tools.
 - **[workflow-modes](extensions/workflow-modes/)** — Smart/deep1/deep2/deep3/fast mode switching.
@@ -84,7 +82,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 
 ### [Agents](agents/)
 
-Sub-agent definitions used by the subagent and agent-jobs extensions:
+Agent definitions used by the agent-jobs extension:
 
 - **oracle** — Deep reasoning second opinion (gpt-5.5). For complex debugging, architecture decisions, and thorough code analysis. Read-only.
 - **researcher** — Concise research specialist (gpt-5.5). Investigates technologies, reads docs/source, compares approaches, and returns evidence-first briefs with bounded tool/output budgets. Uses `websearch`/`webfetch` instead of shelling out.
@@ -117,7 +115,7 @@ Workflow prompt templates:
 ## Usage Examples
 
 ```
-# Direct — the main agent decides when to use sub-agents
+# Direct — the main agent starts background agent jobs
 Use the oracle to review the auth logic in src/auth/. I want to make sure there are no edge cases.
 Use the researcher agent to investigate how Next.js App Router handles parallel routes.
 
@@ -134,6 +132,6 @@ save it
 /oracle-checkpoint Choose an approach for cache invalidation across worker + API boundaries
 /deep-review Review the error handling in src/api/
 
-# Chain — sequential handoff
-Use a chain: first have researcher investigate state of art for auth tokens, then have the oracle analyze how our current auth compares.
+# Sequential handoff
+Use researcher to investigate state of art for auth tokens, then ask oracle to analyze how our current auth compares.
 ```
