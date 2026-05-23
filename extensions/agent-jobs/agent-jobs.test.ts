@@ -54,12 +54,12 @@ test("buildRunScript launches pi in json mode with prompt and persistent logs", 
 	assert.match(script, /exit\.json/);
 });
 
-test("buildTmuxNewWindowArgs creates a detached window that keeps results inspectable", () => {
+test("buildTmuxNewWindowArgs creates a detached window that exits when the job finishes", () => {
 	const args = buildTmuxNewWindowArgs("pi-oracle-abcdef", "/tmp/repo", "/tmp/repo/.pi/agent-jobs/job/run.sh");
 
 	assert.deepEqual(args.slice(0, 6), ["new-window", "-d", "-n", "pi-oracle-abcdef", "-c", "/tmp/repo"]);
-	assert.match(args[6]!, /bash '\/tmp\/repo\/\.pi\/agent-jobs\/job\/run\.sh'/);
-	assert.match(args[6]!, /Press Enter to close/);
+	assert.equal(args[6], "bash '/tmp/repo/.pi/agent-jobs/job/run.sh'");
+	assert.doesNotMatch(args[6]!, /read _|Press Enter to close/);
 });
 
 test("parseAgentEvents extracts final assistant output, usage, and tool count", () => {

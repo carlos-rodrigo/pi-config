@@ -264,21 +264,12 @@ mv "$exit_tmp" ${shellQuote(params.exitPath)}
 echo ""
 echo "Agent process exited with code $code"
 echo "Result will be written by the parent pi extension: ${params.resultPath}"
-echo "You can close this window when done."
 exit "$code"
 `;
 }
 
 export function buildTmuxNewWindowArgs(windowName: string, cwd: string, runScriptPath: string): string[] {
-	const command = [
-		`bash ${shellQuote(runScriptPath)}`,
-		"code=$?",
-		"echo",
-		"echo '--- pi agent job window ---'",
-		"echo 'Job finished. Press Enter to close this tmux window.'",
-		"read _",
-		"exit $code",
-	].join("; ");
+	const command = `bash ${shellQuote(runScriptPath)}`;
 	return ["new-window", "-d", "-n", windowName, "-c", cwd, command];
 }
 
