@@ -1,10 +1,10 @@
 # semantic-search
 
-Local hybrid code search for Pi, backed by Ollama embeddings plus lexical/symbol ranking.
+Local hybrid code search for Pi, backed by required local Ollama semantic-card summaries and embeddings plus lexical/symbol ranking.
 
 ## Tools
 
-- `semantic_search` — natural-language code search over a local index. Uses local Ollama-generated semantic-card summaries plus embeddings by default, with lexical fallback. Returns ranked paths, line ranges, summary-based reasons, symbols, semantic-card matches, and compact previews.
+- `semantic_search` — natural-language code search over a local index. Uses local Ollama-generated semantic-card summaries plus chunk/card embeddings by default. If Ollama or a required model is unavailable, it reports setup instructions instead of silently falling back to lexical search. Returns ranked paths, line ranges, summary-based reasons, symbols, semantic-card matches, and compact previews.
 - `repo_map` — clusters indexed files by reusable code concepts such as `auth`, `billing`, `search`, `ui`, and `agent`.
 - `index_status` — shows whether the index exists and is fresh.
 
@@ -18,28 +18,35 @@ Local hybrid code search for Pi, backed by Ollama embeddings plus lexical/symbol
 /index rebuild --summary-model qwen2.5-coder:32b
 /index rebuild --background
 /index rebuild --status  # show background rebuild pid/state/log and current index freshness
-/index rebuild --no-summaries
-/index lexical           # rebuild lexical-only
+/index rebuild --no-summaries # diagnostic: embeddings without generated card summaries
+/index lexical           # diagnostic: rebuild lexical-only
 /code-search <q>         # run a natural-language search and show results in the session
 ```
 
 The index is stored under `.pi/semantic-search/index.json` in each project and is ignored by this repo's git settings.
 
-## Ollama setup
+## Requirements
+
+Default `semantic_search`, `/code-search`, and `/index rebuild` require local Ollama and these models:
 
 ```bash
+# Start Ollama if it is not already managed by the desktop app/service:
+ollama serve
+
 ollama pull nomic-embed-text
 ollama pull qwen2.5-coder:14b
 # optional stronger/larger embedding model
 ollama pull mxbai-embed-large
 ```
 
+Lexical-only paths still exist for diagnostics (`/index lexical`, `/index rebuild --no-summaries`, or `semantic_search` with `useEmbeddings=false/useSummaries=false`), but they are explicit lower-quality escape hatches, not the default.
+
 Configuration:
 
 - `OLLAMA_HOST` or `OLLAMA_BASE_URL` — defaults to `http://127.0.0.1:11434`
 - `OLLAMA_EMBED_MODEL` or `PI_SEMANTIC_SEARCH_EMBED_MODEL` — embedding model, defaults to `nomic-embed-text`
 - `PI_SEMANTIC_SEARCH_SUMMARY_MODEL` — generation model for semantic-card summaries, defaults to `qwen2.5-coder:14b`
-- `PI_SEMANTIC_SEARCH_SUMMARIES=false` — disable Ollama summary generation and use deterministic local summaries
+- `PI_SEMANTIC_SEARCH_SUMMARIES=false` — disables default summary generation and now causes the required default path to fail; prefer explicit lexical/debug commands when you intentionally want lower-quality local summaries
 - `PI_SEMANTIC_SEARCH_SUMMARY_CONCURRENCY` — parallel summary requests, defaults to `2`
 - `PI_SEMANTIC_SEARCH_EMBED_MAX_CHARS` — max characters sent per Ollama embedding input before adaptive retries; defaults to `6000`
 - `PI_SEMANTIC_SEARCH_SUMMARY_MAX_CHARS` — max characters sent per Ollama summary prompt; defaults to `10000`
@@ -47,6 +54,7 @@ Configuration:
 ## Notes
 
 - Calls only your local Ollama server; no cloud embedding service is used.
+- Default search/index rebuilds require Ollama summaries and embeddings; missing Ollama/models are treated as setup errors, not automatic lexical fallback.
 - Builds semantic cards for each file and detected symbols (classes, modules, methods, functions, markdown headings). Cards include path role, symbols, calls/references, comments, inferred concepts, and an Ollama-generated concise summary for meaning-oriented queries.
 - Summary generation runs in parallel during embedding index builds and caches unchanged card summaries under `.pi/semantic-search/summaries.json`.
 - `/index rebuild --background` starts the slower summary+embedding rebuild in a detached Node process and logs to `.pi/semantic-search/rebuild.log`.

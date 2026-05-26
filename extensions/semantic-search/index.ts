@@ -1138,17 +1138,16 @@ async function applyOllamaCardSummaries(
 	};
 }
 
-function failedSummaryMetadata(config: OllamaSummaryConfig, failedCards: number): SummaryMetadata {
-	return {
-		provider: "ollama",
-		model: config.model,
-		baseUrl: config.baseUrl,
-		inputMaxChars: config.maxInputChars,
-		summarizedCards: 0,
-		cachedCards: 0,
-		failedCards,
-		createdAt: new Date().toISOString(),
-	};
+function assertRequiredSummariesEnabled(config: OllamaSummaryConfig): void {
+	if (config.enabled) return;
+	throw new Error("Ollama semantic-card summaries are required for default semantic search; remove PI_SEMANTIC_SEARCH_SUMMARIES=false or use an explicit lexical/debug mode.");
+}
+
+function hasOllamaSummaries(index: SearchIndex, config?: OllamaSummaryConfig): boolean {
+	if (index.cards.length === 0) return true;
+	if (!index.summary || index.summary.provider !== "ollama") return false;
+	if (config && (index.summary.model !== config.model || index.summary.baseUrl !== config.baseUrl || index.summary.inputMaxChars !== config.maxInputChars)) return false;
+	return index.summary.failedCards === 0 && index.summary.summarizedCards + index.summary.cachedCards >= index.cards.length;
 }
 
 function hasOllamaEmbeddings(index: SearchIndex, config?: OllamaEmbeddingConfig): boolean {
@@ -1673,6 +1672,7 @@ export function buildSearchIndex(cwd: string, options: BuildOptions = {}): Searc
 export async function buildSearchIndexWithEmbeddings(cwd: string, options: EmbeddingBuildOptions = {}): Promise<SearchIndex> {
 	const config = resolveOllamaEmbeddingConfig(options.ollama);
 	const summaryConfig = options.summary === false ? undefined : resolveOllamaSummaryConfig(options.summary);
+	if (summaryConfig) assertRequiredSummariesEnabled(summaryConfig);
 	const index = buildSearchIndex(cwd, { ...options, writeToDisk: false });
 	if (index.chunks.length === 0) {
 		index.embedding = {
@@ -1690,19 +1690,13 @@ export async function buildSearchIndexWithEmbeddings(cwd: string, options: Embed
 		return index;
 	}
 
-	if (summaryConfig?.enabled && index.cards.length > 0) {
-		try {
-			index.summary = await applyOllamaCardSummaries(index, summaryConfig, {
-				writeCache: options.writeToDisk ?? true,
-				signal: options.signal,
-				onProgress: options.onProgress,
-			});
-			options.onProgress?.(`Semantic-card summaries ready: ${index.summary.summarizedCards} generated, ${index.summary.cachedCards} cached with ${summaryConfig.model}`);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			index.summary = failedSummaryMetadata(summaryConfig, index.cards.length);
-			options.onProgress?.(`Ollama summaries unavailable; using local summaries (${message})`);
-		}
+	if (summaryConfig && index.cards.length > 0) {
+		index.summary = await applyOllamaCardSummaries(index, summaryConfig, {
+			writeCache: options.writeToDisk ?? true,
+			signal: options.signal,
+			onProgress: options.onProgress,
+		});
+		options.onProgress?.(`Semantic-card summaries ready: ${index.summary.summarizedCards} generated, ${index.summary.cachedCards} cached with ${summaryConfig.model}`);
 	}
 
 	options.onProgress?.(`Embedding ${index.chunks.length} chunks and ${index.cards.length} semantic cards with Ollama model ${config.model} (max ${config.maxInputChars} chars/input)`);
@@ -1840,10 +1834,12 @@ async function ensureIndexWithEmbeddings(
 ): Promise<{ index: SearchIndex; status: IndexStatus; rebuilt: boolean; config: OllamaEmbeddingConfig }> {
 	const absoluteCwd = resolve(cwd);
 	const config = resolveOllamaEmbeddingConfig(ollama);
+	const summaryConfig = summary === false ? undefined : resolveOllamaSummaryConfig(summary);
+	if (summaryConfig) assertRequiredSummariesEnabled(summaryConfig);
 	let index = loadSearchIndex(absoluteCwd);
 	let status = getIndexStatus(absoluteCwd, index);
 	let rebuilt = false;
-	if (!index || (refresh && status.stale) || !hasOllamaEmbeddings(index, config)) {
+	if (!index || (refresh && status.stale) || !hasOllamaEmbeddings(index, config) || (summaryConfig && !hasOllamaSummaries(index, summaryConfig))) {
 		index = await buildSearchIndexWithEmbeddings(absoluteCwd, { writeToDisk: true, ollama: config, summary, signal, onProgress });
 		status = getIndexStatus(absoluteCwd, index);
 		rebuilt = true;
@@ -2148,10 +2144,42 @@ function formatStatus(status: IndexStatus, rebuilt = false): string {
 		`Files: ${status.files}`,
 		`Chunks: ${status.chunks}`,
 		`Semantic cards: ${status.cards}`,
-		`Summaries: ${status.summary ? `ollama/${status.summary.model} (${status.summary.summarizedCards} generated, ${status.summary.cachedCards} cached, ${status.summary.failedCards} failed)` : "local"}`,
-		`Embeddings: ${status.embedding ? `ollama/${status.embedding.model} (${status.embedding.dimensions} dims, ${status.embedding.embeddedChunks} chunks, ${status.embedding.embeddedCards} cards, max ${status.embedding.inputMaxChars ?? "unknown"} chars/input)` : "none"}`,
+		`Summaries: ${status.summary ? `ollama/${status.summary.model} (${status.summary.summarizedCards} generated, ${status.summary.cachedCards} cached, ${status.summary.failedCards} failed)` : "missing (required for default semantic search)"}`,
+		`Embeddings: ${status.embedding ? `ollama/${status.embedding.model} (${status.embedding.dimensions} dims, ${status.embedding.embeddedChunks} chunks, ${status.embedding.embeddedCards} cards, max ${status.embedding.inputMaxChars ?? "unknown"} chars/input)` : "missing (required for default semantic search)"}`,
 		`Updated: ${status.updatedAt ?? "never"}`,
 		`Reason: ${status.reason}`,
+	].join("\n");
+}
+
+function uniqueOllamaPullCommands(...models: Array<string | undefined>): string[] {
+	return unique(models.filter((model): model is string => Boolean(model?.trim())).map((model) => `ollama pull ${model}`));
+}
+
+function formatOllamaRequirementFailure(
+	error: unknown,
+	options: { embeddingModel?: string; summaryModel?: string; ollamaUrl?: string; embeddingMaxChars?: number } = {},
+): string {
+	const embeddingConfig = resolveOllamaEmbeddingConfig({
+		model: options.embeddingModel,
+		baseUrl: options.ollamaUrl,
+		maxInputChars: options.embeddingMaxChars,
+	});
+	const summaryConfig = resolveOllamaSummaryConfig({ model: options.summaryModel, baseUrl: options.ollamaUrl });
+	const cause = error instanceof Error ? error.message : String(error);
+	const setupCommands = uniqueOllamaPullCommands(embeddingConfig.model, summaryConfig.model);
+	return [
+		"Semantic search requires local Ollama summaries and embeddings; it no longer falls back to lexical search by default.",
+		`Ollama URL: ${embeddingConfig.baseUrl}`,
+		`Required embedding model: ${embeddingConfig.model}`,
+		`Required summary model: ${summaryConfig.model}`,
+		"",
+		"Setup:",
+		"  Start Ollama locally if it is not already running (for example: ollama serve)",
+		...setupCommands.map((command) => `  ${command}`),
+		"  /index rebuild",
+		"",
+		"Explicit lower-quality escape hatches remain available for diagnostics: /index lexical, /index rebuild --no-summaries, or semantic_search with useEmbeddings=false/useSummaries=false.",
+		`Error: ${cause}`,
 	].join("\n");
 }
 
@@ -2334,7 +2362,7 @@ function flagValue(tokens: string[], flag: string): string | undefined {
 
 export default function semanticSearchExtension(pi: ExtensionAPI) {
 	pi.registerCommand("index", {
-		description: "Build, rebuild, or show status for the semantic code-search index. Usage: /index [status|rebuild|build|lexical] [ollama-model] [--summary-model model] [--background|--status]",
+		description: "Build, rebuild, or show status for the semantic code-search index. Default rebuild requires local Ollama summaries + embeddings. Usage: /index [status|rebuild|build|lexical] [ollama-model] [--summary-model model] [--background|--status]",
 		handler: async (args, ctx) => {
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
 			const action = tokens[0] ?? "rebuild";
@@ -2382,7 +2410,12 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				ctx.ui.notify(`Indexing failed: ${message}`, "error");
-				pi.sendMessage?.({ customType: "semantic-search", content: `Indexing failed: ${message}`, display: true, details: { error: true, message } });
+				pi.sendMessage?.({
+					customType: "semantic-search",
+					content: lexicalOnly ? `Indexing failed: ${message}` : formatOllamaRequirementFailure(error, { embeddingModel: model, summaryModel }),
+					display: true,
+					details: { error: true, requirement: lexicalOnly ? undefined : "ollama", message },
+				});
 			} finally {
 				ctx.ui.setStatus?.("semantic-search", undefined);
 			}
@@ -2390,7 +2423,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("code-search", {
-		description: "Search the project index with natural language. Usage: /code-search <query>",
+		description: "Search the project index with natural language. Requires local Ollama summaries + embeddings. Usage: /code-search <query>",
 		handler: async (args, ctx) => {
 			const query = args.trim();
 			if (!query) {
@@ -2399,23 +2432,27 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			}
 			let index: SearchIndex;
 			let results: SearchResult[];
-			let warning: string | undefined;
 			try {
 				const ensured = await ensureIndexWithEmbeddings(ctx.cwd, true, undefined, undefined, (message) => ctx.ui.setStatus?.("semantic-search", message));
 				index = ensured.index;
 				({ results } = await searchIndexWithEmbeddings(index, { query, topK: DEFAULT_TOP_K }));
 			} catch (error) {
-				warning = `Ollama embeddings unavailable; fell back to lexical index (${error instanceof Error ? error.message : String(error)}).`;
-				({ index } = ensureIndex(ctx.cwd, true));
-				results = searchIndex(index, { query, topK: DEFAULT_TOP_K });
+				ctx.ui.notify("Semantic search requires Ollama setup", "error");
+				pi.sendMessage?.({
+					customType: "semantic-search",
+					content: formatOllamaRequirementFailure(error),
+					display: true,
+					details: { query, error: true, requirement: "ollama", message: error instanceof Error ? error.message : String(error) },
+				});
+				return;
 			} finally {
 				ctx.ui.setStatus?.("semantic-search", undefined);
 			}
 			pi.sendMessage?.({
 				customType: "semantic-search",
-				content: `${warning ? `${warning}\n\n` : ""}${formatSearchResults(query, results, index)}`,
+				content: formatSearchResults(query, results, index),
 				display: true,
-				details: { query, warning, results: compactResultDetails(results) },
+				details: { query, results: compactResultDetails(results) },
 			});
 		},
 	});
@@ -2424,8 +2461,8 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 		name: "semantic_search",
 		label: "Semantic Search",
 		description:
-			"Search the current project with a hybrid local index: Ollama embeddings, lexical terms, code concepts, symbols, and paths. " +
-			"Returns ranked files/snippets with line ranges. Builds or refreshes the index automatically by default.",
+			"Search the current project with a required local Ollama-backed hybrid index: generated semantic-card summaries, embeddings, lexical terms, code concepts, symbols, and paths. " +
+			"Returns ranked files/snippets with line ranges. Builds or refreshes the higher-quality index automatically by default.",
 		promptSnippet: "Search project code semantically and return ranked file snippets with line ranges",
 		promptGuidelines: [
 			"Use semantic_search when you do not know which files contain a feature, concept, workflow, or behavior before falling back to read/grep.",
@@ -2437,8 +2474,8 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			paths: Type.Optional(Type.Array(Type.String(), { description: "Optional path prefixes/substrings to constrain search, e.g. ['extensions/prompt-queue', 'docs/']." })),
 			includeTests: Type.Optional(Type.Boolean({ description: "Whether test files may appear in results. Defaults to true." })),
 			refresh: Type.Optional(Type.Boolean({ description: "Refresh a missing/stale index before searching. Defaults to true." })),
-			useEmbeddings: Type.Optional(Type.Boolean({ description: "Use local Ollama embeddings when available. Defaults to true; set false for lexical-only search." })),
-			useSummaries: Type.Optional(Type.Boolean({ description: "Generate Ollama summaries for semantic cards when rebuilding an embedding index. Defaults to true." })),
+			useEmbeddings: Type.Optional(Type.Boolean({ description: "Use required local Ollama embeddings. Defaults to true; set false only for explicit lower-quality lexical/debug search." })),
+			useSummaries: Type.Optional(Type.Boolean({ description: "Generate required Ollama summaries for semantic cards when rebuilding an embedding index. Defaults to true; set false only for explicit lower-quality/debug rebuilds." })),
 			embeddingModel: Type.Optional(Type.String({ description: `Ollama embedding model to use. Defaults to ${DEFAULT_OLLAMA_EMBED_MODEL} or OLLAMA_EMBED_MODEL.` })),
 			summaryModel: Type.Optional(Type.String({ description: `Ollama generation model for semantic-card summaries. Defaults to ${DEFAULT_OLLAMA_SUMMARY_MODEL} or PI_SEMANTIC_SEARCH_SUMMARY_MODEL.` })),
 			embeddingMaxChars: Type.Optional(Type.Number({ description: `Maximum characters sent to Ollama per embedding input before adaptive retries (default ${DEFAULT_OLLAMA_EMBED_INPUT_MAX_CHARS}).`, minimum: MIN_OLLAMA_EMBED_INPUT_CHARS, maximum: MAX_OLLAMA_EMBED_INPUT_MAX_CHARS })),
@@ -2451,7 +2488,6 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			let rebuilt = false;
 			let results: SearchResult[];
 			let embeddingUsed = false;
-			let warning: string | undefined;
 			const ollama = { model: params.embeddingModel, baseUrl: params.ollamaUrl, maxInputChars: params.embeddingMaxChars };
 			const summary = params.useSummaries === false ? false : { model: params.summaryModel, baseUrl: params.ollamaUrl };
 
@@ -2480,18 +2516,14 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 					results = searched.results;
 					embeddingUsed = searched.embeddingUsed;
 				} catch (error) {
-					warning = `Ollama embeddings unavailable; fell back to lexical index (${error instanceof Error ? error.message : String(error)}).`;
-					({ index, status, rebuilt } = ensureIndex(ctx.cwd, params.refresh ?? true));
-					results = searchIndex(index, {
-						query: params.query,
-						topK: params.topK,
-						paths: params.paths,
-						includeTests: params.includeTests,
-					});
+					return {
+						content: [{ type: "text" as const, text: formatOllamaRequirementFailure(error, { embeddingModel: params.embeddingModel, summaryModel: params.summaryModel, ollamaUrl: params.ollamaUrl, embeddingMaxChars: params.embeddingMaxChars }) }],
+						details: { query: params.query, error: true, requirement: "ollama", message: error instanceof Error ? error.message : String(error) },
+					};
 				}
 			}
 
-			let text = `${warning ? `${warning}\n\n` : ""}${formatSearchResults(params.query, results, index)}`;
+			let text = formatSearchResults(params.query, results, index);
 			if (status.stale) text += `\n\nNote: index may be stale (${status.reason}). Run /index rebuild or call semantic_search with refresh=true.`;
 			return {
 				content: [{ type: "text" as const, text }],
@@ -2499,7 +2531,6 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 					query: params.query,
 					rebuilt,
 					embeddingUsed,
-					warning,
 					index: { files: index.files.length, chunks: index.chunks.length, cards: index.cards.length, updatedAt: index.updatedAt, stale: status.stale, reason: status.reason, embedding: index.embedding, summary: index.summary },
 					results: compactResultDetails(results),
 				},

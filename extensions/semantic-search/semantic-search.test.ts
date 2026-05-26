@@ -72,6 +72,12 @@ async function withMockLegacyOllamaFetch<T>(fn: (urls: string[]) => Promise<T>):
 		const href = String(url);
 		urls.push(href);
 		const body = JSON.parse(String(init?.body ?? "{}")) as { prompt?: string };
+		if (href.endsWith("/api/generate")) {
+			return new Response(JSON.stringify({ response: fakeSummaryFor(body.prompt ?? "") }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}
 		if (href.endsWith("/api/embed")) {
 			return new Response("not found", { status: 404, statusText: "Not Found" });
 		}
@@ -359,6 +365,7 @@ test("Ollama embedding client caps oversized inputs before sending them to Ollam
 		const index = await buildSearchIndexWithEmbeddings(dir, {
 			writeToDisk: false,
 			ollama: { model: "nomic-embed-text", baseUrl: "http://ollama.test", maxInputChars: 400 },
+			summary: false,
 		});
 
 		assert.equal(index.embedding?.inputMaxChars, 400);
@@ -398,6 +405,7 @@ test("Ollama embedding client splits batches and shrinks inputs after context-le
 		const index = await buildSearchIndexWithEmbeddings(dir, {
 			writeToDisk: false,
 			ollama: { model: "nomic-embed-text", baseUrl: "http://ollama.test", batchSize: 2, maxInputChars: 500 },
+			summary: false,
 		});
 
 		assert.equal(index.embedding?.embeddedChunks, 2);
@@ -605,18 +613,62 @@ test("extension registers semantic search tools and command entrypoints", async 
 		"src/search/index.ts": "export function semanticSearch(query: string) { return vectorIndex.search(query); }\n",
 	});
 	try {
+		await withMockOllamaFetch(async () => {
+			const result = await tools.get("semantic_search").execute(
+				"tool-call-1",
+				{ query: "vector search", topK: 1, refresh: true },
+				undefined,
+				undefined,
+				{ cwd: dir } as any,
+			);
+
+			assert.match(result.content[0].text, /src\/search\/index\.ts/);
+			assert.equal(result.details.query, "vector search");
+			assert.equal(result.details.embeddingUsed, true);
+			assert.equal(result.details.index.embedding.model, "nomic-embed-text");
+			assert.equal(result.details.index.summary.model, "qwen2.5-coder:14b");
+			assert.equal(result.details.results.length, 1);
+		});
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("semantic_search reports required Ollama setup instead of falling back to lexical search", async () => {
+	const tools = new Map<string, any>();
+	semanticSearchExtension({
+		registerTool(definition: any) {
+			tools.set(definition.name, definition);
+		},
+		registerCommand() {},
+	} as any);
+
+	const dir = makeProject({
+		"src/search/index.ts": "export function semanticSearch(query: string) { return vectorIndex.search(query); }\n",
+	});
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = (async () => new Response(JSON.stringify({ error: "model not found" }), {
+		status: 404,
+		statusText: "Not Found",
+		headers: { "content-type": "application/json" },
+	})) as typeof fetch;
+	try {
 		const result = await tools.get("semantic_search").execute(
 			"tool-call-1",
-			{ query: "vector search", topK: 1, refresh: true, useEmbeddings: false },
+			{ query: "vector search", topK: 1, refresh: true },
 			undefined,
 			undefined,
 			{ cwd: dir } as any,
 		);
 
-		assert.match(result.content[0].text, /src\/search\/index\.ts/);
-		assert.equal(result.details.query, "vector search");
-		assert.equal(result.details.results.length, 1);
+		assert.equal(result.details.error, true);
+		assert.equal(result.details.requirement, "ollama");
+		assert.match(result.content[0].text, /requires local Ollama summaries and embeddings/i);
+		assert.match(result.content[0].text, /ollama pull nomic-embed-text/);
+		assert.match(result.content[0].text, /ollama pull qwen2\.5-coder:14b/);
+		assert.doesNotMatch(result.content[0].text, /src\/search\/index\.ts/);
 	} finally {
+		globalThis.fetch = originalFetch;
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
