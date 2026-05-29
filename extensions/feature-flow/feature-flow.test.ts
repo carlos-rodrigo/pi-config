@@ -179,6 +179,82 @@ test("initializeFeaturePacket preserves existing source docs and rebuilds learni
 	assert.match(index, /Keep this\./i);
 });
 
+test("/feature migrate upgrades legacy PRD/design/tasks without deleting sources", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
+	await mkdir(path.join(root, "docs/features/legacy-checkout"), { recursive: true });
+	await mkdir(path.join(root, ".features/legacy-checkout/tasks"), { recursive: true });
+	await writeFile(path.join(root, "docs/features/legacy-checkout/prd.md"), "# PRD: Legacy Checkout\n\n## Problem\n\nCheckout needs saved cards.");
+	await writeFile(path.join(root, "docs/features/legacy-checkout/design.md"), "# Design: Legacy Checkout\n\nUse the existing payment service boundary.");
+	await writeFile(path.join(root, ".features/legacy-checkout/tasks/001-add-saved-card-api.md"), `---\nid: 001\nstatus: open\n---\n\n# Add saved card API\n\n## What to do\n\nCreate the endpoint.\n\n## Verify\n\nnpm test\n`);
+	const harness = createHarness(root);
+	featureFlowExtension(harness.pi as any);
+
+	await harness.commands.get("feature")?.handler("migrate legacy-checkout", harness.ctx as any);
+
+	assert.match(harness.getEditorText(), /# Feature Migration: legacy-checkout/);
+	assert.match(harness.getEditorText(), /docs\/features\/legacy-checkout\/prd\.md/);
+	assert.match(harness.getEditorText(), /\.features\/legacy-checkout\/tasks\/001-add-saved-card-api\.md/);
+	assert.match(harness.notifications.at(-1)?.message ?? "", /Migrated feature packet/i);
+	const strategy = await readFile(path.join(root, "docs/features/legacy-checkout/strategy.md"), "utf8");
+	assert.match(strategy, /Migrated from legacy PRD\/design artifacts/i);
+	assert.match(strategy, /Checkout needs saved cards/i);
+	const systemModel = await readFile(path.join(root, "docs/features/legacy-checkout/system-model.md"), "utf8");
+	assert.match(systemModel, /Migrated 1 legacy task/);
+	assert.match(systemModel, /Use the existing payment service boundary/i);
+	const workOrder = await readFile(path.join(root, "docs/features/legacy-checkout/work-orders/001-add-saved-card-api.md"), "utf8");
+	assert.match(workOrder, /id: WO-001/);
+	assert.match(workOrder, /status: draft/);
+	assert.match(workOrder, /legacySource: \.features\/legacy-checkout\/tasks\/001-add-saved-card-api\.md/);
+	assert.match(workOrder, /# Add saved card API/);
+	const index = await readFile(path.join(root, "docs/features/legacy-checkout/index.html"), "utf8");
+	assert.match(index, /Feature Dashboard/);
+	assert.match(index, /WO-001/);
+	await readFile(path.join(root, "docs/features/legacy-checkout/prd.md"), "utf8");
+});
+
+test("/feature migrate allocates around unrelated work orders and keeps blocked legacy tasks draft", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
+	await mkdir(path.join(root, "docs/features/legacy-checkout/work-orders"), { recursive: true });
+	await mkdir(path.join(root, ".features/legacy-checkout/tasks"), { recursive: true });
+	await writeFile(path.join(root, "docs/features/legacy-checkout/work-orders/001-existing-slice.md"), `---\nid: WO-001\nstatus: ready\norder: 1\n---\n\n# WO-001: Existing Slice\n`);
+	await writeFile(path.join(root, ".features/legacy-checkout/tasks/001-add-saved-card-api.md"), `---\nid: 001\nstatus: blocked\n---\n\n# Add saved card API\n\nNeeds strategy review.\n`);
+	const harness = createHarness(root);
+	featureFlowExtension(harness.pi as any);
+
+	await harness.commands.get("feature")?.handler("migrate legacy-checkout", harness.ctx as any);
+
+	const workOrder = await readFile(path.join(root, "docs/features/legacy-checkout/work-orders/002-add-saved-card-api.md"), "utf8");
+	assert.match(workOrder, /id: WO-002/);
+	assert.match(workOrder, /status: draft/);
+	assert.match(workOrder, /legacyStatus: blocked/);
+	assert.match(workOrder, /legacySource: \.features\/legacy-checkout\/tasks\/001-add-saved-card-api\.md/);
+	assert.doesNotMatch(workOrder.split("---")[1] ?? "", /^status: blocked$/m);
+
+	await harness.commands.get("feature")?.handler("migrate legacy-checkout", harness.ctx as any);
+	await assert.rejects(stat(path.join(root, "docs/features/legacy-checkout/work-orders/003-add-saved-card-api.md")), { code: "ENOENT" });
+	assert.match(harness.getEditorText(), /docs\/features\/legacy-checkout\/work-orders\/002-add-saved-card-api\.md/);
+});
+
+test("/feature migrate preserves existing packet docs and reports missing legacy sources", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
+	await mkdir(path.join(root, "docs/features/legacy-checkout"), { recursive: true });
+	await writeFile(path.join(root, "docs/features/legacy-checkout/prd.md"), "# PRD: Legacy Checkout\n\nKeep old source.");
+	await writeFile(path.join(root, "docs/features/legacy-checkout/strategy.md"), "# Custom Strategy\n\nDo not overwrite.");
+	const harness = createHarness(root);
+	featureFlowExtension(harness.pi as any);
+
+	await harness.commands.get("feature")?.handler("migrate legacy-checkout", harness.ctx as any);
+
+	const strategy = await readFile(path.join(root, "docs/features/legacy-checkout/strategy.md"), "utf8");
+	assert.equal(strategy, "# Custom Strategy\n\nDo not overwrite.");
+	assert.match(harness.getEditorText(), /Existing \/ preserved/);
+	assert.match(harness.getEditorText(), /docs\/features\/legacy-checkout\/strategy\.md/);
+
+	await harness.commands.get("feature")?.handler("migrate missing-legacy", harness.ctx as any);
+	assert.match(harness.getEditorText(), /Feature Migration Failed: missing-legacy/);
+	assert.match(harness.notifications.at(-1)?.message ?? "", /No legacy PRD\/design\/tasks found/i);
+});
+
 test("rebuildFeatureLearningView reports missing feature packet", async () => {
 	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
 	const result = await rebuildFeatureLearningView(root, "missing-feature");

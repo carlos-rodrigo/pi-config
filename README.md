@@ -97,6 +97,7 @@ Agent definitions used by the agent-jobs extension:
 - `/feature status [slug]` — Summarize docs, decisions, proof, work orders, diagrams, execution reports, and the next action.
 - `/feature next [slug]` — Write the next recommended strategic prompt to the editor.
 - `/feature design [slug]` — Write a non-execution solution-design prompt for system model, decisions, proof, and draft Work Orders.
+- `/feature migrate <slug>` — Upgrade legacy `prd.md` / `design.md` / `.features` tasks into the strategy-first packet shape.
 - `/feature work-order <title> [--slug <name>]` — Optionally create a draft Work Order v2 delegation brief; mark `status: ready` only after approval.
 - `/feature report <work-order> [--slug <name>]` — Create a draft execution report for a `ready`/`done` work order; fill proof evidence and mark `status: complete`.
 - `/feature review [slug]` — Write a strategy alignment prompt for final teach-back and optional `/reown --remember` memory.
@@ -105,6 +106,7 @@ Agent definitions used by the agent-jobs extension:
 - Conversational routing works for safe feature intents like “what’s next?”, “let’s design the solution”, “open the dashboard”, “review this feature”, and “write report for WO-001”.
 - `.features/` task state is legacy/optional; work orders live under `docs/features/<slug>/work-orders/` only when delegation needs splitting. Small approved features can execute directly from strategy/model/decision/proof docs.
 - The design bridge is `strategy.md → system-model.md + decisions.md + proof.md → draft work-orders/`; user owns solution architecture and slice approval, agent owns execution.
+- Legacy migration preserves old PRD/design/task sources and creates draft Work Orders for review before execution.
 
 ### Ownership loop
 

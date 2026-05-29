@@ -19,6 +19,7 @@ pi install ./extensions/feature-flow
 | `/feature status [slug]` | Summarizes feature packet docs, work orders, diagrams, execution reports, proof gaps, and next action. |
 | `/feature next [slug]` | Writes the next recommended strategic prompt to the editor. |
 | `/feature design [slug]` | Writes a non-execution solution-design prompt for system model, decisions, proof, and draft Work Orders. |
+| `/feature migrate <slug>` | Upgrades legacy `prd.md` / `design.md` / `.features` tasks into the strategy-first packet shape. |
 | `/feature work-order <title> [--slug <name>]` | Creates a draft Work Order v2 delegation brief. |
 | `/feature report <work-order> [--slug <name>]` | Creates a draft execution report linked to a work order id/path/title. |
 | `/feature review [slug]` | Writes a strategy-review prompt that compares intent, execution, proof, and optional `/reown --remember` memory. |
@@ -43,6 +44,32 @@ Commands are the stable API, but you can also use natural language for safe work
 | "write the report for WO-001" | creates `/feature report WO-001` when the work order is ready/done |
 
 Conversational routing does not auto-implement code or mark work orders ready. If the active feature is ambiguous, the message passes through to the agent instead of guessing.
+
+## Legacy migration
+
+Use `/feature migrate <slug>` when a feature already has old workflow artifacts:
+
+```text
+docs/features/<slug>/prd.md
+docs/features/<slug>/design.md
+.features/<slug>/tasks/*.md
+```
+
+Migration preserves those sources and creates any missing strategy-first packet docs:
+
+```text
+strategy.md
+system-model.md
+decisions.md
+proof.md
+review.md
+work-orders/
+execution/
+diagrams/
+index.html
+```
+
+Legacy `.features` tasks become **draft** Work Orders with their original content embedded. Review the migrated design, decisions, proof, and Work Orders before marking anything `ready`.
 
 ## Feature packet
 

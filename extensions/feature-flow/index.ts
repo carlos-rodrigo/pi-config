@@ -13,7 +13,7 @@ import {
 	slugifyFeature,
 } from "./lib/worktree.ts";
 import { openExternal } from "../lib/open-external.ts";
-import { createExecutionReport, createWorkOrder, formatFeaturePacketStatus, getFeaturePacketStatus, initializeFeaturePacket, listFeaturePacketSlugs, rebuildFeatureLearningView } from "./packet.ts";
+import { createExecutionReport, createWorkOrder, formatFeatureMigrationResult, formatFeaturePacketStatus, getFeaturePacketStatus, initializeFeaturePacket, listFeaturePacketSlugs, migrateLegacyFeaturePacket, rebuildFeatureLearningView } from "./packet.ts";
 import { buildKickoffPrompt } from "./prompt.ts";
 
 function stripWrappingQuotes(input: string): string {
@@ -83,6 +83,7 @@ function featureHelpText(): string {
 		"  /feature status [slug]",
 		"  /feature next [slug]",
 		"  /feature design [slug]",
+		"  /feature migrate <slug>",
 		"  /feature work-order <title> [--slug <name>]",
 		"  /feature report <work-order> [--slug <name>]",
 		"  /feature review [slug]",
@@ -101,6 +102,7 @@ function featureHelpText(): string {
 		"- /feature status [slug] summarizes docs, decisions, proof, work orders, diagrams, and next action",
 		"- /feature next [slug] writes the next recommended strategic prompt to the editor",
 		"- /feature design [slug] writes a non-execution solution-design prompt for system model, decisions, proof, and draft work orders",
+		"- /feature migrate <slug> upgrades legacy prd.md/design.md/.features tasks into the strategy-first packet shape",
 		"- /feature work-order <title> [--slug <name>] creates a draft Work Order v2 delegation brief",
 		"- /feature report <work-order> [--slug <name>] creates a draft execution report for a ready/done work order",
 		"- /feature review [slug] writes a strategy-review prompt for final alignment and optional /reown --remember",
@@ -329,6 +331,19 @@ export default function (pi: ExtensionAPI) {
 				const status = await getFeaturePacketStatus(ctx.cwd, resolved.slug);
 				ctx.ui.setEditorText(status.nextPrompt);
 				ctx.ui.notify(status.ok ? `Next action: ${status.nextAction}` : status.error ?? "Feature packet not found", status.ok ? "info" : "error");
+				return;
+			}
+
+			const migrateTarget = getSubcommandTarget(cleanedInput, "migrate") ?? getSubcommandTarget(cleanedInput, "upgrade");
+			if (migrateTarget !== undefined) {
+				const slugText = stripWrappingQuotes(migrateTarget).trim();
+				if (!slugText) {
+					ctx.ui.notify("Usage: /feature migrate <slug>", "error");
+					return;
+				}
+				const migrated = await migrateLegacyFeaturePacket(ctx.cwd, slugifyFeature(slugText));
+				ctx.ui.setEditorText(formatFeatureMigrationResult(migrated));
+				ctx.ui.notify(migrated.ok ? `Migrated feature packet: ${migrated.packetDir}` : migrated.error, migrated.ok ? "info" : "error");
 				return;
 			}
 

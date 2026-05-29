@@ -20,6 +20,19 @@ export type RebuildFeatureViewResult =
 	| { ok: true; packetDir: string; indexPath: string; sectionCount: number }
 	| { ok: false; error: string; packetDir: string };
 
+export type FeatureMigrationResult =
+	| {
+		ok: true;
+		slug: string;
+		packetDir: string;
+		indexPath: string;
+		created: string[];
+		existing: string[];
+		legacySources: string[];
+		migratedWorkOrders: string[];
+	}
+	| { ok: false; slug: string; packetDir: string; error: string };
+
 export type WorkOrderStatus = "draft" | "ready" | "blocked" | "done";
 
 export type WorkOrderInfo = {
@@ -708,6 +721,349 @@ export async function createExecutionReport(root: string, slug: string, workOrde
 		if ((error as NodeJS.ErrnoException).code === "EEXIST") return { ok: false, error: `Execution report already exists: ${relativePath}` };
 		throw error;
 	}
+}
+
+function excerptMarkdown(content: string, maxChars = 6000): string {
+	const trimmed = content.trim();
+	if (trimmed.length <= maxChars) return trimmed || "_No legacy content._";
+	return `${trimmed.slice(0, maxChars).trim()}\n\n_Excerpt truncated during migration; see the legacy source file for the full text._`;
+}
+
+function buildMigratedStrategyMarkdown(input: { slug: string; brief: string; prd: string; design: string; createdDate?: string }): string {
+	return `# Strategy: ${titleizeSlug(input.slug)}
+
+> Created: ${input.createdDate ?? today()}
+> Migrated from legacy PRD/design artifacts.
+> Legacy sources are preserved; refine this strategy before execution authority.
+
+## Problem to own
+
+Extract and approve the product/system problem from the legacy PRD below.
+
+## Desired system behavior
+
+Describe the plain-language behavior this feature should create.
+
+## Scope
+
+### In
+- TBD from legacy PRD/design.
+
+### Out
+- TBD.
+
+## Constraints
+
+- TBD from legacy PRD/design.
+
+## Success evidence
+
+- See ./proof.md.
+
+## Legacy PRD source
+
+${input.prd ? excerptMarkdown(input.prd) : "_No legacy prd.md found._"}
+
+## Legacy design source
+
+${input.design ? excerptMarkdown(input.design, 2500) : "_No legacy design.md found._"}
+`;
+}
+
+function buildMigratedSystemModelMarkdown(input: { slug: string; design: string; prd: string; taskCount: number }): string {
+	return `# System Model: ${titleizeSlug(input.slug)}
+
+> Migrated from legacy PRD/design/tasks. Treat this as a design workspace, not approved execution authority yet.
+
+## Current system story
+
+TBD after code inspection.
+
+## Intended system story
+
+TBD from strategy and legacy design.
+
+## Solution design
+
+Refine the architecture/path with the user before execution.
+
+## Execution slices / Work Order plan
+
+${input.taskCount > 0 ? `Migrated ${input.taskCount} legacy task(s) into draft Work Orders under ./work-orders/. Review and approve them before marking ready.` : "No legacy tasks found. Create Work Orders only if delegation/splitting helps."}
+
+| Slice | Mission | Depends on | Proof |
+| --- | --- | --- | --- |
+| TBD | TBD | TBD | TBD |
+
+## Key concepts and invariants
+
+- [ ] Concept / state / lifecycle:
+- [ ] Invariant that must remain true:
+
+## Code anchors
+
+| Anchor | Responsibility | Why it matters |
+| --- | --- | --- |
+| TBD | TBD | TBD |
+
+## Boundaries
+
+- Runtime/service/API boundaries:
+- Persistence boundaries:
+- Human/agent decision boundaries:
+
+## Legacy design source
+
+${input.design ? excerptMarkdown(input.design) : "_No legacy design.md found._"}
+
+## Legacy PRD source
+
+${input.prd ? excerptMarkdown(input.prd, 2500) : "_No legacy prd.md found._"}
+`;
+}
+
+function buildMigratedDecisionsMarkdown(input: { slug: string }): string {
+	return `# Decisions: ${titleizeSlug(input.slug)}
+
+> Migrated feature packet. Review legacy PRD/design and record the user-owned solution decisions here before marking Work Orders ready.
+
+| ID | Status | Decision | Why | Rejected / tradeoff | Escalation trigger |
+| --- | --- | --- | --- | --- | --- |
+| D-001 | open | Confirm migrated strategy/system design | Legacy artifacts need strategy-first approval | TBD | Agent is about to implement from unapproved assumptions |
+
+## Decision workshop notes
+
+- Review ./strategy.md and ./system-model.md.
+- Convert old design assumptions into explicit decisions.
+`;
+}
+
+function buildMigratedProofMarkdown(input: { slug: string; legacyTasks: Array<{ path: string; title: string; status: string }> }): string {
+	const taskRows = input.legacyTasks.length
+		? input.legacyTasks.map((task) => `| Legacy task: ${task.title} | ${task.path} | planned | agent |`).join("\n")
+		: "| Migrated feature behavior | Define from strategy/system model | planned | agent |";
+	return `# Proof: ${titleizeSlug(input.slug)}
+
+> Migrated proof plan. Replace legacy acceptance notes with concrete checks before execution.
+
+## Acceptance evidence
+
+| Behavior | Evidence | Status | Owner |
+| --- | --- | --- | --- |
+${taskRows}
+
+## Targeted checks
+
+\`\`\`bash
+# Add narrow checks that prove changed behavior.
+\`\`\`
+
+## Manual / E2E checks
+
+1. TBD → Expected: TBD.
+
+## Regression gate
+
+\`\`\`bash
+# Add repo-level verification command.
+\`\`\`
+`;
+}
+
+function buildMigratedReviewMarkdown(input: { slug: string }): string {
+	return `# Review: ${titleizeSlug(input.slug)}
+
+Migrated from legacy artifacts. Complete this after execution evidence exists.
+
+## Strategy alignment
+
+| Original intent | Actual implementation | Match? | Evidence |
+| --- | --- | --- | --- |
+| TBD | TBD | TBD | TBD |
+
+## Teach-back
+
+- Product/system rule now:
+- What to remember:
+- Follow-up:
+`;
+}
+
+function legacyTaskTitle(content: string, relativePath: string): string {
+	const frontmatter = parseFrontmatter(content);
+	return frontmatter.title || workOrderTitleFromContent(content, relativePath);
+}
+
+function buildMigratedWorkOrderMarkdown(input: { id: string; order: number; title: string; legacyPath: string; legacyStatus: string; legacyContent: string; createdDate?: string }): string {
+	return `---
+id: ${input.id}
+status: draft
+order: ${input.order}
+created: ${input.createdDate ?? today()}
+legacySource: ${input.legacyPath}
+legacyStatus: ${input.legacyStatus || "unknown"}
+---
+
+# ${input.id}: ${input.title}
+
+## Mission
+
+Review and refine this migrated legacy task before execution.
+
+## Strategic context
+
+- Source task: ${input.legacyPath}
+- Legacy status: ${input.legacyStatus || "unknown"}
+- Confirm strategy/system design/decisions/proof before marking ready.
+
+## Decisions to preserve
+
+- [ ] D-001 — Confirm migrated strategy/system design.
+
+## Agent-owned choices
+
+- Implementation mechanics that do not change approved strategy/design.
+
+## Escalation triggers
+
+- Legacy task conflicts with strategy.md, system-model.md, decisions.md, or proof.md.
+- Proof cannot be made concrete.
+- Scope expands beyond this migrated task.
+
+## Proof required
+
+- [ ] Replace legacy verification notes with concrete proof from ../proof.md.
+
+## Legacy task source
+
+${excerptMarkdown(input.legacyContent)}
+
+## Readiness checklist
+
+- [ ] Strategy/model context is approved.
+- [ ] Decisions referenced above are resolved.
+- [ ] Proof required is specific enough to verify externally.
+- [ ] Change \`status\` to \`ready\` only after user approval.
+`;
+}
+
+function pushUnique(values: string[], value: string): void {
+	if (!values.includes(value)) values.push(value);
+}
+
+async function writeMigrationFile(root: string, relativePath: string, content: string, result: Extract<FeatureMigrationResult, { ok: true }>): Promise<void> {
+	await mkdir(path.dirname(path.join(root, relativePath)), { recursive: true });
+	try {
+		await writeFile(path.join(root, relativePath), content, { flag: "wx" });
+		pushUnique(result.created, relativePath);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+			pushUnique(result.existing, relativePath);
+			return;
+		}
+		throw error;
+	}
+}
+
+function normalizeLegacySource(value: string | undefined): string {
+	return (value ?? "").trim().replace(/^\.\//, "").split(path.sep).join("/");
+}
+
+function nextFreeWorkOrderOrder(usedOrders: Set<number>): number {
+	let order = 1;
+	while (usedOrders.has(order)) order++;
+	usedOrders.add(order);
+	return order;
+}
+
+export async function migrateLegacyFeaturePacket(root: string, slug: string): Promise<FeatureMigrationResult> {
+	const packetDir = featurePacketDir(slug);
+	const paths = featurePacketPaths(slug);
+	const prdPath = `${packetDir}/prd.md`;
+	const designPath = `${packetDir}/design.md`;
+	const legacyTaskFiles = (await listFiles(root, `.features/${slug}/tasks`, ".md")).filter((file) => !file.endsWith("/_active.md"));
+	const prd = await readIfExists(root, prdPath);
+	const design = await readIfExists(root, designPath);
+	const legacySources = [prd.trim() ? prdPath : "", design.trim() ? designPath : "", ...legacyTaskFiles].filter(Boolean);
+	if (legacySources.length === 0) return { ok: false, slug, packetDir, error: `No legacy PRD/design/tasks found for '${slug}'. Expected ${prdPath}, ${designPath}, or .features/${slug}/tasks/.` };
+
+	const result: Extract<FeatureMigrationResult, { ok: true }> = {
+		ok: true,
+		slug,
+		packetDir,
+		indexPath: paths.index,
+		created: [],
+		existing: [],
+		legacySources,
+		migratedWorkOrders: [],
+	};
+	const brief = prd.match(/^#\s+(.+)$/m)?.[1]?.replace(/^PRD:\s*/i, "").trim() || titleizeSlug(slug);
+	const legacyTasks = await Promise.all(legacyTaskFiles.map(async (file) => {
+		const content = await readIfExists(root, file);
+		const frontmatter = parseFrontmatter(content);
+		return { path: file, title: legacyTaskTitle(content, file), status: frontmatter.status ?? "unknown", content };
+	}));
+
+	await writeMigrationFile(root, paths.metadata, buildMetadataJson({ brief, slug, branch: "", workspacePath: root }), result);
+	await writeMigrationFile(root, paths.strategy, buildMigratedStrategyMarkdown({ slug, brief, prd, design }), result);
+	await writeMigrationFile(root, paths.systemModel, buildMigratedSystemModelMarkdown({ slug, prd, design, taskCount: legacyTasks.length }), result);
+	await writeMigrationFile(root, paths.decisions, buildMigratedDecisionsMarkdown({ slug }), result);
+	await writeMigrationFile(root, paths.proof, buildMigratedProofMarkdown({ slug, legacyTasks }), result);
+	await writeMigrationFile(root, paths.review, buildMigratedReviewMarkdown({ slug }), result);
+	await writeMigrationFile(root, paths.workOrdersReadme, buildWorkOrdersReadme({ brief, slug, branch: "", workspacePath: root }), result);
+	await writeMigrationFile(root, paths.executionReadme, buildExecutionReadme({ brief, slug, branch: "", workspacePath: root }), result);
+	await writeMigrationFile(root, paths.diagramsReadme, buildDiagramsReadme({ brief, slug, branch: "", workspacePath: root }), result);
+
+	const existingWorkOrders = await listWorkOrders(root, slug);
+	const usedOrders = new Set(existingWorkOrders.map((workOrder) => workOrder.order).filter((order) => Number.isFinite(order) && order !== Number.MAX_SAFE_INTEGER));
+	const existingLegacySources = new Map<string, string>();
+	for (const workOrder of existingWorkOrders) {
+		const frontmatter = parseFrontmatter(await readIfExists(root, workOrder.path));
+		const legacySource = normalizeLegacySource(frontmatter.legacySource);
+		if (legacySource) existingLegacySources.set(legacySource, workOrder.path);
+	}
+	for (const task of legacyTasks) {
+		const alreadyMigratedPath = existingLegacySources.get(normalizeLegacySource(task.path));
+		if (alreadyMigratedPath) {
+			pushUnique(result.existing, alreadyMigratedPath);
+			continue;
+		}
+		const order = nextFreeWorkOrderOrder(usedOrders);
+		const id = `WO-${String(order).padStart(3, "0")}`;
+		const relativePath = `${packetDir}/work-orders/${String(order).padStart(3, "0")}-${slugifyWorkOrderTitle(task.title)}.md`;
+		await writeMigrationFile(root, relativePath, buildMigratedWorkOrderMarkdown({ id, order, title: task.title, legacyPath: task.path, legacyStatus: task.status, legacyContent: task.content }), result);
+		if (result.created.includes(relativePath)) pushUnique(result.migratedWorkOrders, relativePath);
+	}
+
+	const rebuilt = await rebuildFeatureLearningView(root, slug, { brief });
+	if (!rebuilt.ok) throw new Error(rebuilt.error);
+	if (!result.created.includes(paths.index) && !result.existing.includes(paths.index)) result.created.push(paths.index);
+	return result;
+}
+
+export function formatFeatureMigrationResult(result: FeatureMigrationResult): string {
+	if (!result.ok) return `# Feature Migration Failed: ${result.slug}\n\n${result.error}`;
+	return [
+		`# Feature Migration: ${result.slug}`,
+		"",
+		`Packet: ${result.packetDir}`,
+		`Learning view: ${result.indexPath}`,
+		"",
+		"## Legacy sources preserved",
+		...result.legacySources.map((source) => `- ${source}`),
+		"",
+		"## Created",
+		...(result.created.length ? result.created.map((file) => `- ${file}`) : ["- None"]),
+		"",
+		"## Existing / preserved",
+		...(result.existing.length ? result.existing.map((file) => `- ${file}`) : ["- None"]),
+		"",
+		"## Migrated draft Work Orders",
+		...(result.migratedWorkOrders.length ? result.migratedWorkOrders.map((file) => `- ${file}`) : ["- None"]),
+		"",
+		"## Next",
+		`Run /feature design ${result.slug} to refine the migrated strategy/system design/proof and approve draft Work Orders before execution.`,
+	].join("\n");
 }
 
 function buildDiagramsReadme(input: FeaturePacketInput): string {
