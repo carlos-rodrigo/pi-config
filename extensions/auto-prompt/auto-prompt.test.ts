@@ -205,6 +205,15 @@ test("extractFeatureFlowSuggestionState detects feature packets, slug, and work-
 	assert.equal(state?.stage, "execute");
 });
 
+test("extractFeatureFlowSuggestionState detects solution-design stage", () => {
+	const state = extractFeatureFlowSuggestionState(
+		"Assistant: Next action: /feature design reown-strategy to update system-model.md with solution design and execution slices.",
+	);
+
+	assert.equal(state?.slug, "reown-strategy");
+	assert.equal(state?.stage, "design");
+});
+
 test("extractFeatureFlowSuggestionState ignores unrelated conversations", () => {
 	const state = extractFeatureFlowSuggestionState("User: Fix the login bug.\n\nAssistant: I found auth.ts.");
 
@@ -229,6 +238,27 @@ test("buildSuggestionPrompt includes feature-flow next-action guidance", () => {
 	assert.match(prompt, /\/feature status reown-strategy/i);
 	assert.match(prompt, /\/feature report WO-001 --slug reown-strategy/i);
 	assert.match(prompt, /repo-relative files/i);
+});
+
+test("buildSuggestionPrompt can suggest the feature design bridge", () => {
+	const featureState = extractFeatureFlowSuggestionState(
+		"Assistant: strategy.md is approved. Next action is to model/design the solution before execution for docs/features/reown-strategy.",
+	);
+	const prompt = buildSuggestionPrompt(
+		"User: What's next?\n\nAssistant: strategy.md is approved; model/design the solution before execution.",
+		"deep",
+		["docs/features/reown-strategy/strategy.md"],
+		[],
+		"planning",
+		undefined,
+		false,
+		undefined,
+		featureState,
+	);
+
+	assert.match(prompt, /Model\/Design → Decide → Slice → Execute → Report → Review/i);
+	assert.match(prompt, /\/feature design reown-strategy/i);
+	assert.match(prompt, /without implementing/i);
 });
 
 // --- File path extraction ---

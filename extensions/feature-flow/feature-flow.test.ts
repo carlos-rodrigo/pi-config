@@ -4,18 +4,22 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os";
 import path from "node:path";
 
-import featureFlowExtension from "./index.ts";
+import featureFlowExtension, { inferConversationalFeatureIntent } from "./index.ts";
 import { createExecutionReport, createWorkOrder, formatFeaturePacketStatus, getFeaturePacketStatus, initializeFeaturePacket, markdownToHtml, rebuildFeatureLearningView } from "./packet.ts";
 import { buildKickoffPrompt } from "./prompt.ts";
 
 function createHarness(root: string) {
 	const commands = new Map<string, { description: string; handler: (args: string, ctx: unknown) => Promise<void> }>();
+	const eventHandlers = new Map<string, (event: any, ctx: any) => Promise<any>>();
 	const notifications: Array<{ message: string; level: string }> = [];
 	const execCalls: Array<{ command: string; args: string[] }> = [];
 	let editorText = "";
 	const pi = {
 		registerCommand(name: string, definition: { description: string; handler: (args: string, ctx: unknown) => Promise<void> }) {
 			commands.set(name, definition);
+		},
+		on(eventName: string, handler: (event: any, ctx: any) => Promise<any>) {
+			eventHandlers.set(eventName, handler);
 		},
 		exec: async (command: string, args: string[]) => {
 			execCalls.push({ command, args });
@@ -34,7 +38,7 @@ function createHarness(root: string) {
 			},
 		},
 	};
-	return { pi, ctx, commands, notifications, execCalls, getEditorText: () => editorText };
+	return { pi, ctx, commands, eventHandlers, notifications, execCalls, getEditorText: () => editorText };
 }
 
 test("buildKickoffPrompt starts a strategy-first docs/features workflow", () => {
@@ -47,10 +51,11 @@ test("buildKickoffPrompt starts a strategy-first docs/features workflow", () => 
 	});
 
 	assert.match(prompt, /strategy-first feature workflow/i);
-	assert.match(prompt, /user owns strategic thinking/i);
-	assert.match(prompt, /agent owns execution thinking/i);
-	assert.match(prompt, /Frame → Model → Decide → Delegate → Execute → Review\/Remember/i);
-	assert.match(prompt, /lightest workflow that preserves strategic ownership/i);
+	assert.match(prompt, /user owns product strategy, system design, solution architecture/i);
+	assert.match(prompt, /agent owns execution mechanics/i);
+	assert.match(prompt, /Frame → Model\/Design → Decide → Slice → Execute → Report → Review\/Remember/i);
+	assert.match(prompt, /lightest workflow that preserves user ownership of strategy and solution design/i);
+	assert.match(prompt, /Design-to-execution matters/i);
 	assert.match(prompt, /feature packet lives under docs\/features\/ by default, not \.features\//i);
 	assert.match(prompt, /docs\/features\/pr-review-summaries\/strategy\.md/i);
 	assert.match(prompt, /docs\/features\/pr-review-summaries\/system-model\.md/i);
@@ -127,6 +132,9 @@ test("initializeFeaturePacket scaffolds docs/features learning packet without le
 	assert.match(strategy, /Problem to own/i);
 	assert.match(strategy, /Desired system behavior/i);
 	assert.match(strategy, /Teach-back/i);
+	const systemModel = await readFile(path.join(root, "docs/features/reown-strategy/system-model.md"), "utf8");
+	assert.match(systemModel, /## Solution design/i);
+	assert.match(systemModel, /## Execution slices \/ Work Order plan/i);
 
 	const index = await readFile(path.join(root, "docs/features/reown-strategy/index.html"), "utf8");
 	assert.match(index, /Feature Learning View/i);
@@ -393,6 +401,123 @@ test("/feature next writes the recommended strategic prompt", async () => {
 	assert.match(harness.getEditorText(), /strategy\.md/i);
 	assert.match(harness.getEditorText(), /Interview me/i);
 	assert.match(harness.notifications.at(-1)?.message ?? "", /Next action/i);
+});
+
+test("/feature next moves from approved strategy to solution design", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
+	await initializeFeaturePacket(root, {
+		brief: "Make re-own useful for strategic understanding",
+		slug: "reown-strategy",
+		branch: "feat/reown-strategy",
+		workspacePath: root,
+		createdDate: "2026-05-26",
+	});
+	await writeFile(path.join(root, "docs/features/reown-strategy/strategy.md"), "# Strategy\n\nProblem, desired system behavior, constraints, and success signals are approved.");
+	const harness = createHarness(root);
+	featureFlowExtension(harness.pi as any);
+
+	await harness.commands.get("feature")?.handler("next reown-strategy", harness.ctx as any);
+
+	assert.equal(harness.getEditorText(), "/feature design reown-strategy");
+	assert.match(harness.notifications.at(-1)?.message ?? "", /Model\/design the solution before execution/i);
+});
+
+test("inferConversationalFeatureIntent recognizes safe natural feature actions", () => {
+	assert.deepEqual(inferConversationalFeatureIntent("let's design the solution for docs/features/reown-strategy")?.kind, "design");
+	assert.deepEqual(inferConversationalFeatureIntent("open the feature dashboard")?.kind, "view");
+	assert.deepEqual(inferConversationalFeatureIntent("write the report for WO-001")?.kind, "report");
+	assert.equal(inferConversationalFeatureIntent("fix the login bug"), undefined);
+});
+
+test("conversational feature input routes design intent without a slash command", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
+	await initializeFeaturePacket(root, {
+		brief: "Make re-own useful for strategic understanding",
+		slug: "reown-strategy",
+		branch: "feat/reown-strategy",
+		workspacePath: root,
+		createdDate: "2026-05-26",
+	});
+	const harness = createHarness(root);
+	featureFlowExtension(harness.pi as any);
+
+	const result = await harness.eventHandlers.get("input")?.({ text: "Let's design the solution", source: "user" }, harness.ctx as any);
+
+	assert.deepEqual(result, { action: "handled" });
+	assert.match(harness.getEditorText(), /Partner with me as a solution architect/i);
+	assert.match(harness.getEditorText(), /Do not implement code yet/i);
+	assert.match(harness.notifications.at(-1)?.message ?? "", /solution-design prompt/i);
+});
+
+test("conversational feature input routes next/status/view/report intents safely", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
+	await initializeFeaturePacket(root, {
+		brief: "Make re-own useful for strategic understanding",
+		slug: "reown-strategy",
+		branch: "feat/reown-strategy",
+		workspacePath: root,
+		createdDate: "2026-05-26",
+	});
+	const created = await createWorkOrder(root, "reown-strategy", "Change re-own output");
+	assert.equal(created.ok, true);
+	const workOrderPath = created.ok ? created.path : "";
+	const workOrderContent = await readFile(path.join(root, workOrderPath), "utf8");
+	await writeFile(path.join(root, workOrderPath), workOrderContent.replace("status: draft", "status: ready"));
+	const harness = createHarness(root);
+	featureFlowExtension(harness.pi as any);
+
+	let result = await harness.eventHandlers.get("input")?.({ text: "what's next?", source: "user" }, harness.ctx as any);
+	assert.deepEqual(result, { action: "handled" });
+	assert.match(harness.getEditorText(), /strategy\.md|feature design|Implement the ready work order/i);
+
+	result = await harness.eventHandlers.get("input")?.({ text: "show feature status", source: "user" }, harness.ctx as any);
+	assert.deepEqual(result, { action: "handled" });
+	assert.match(harness.getEditorText(), /# Feature Status: reown-strategy/);
+
+	result = await harness.eventHandlers.get("input")?.({ text: "write the execution report for WO-001", source: "user" }, harness.ctx as any);
+	assert.deepEqual(result, { action: "handled" });
+	assert.equal(harness.getEditorText(), "docs/features/reown-strategy/execution/001-wo-001.md");
+
+	result = await harness.eventHandlers.get("input")?.({ text: "open the feature dashboard", source: "user" }, harness.ctx as any);
+	assert.deepEqual(result, { action: "handled" });
+	assert.equal(harness.getEditorText(), "docs/features/reown-strategy/index.html");
+	assert.equal(harness.execCalls.length, 1);
+});
+
+test("conversational feature input ignores unrelated prompts and extension-injected input", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
+	const harness = createHarness(root);
+	featureFlowExtension(harness.pi as any);
+
+	let result = await harness.eventHandlers.get("input")?.({ text: "fix the login bug", source: "user" }, harness.ctx as any);
+	assert.deepEqual(result, { action: "continue" });
+
+	result = await harness.eventHandlers.get("input")?.({ text: "what's next?", source: "extension" }, harness.ctx as any);
+	assert.deepEqual(result, { action: "continue" });
+});
+
+test("/feature design writes a non-execution solution-design prompt", async () => {
+	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
+	await initializeFeaturePacket(root, {
+		brief: "Make re-own useful for strategic understanding",
+		slug: "reown-strategy",
+		branch: "feat/reown-strategy",
+		workspacePath: root,
+		createdDate: "2026-05-26",
+	});
+	const harness = createHarness(root);
+	featureFlowExtension(harness.pi as any);
+
+	await harness.commands.get("feature")?.handler("design reown-strategy", harness.ctx as any);
+
+	assert.match(harness.getEditorText(), /Partner with me as a solution architect/i);
+	assert.match(harness.getEditorText(), /Do not implement code yet/i);
+	assert.match(harness.getEditorText(), /system-model\.md/);
+	assert.match(harness.getEditorText(), /decisions\.md/);
+	assert.match(harness.getEditorText(), /proof\.md/);
+	assert.match(harness.getEditorText(), /draft Work Orders/i);
+	assert.match(harness.getEditorText(), /Do not mark work orders ready/i);
+	assert.match(harness.notifications.at(-1)?.message ?? "", /solution-design prompt/i);
 });
 
 test("/feature work-order creates a draft Work Order v2 brief", async () => {

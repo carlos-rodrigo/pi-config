@@ -83,7 +83,7 @@ export type FeatureFlowSuggestionState = {
 	slug?: string;
 	packetDir?: string;
 	workOrderId?: string;
-	stage?: "status" | "strategy" | "work-order-review" | "execute" | "report" | "review" | "view";
+	stage?: "status" | "strategy" | "design" | "work-order-review" | "execute" | "report" | "review" | "view";
 	signals: string[];
 };
 
@@ -374,7 +374,7 @@ export function extractFeatureFlowSuggestionState(conversationContext: string, f
 	const slug =
 		combined.match(/docs\/features\/([a-z0-9][a-z0-9-]*)\b/i)?.[1] ??
 		combined.match(/--slug\s+([a-z0-9][a-z0-9-]*)\b/i)?.[1] ??
-		combined.match(/\/feature\s+(?:status|next|view|review)\s+([a-z0-9][a-z0-9-]*)\b/i)?.[1];
+		combined.match(/\/feature\s+(?:status|next|design|plan|view|review)\s+([a-z0-9][a-z0-9-]*)\b/i)?.[1];
 	const workOrderId = combined.match(/\bWO-\d{3,}\b/i)?.[0]?.toUpperCase();
 	const packetDir = slug ? `docs/features/${slug}` : undefined;
 
@@ -385,7 +385,9 @@ export function extractFeatureFlowSuggestionState(conversationContext: string, f
 		stage = "execute";
 	} else if (/draft work order|blocked work order|status:\s*(draft|blocked)|mark one ready|\/feature\s+work-order\b|work-orders\//.test(lower)) {
 		stage = "work-order-review";
-	} else if (/strategy\.md|system-model\.md|decisions\.md|proof\.md|open decisions?|incomplete proof|define proof|frame the strategy/.test(lower)) {
+	} else if (/\/feature\s+(design|plan)\b|system-model\.md|solution design|execution slices|design-to-execution|model\/design/.test(lower)) {
+		stage = "design";
+	} else if (/strategy\.md|decisions\.md|proof\.md|open decisions?|incomplete proof|define proof|frame the strategy/.test(lower)) {
 		stage = "strategy";
 	} else if (/review\.md|\/feature\s+review\b|strategy review|teach-back|reown --remember/.test(lower)) {
 		stage = "review";
@@ -410,13 +412,16 @@ function getFeatureFlowGuidance(featureFlowState?: FeatureFlowSuggestionState): 
 	const workOrder = featureFlowState.workOrderId ?? "<work-order>";
 	const signals = featureFlowState.signals.length ? ` Signals: ${featureFlowState.signals.join(", ")}.` : "";
 	const base = `
-- Feature-flow active: treat ${packet}/ as the strategic source of truth. Suggestions should advance Frame → Model → Decide → Delegate → Execute → Review, not jump to coding when strategy/proof/work-order approval is missing.${signals}
+- Feature-flow active: treat ${packet}/ as the strategic/source-design source of truth. Suggestions should advance Frame → Model/Design → Decide → Slice → Execute → Report → Review, not jump to coding when strategy/design/proof/work-order approval is missing.${signals}
 - If the current feature state is unclear, suggest /feature status${slugSuffix} or /feature next${slugSuffix}.`;
 
 	switch (featureFlowState.stage) {
 		case "strategy":
 			return `${base}
-- Strategy/proof stage: prefer filling strategy.md, system-model.md, decisions.md, or proof.md before suggesting implementation.`;
+- Strategy/proof stage: prefer filling strategy.md and proof/decision gaps; when strategy is approved, suggest /feature design${slugSuffix} before implementation.`;
+		case "design":
+			return `${base}
+- Solution-design stage: suggest /feature design${slugSuffix} to co-design system-model.md, decisions.md, proof.md, and draft Work Orders without implementing.`;
 		case "work-order-review":
 			return `${base}
 - Work-order review stage: suggest reviewing draft/blocked work orders, resolving ambiguity, and marking exactly one approved work order status: ready.`;

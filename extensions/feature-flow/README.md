@@ -18,6 +18,7 @@ pi install ./extensions/feature-flow
 | `/feature list` | Lists active `feat/*` worktrees. |
 | `/feature status [slug]` | Summarizes feature packet docs, work orders, diagrams, execution reports, proof gaps, and next action. |
 | `/feature next [slug]` | Writes the next recommended strategic prompt to the editor. |
+| `/feature design [slug]` | Writes a non-execution solution-design prompt for system model, decisions, proof, and draft Work Orders. |
 | `/feature work-order <title> [--slug <name>]` | Creates a draft Work Order v2 delegation brief. |
 | `/feature report <work-order> [--slug <name>]` | Creates a draft execution report linked to a work order id/path/title. |
 | `/feature review [slug]` | Writes a strategy-review prompt that compares intent, execution, proof, and optional `/reown --remember` memory. |
@@ -27,6 +28,21 @@ pi install ./extensions/feature-flow
 | `/feature close <slug>` | Removes feature workspace with dirty-check confirmation. |
 
 When `[slug]` is omitted, feature-flow infers it only when there is exactly one `docs/features/` packet.
+
+## Conversational routing
+
+Commands are the stable API, but you can also use natural language for safe workflow actions when a feature packet is active:
+
+| Say | Equivalent behavior |
+| --- | --- |
+| "what's next?" | writes the `/feature next` prompt |
+| "show feature status" | writes `/feature status` output |
+| "let's design the solution" | writes the `/feature design` prompt |
+| "open the dashboard" | regenerates/opens `/feature view` |
+| "review this feature" | writes the `/feature review` prompt |
+| "write the report for WO-001" | creates `/feature report WO-001` when the work order is ready/done |
+
+Conversational routing does not auto-implement code or mark work orders ready. If the active feature is ambiguous, the message passes through to the agent instead of guessing.
 
 ## Feature packet
 
@@ -48,11 +64,22 @@ docs/features/<slug>/
 
 Markdown is the source of truth. `index.html` is a generated learning site that aggregates strategy, system model, decisions, proof, work orders, execution reports, strategy review, and diagrams. The top dashboard summarizes state, next action, work-order/report counts, proof/decision gaps, diagram links, and review/remember guidance.
 
-The packet is designed for strategic ownership:
+The packet is designed for ownership boundaries:
 
-- the user owns product/system rules, tradeoffs, scope, and proof,
-- the agent owns implementation details and mechanical execution,
-- strategic ambiguity should be escalated before implementation.
+- the user owns product strategy, system design, solution architecture, slicing, tradeoffs, scope, and proof,
+- the agent owns execution mechanics: code edits, tests, proof runs, status updates, and execution reports,
+- product/system/design ambiguity should be escalated before implementation.
+
+## Solution design bridge
+
+`/feature design [slug]` is the bridge from strategy to executable work. It writes a prompt that asks the agent to inspect the codebase with you as solution architect, then update:
+
+- `system-model.md` — current flow, intended flow, solution design, execution slices, concepts, boundaries, code anchors,
+- `decisions.md` — architecture/system decisions the user must own,
+- `proof.md` — targeted checks, manual/E2E checks, regression gates,
+- `work-orders/` — draft execution slices derived from the design.
+
+It explicitly says **do not implement yet** and **do not mark work orders ready**. The user reviews the design and approves slices before execution.
 
 ## Work Order v2
 

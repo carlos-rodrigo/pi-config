@@ -313,6 +313,22 @@ Actor/input → current components/functions → current behavior/output.
 
 Actor/input → changed components/functions → intended behavior/output.
 
+## Solution design
+
+Architecture/path the user and agent are choosing before execution:
+
+- [ ] Design approach:
+- [ ] Important tradeoffs:
+- [ ] Why this design preserves the strategy:
+
+## Execution slices / Work Order plan
+
+Draft the design-to-execution breakdown here before creating Work Orders:
+
+| Slice | Mission | Depends on | Proof |
+| --- | --- | --- | --- |
+| TBD | TBD | TBD | TBD |
+
 ## Key concepts and invariants
 
 - [ ] Concept / state / lifecycle:
@@ -1214,8 +1230,8 @@ function chooseNextAction(input: {
 	}
 	if (isDefaultSystemModel(input.systemModel)) {
 		return {
-			nextAction: "Model the current and intended system story with code anchors.",
-			nextPrompt: `Inspect the repo and draft docs/features/${input.slug}/system-model.md: current flow, intended flow, key concepts, invariants, boundaries, and code anchors. Ask before making strategic assumptions.`,
+			nextAction: "Model/design the solution before execution: system story, decisions, proof, and slices.",
+			nextPrompt: `/feature design ${input.slug}`,
 		};
 	}
 	if (input.openDecisionCount > 0 || isDefaultDecisions(input.decisions)) {
