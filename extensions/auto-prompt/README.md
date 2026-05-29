@@ -40,6 +40,7 @@ Suggestions follow a "devil's advocate" approach to verification:
 - **Action + proof**: Suggestions should push the next step forward and include how to prove it worked
 - **Preflight when coding**: For behavior-changing edits, suggestions can ask the agent to call `verification_plan` before editing
 - **Ownership loop aware**: When ownership-loop passive/strict mode is active and files changed, suggestions treat `/reown` as available and use `/reown --remember` only when searchable memory is explicitly useful
+- **Feature-flow aware**: When a `docs/features/<slug>/` packet, work order, or execution report is in the conversation, suggestions can point to `/feature status`, `/feature next`, `/feature report`, `/feature review`, or the right work-order action
 
 This addresses the blind spot problem: when an agent writes code AND writes unit tests, both can share the same misconception.
 

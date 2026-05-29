@@ -16,6 +16,7 @@ import {
 	detectPhase,
 	detectUnverifiedImplementation,
 	extractOwnershipSuggestionState,
+	extractFeatureFlowSuggestionState,
 	type ConversationPhase,
 } from "./index.ts";
 
@@ -190,6 +191,44 @@ test("extractOwnershipSuggestionState returns latest ownership-loop entry", () =
 	assert.equal(state?.task, "new");
 	assert.equal(state?.mode, "passive");
 	assert.equal(state?.changedSinceStory, true);
+});
+
+test("extractFeatureFlowSuggestionState detects feature packets, slug, and work-order stage", () => {
+	const state = extractFeatureFlowSuggestionState(
+		"Assistant: Created docs/features/reown-strategy/work-orders/001-change-output.md with status: ready for WO-001.",
+	);
+
+	assert.equal(state?.active, true);
+	assert.equal(state?.slug, "reown-strategy");
+	assert.equal(state?.packetDir, "docs/features/reown-strategy");
+	assert.equal(state?.workOrderId, "WO-001");
+	assert.equal(state?.stage, "execute");
+});
+
+test("extractFeatureFlowSuggestionState ignores unrelated conversations", () => {
+	const state = extractFeatureFlowSuggestionState("User: Fix the login bug.\n\nAssistant: I found auth.ts.");
+
+	assert.equal(state, undefined);
+});
+
+test("buildSuggestionPrompt includes feature-flow next-action guidance", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Continue the feature.\n\nAssistant: docs/features/reown-strategy has a done work order missing an execution report.",
+		"deep",
+		["docs/features/reown-strategy/work-orders/001-change-output.md"],
+		[],
+		"shipping",
+		undefined,
+		false,
+		undefined,
+		extractFeatureFlowSuggestionState("Assistant: WO-001 is done but missing execution report in docs/features/reown-strategy."),
+	);
+
+	assert.match(prompt, /Feature-flow active/i);
+	assert.match(prompt, /docs\/features\/reown-strategy/i);
+	assert.match(prompt, /\/feature status reown-strategy/i);
+	assert.match(prompt, /\/feature report WO-001 --slug reown-strategy/i);
+	assert.match(prompt, /repo-relative files/i);
 });
 
 // --- File path extraction ---

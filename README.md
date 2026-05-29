@@ -1,10 +1,10 @@
 # Pi Config
 
-My personal [Pi](https://github.com/badlogic/pi-mono) extensions, themes, agents, and prompts.
+My personal [Pi](https://github.com/badlogic/pi-mono) extensions, skills, themes, agents, and prompts.
 
 ## Install
 
-### Via pi (all extensions in this package)
+### Via pi (packaged extensions, skills, prompts, and themes)
 
 ```bash
 pi install git:github.com/carlos-rodrigo/pi-config
@@ -51,7 +51,7 @@ cd pi-config
 ./install.sh
 ```
 
-This symlinks all extensions, themes, agents, and prompts into `~/.pi/agent/`. Restart Pi and use `/reload` to pick up changes.
+This symlinks all extensions, themes, agents, prompts, and repo-managed skills into `~/.pi/agent/` and `~/.agents/skills/`. Use this path when you also want local agent definitions; Pi package install covers extensions, skills, prompts, and themes. Restart Pi and use `/reload` to pick up changes.
 
 It also migrates any legacy `~/.pi/agent/skills/` entries into `~/.agents/skills/` and removes the legacy directory to avoid duplicate-skill collisions.
 
@@ -67,7 +67,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[branch-switcher](extensions/branch-switcher/)** — Interactive `/branch` command for local and remote branches.
 - **[code-intel](extensions/code-intel/)** — `code_find` orchestration plus symbol, dependency, git-history, and AST search tools.
 - **[document-reviewer](extensions/document-reviewer/)** — Browser-based document and PR review with inline comments.
-- **[feature-flow](extensions/feature-flow/)** — Lightweight feature orchestration with Git worktrees.
+- **[feature-flow](extensions/feature-flow/)** — Strategy-first feature orchestration with Git worktrees and docs/features learning packets.
 - **[file-opener](extensions/file-opener/)** — Syntax-highlighted file viewer, nvim opener, and diff viewer.
 - **[git-blame](extensions/git-blame/)** — Interactive git blame overlay.
 - **[lazygit](extensions/lazygit/)** — LazyGit launcher via tmux.
@@ -80,12 +80,28 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[workflow-modes](extensions/workflow-modes/)** — Smart/deep1/deep2/deep3/fast mode switching.
 - **[worktree-manager](extensions/worktree-manager/)** — Git worktree lifecycle manager.
 
+### [Skills](skills/)
+
+- **system-diagram** — Excalidraw-style HTML/SVG System Diagrams for code flows, component communication, domain concepts, and system mental models.
+
 ### [Agents](agents/)
 
 Agent definitions used by the agent-jobs extension:
 
 - **oracle** — Deep reasoning second opinion (gpt-5.5). For complex debugging, architecture decisions, and thorough code analysis. Read-only.
 - **researcher** — Concise research specialist (gpt-5.5). Investigates technologies, reads docs/source, compares approaches, and returns evidence-first briefs with bounded tool/output budgets. Uses `websearch`/`webfetch` instead of shelling out.
+
+### Feature flow
+
+- `/feature <brief>` — Start a strategy-first feature worktree and scaffold `docs/features/<slug>/`.
+- `/feature status [slug]` — Summarize docs, decisions, proof, work orders, diagrams, execution reports, and the next action.
+- `/feature next [slug]` — Write the next recommended strategic prompt to the editor.
+- `/feature work-order <title> [--slug <name>]` — Optionally create a draft Work Order v2 delegation brief; mark `status: ready` only after approval.
+- `/feature report <work-order> [--slug <name>]` — Create a draft execution report for a `ready`/`done` work order; fill proof evidence and mark `status: complete`.
+- `/feature review [slug]` — Write a strategy alignment prompt for final teach-back and optional `/reown --remember` memory.
+- `/feature view [slug]` — Regenerate/open `docs/features/<slug>/index.html`, a dashboard learning view with state, next action, work-order/report evidence, proof/decision gaps, reviews, and diagrams.
+- If `[slug]` is omitted, feature-flow infers it when there is exactly one `docs/features/` packet.
+- `.features/` task state is legacy/optional; work orders live under `docs/features/<slug>/work-orders/` only when delegation needs splitting. Small approved features can execute directly from strategy/model/decision/proof docs.
 
 ### Ownership loop
 

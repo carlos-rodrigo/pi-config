@@ -78,6 +78,15 @@ export type OwnershipSuggestionState = {
 	memoryCardPath?: string;
 };
 
+export type FeatureFlowSuggestionState = {
+	active: true;
+	slug?: string;
+	packetDir?: string;
+	workOrderId?: string;
+	stage?: "status" | "strategy" | "work-order-review" | "execute" | "report" | "review" | "view";
+	signals: string[];
+};
+
 function extractTextFromContent(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
@@ -345,6 +354,89 @@ export function extractOwnershipSuggestionState(
 	return undefined;
 }
 
+function pushUniqueSignal(signals: string[], signal: string): void {
+	if (!signals.includes(signal)) signals.push(signal);
+}
+
+export function extractFeatureFlowSuggestionState(conversationContext: string, filePaths: string[] = []): FeatureFlowSuggestionState | undefined {
+	const combined = [conversationContext, ...filePaths].join("\n");
+	const lower = combined.toLowerCase();
+	const signals: string[] = [];
+
+	if (/docs\/features\//i.test(combined)) pushUniqueSignal(signals, "docs/features packet");
+	if (/\bfeature packet\b|\bfeature-flow\b/i.test(combined)) pushUniqueSignal(signals, "feature packet workflow");
+	if (/\/feature\b/i.test(combined)) pushUniqueSignal(signals, "/feature command");
+	if (/\bwork orders?\b|\bWO-\d{3,}\b/i.test(combined)) pushUniqueSignal(signals, "work orders");
+	if (/\bexecution reports?\b|\bER-\d{3,}\b/i.test(combined)) pushUniqueSignal(signals, "execution reports");
+
+	if (signals.length === 0) return undefined;
+
+	const slug =
+		combined.match(/docs\/features\/([a-z0-9][a-z0-9-]*)\b/i)?.[1] ??
+		combined.match(/--slug\s+([a-z0-9][a-z0-9-]*)\b/i)?.[1] ??
+		combined.match(/\/feature\s+(?:status|next|view|review)\s+([a-z0-9][a-z0-9-]*)\b/i)?.[1];
+	const workOrderId = combined.match(/\bWO-\d{3,}\b/i)?.[0]?.toUpperCase();
+	const packetDir = slug ? `docs/features/${slug}` : undefined;
+
+	let stage: FeatureFlowSuggestionState["stage"] = "status";
+	if (/missing execution report|done work order|status:\s*done|\/feature\s+report\b|draft execution report|execution reports?/.test(lower)) {
+		stage = "report";
+	} else if (/ready work order|status:\s*ready|implement the ready work order/.test(lower)) {
+		stage = "execute";
+	} else if (/draft work order|blocked work order|status:\s*(draft|blocked)|mark one ready|\/feature\s+work-order\b|work-orders\//.test(lower)) {
+		stage = "work-order-review";
+	} else if (/strategy\.md|system-model\.md|decisions\.md|proof\.md|open decisions?|incomplete proof|define proof|frame the strategy/.test(lower)) {
+		stage = "strategy";
+	} else if (/review\.md|\/feature\s+review\b|strategy review|teach-back|reown --remember/.test(lower)) {
+		stage = "review";
+	} else if (/index\.html|\/feature\s+view\b|learning view/.test(lower)) {
+		stage = "view";
+	}
+
+	return {
+		active: true,
+		slug,
+		packetDir,
+		workOrderId,
+		stage,
+		signals: signals.slice(0, 6),
+	};
+}
+
+function getFeatureFlowGuidance(featureFlowState?: FeatureFlowSuggestionState): string {
+	if (!featureFlowState?.active) return "";
+	const slugSuffix = featureFlowState.slug ? ` ${featureFlowState.slug}` : "";
+	const packet = featureFlowState.packetDir ?? "docs/features/<slug>";
+	const workOrder = featureFlowState.workOrderId ?? "<work-order>";
+	const signals = featureFlowState.signals.length ? ` Signals: ${featureFlowState.signals.join(", ")}.` : "";
+	const base = `
+- Feature-flow active: treat ${packet}/ as the strategic source of truth. Suggestions should advance Frame → Model → Decide → Delegate → Execute → Review, not jump to coding when strategy/proof/work-order approval is missing.${signals}
+- If the current feature state is unclear, suggest /feature status${slugSuffix} or /feature next${slugSuffix}.`;
+
+	switch (featureFlowState.stage) {
+		case "strategy":
+			return `${base}
+- Strategy/proof stage: prefer filling strategy.md, system-model.md, decisions.md, or proof.md before suggesting implementation.`;
+		case "work-order-review":
+			return `${base}
+- Work-order review stage: suggest reviewing draft/blocked work orders, resolving ambiguity, and marking exactly one approved work order status: ready.`;
+		case "execute":
+			return `${base}
+- Ready work-order stage: suggest executing the ready work order, preserving decisions, running proof, then creating /feature report ${workOrder}${slugSuffix ? ` --slug${slugSuffix}` : ""}.`;
+		case "report":
+			return `${base}
+- Execution-report stage: suggest creating/completing /feature report ${workOrder}${slugSuffix ? ` --slug${slugSuffix}` : ""}, recording repo-relative files, proof, deviations, and marking reports complete.`;
+		case "review":
+			return `${base}
+- Review stage: suggest /feature review${slugSuffix}, update review.md, and use /reown --remember only when searchable ownership memory is useful.`;
+		case "view":
+			return `${base}
+- Learning-view stage: suggest /feature view${slugSuffix} after source docs/reports/diagrams change.`;
+		default:
+			return base;
+	}
+}
+
 function getOwnershipGuidance(ownershipState?: OwnershipSuggestionState): string {
 	if (!ownershipState?.active || ownershipState.mode === "off") return "";
 	const task = ownershipState.task ? ` for ${ownershipState.task}` : "";
@@ -401,10 +493,12 @@ export function buildSuggestionPrompt(
 	baselineGuidelines?: string[],
 	unverifiedImplementation?: boolean,
 	ownershipState?: OwnershipSuggestionState,
+	featureFlowState?: FeatureFlowSuggestionState,
 ): string {
 	const modeHint = workflowMode ? `\n- Current agent mode: ${workflowMode}` : "";
 	const modeGuidance = getWorkflowModeGuidance(workflowMode);
 	const ownershipGuidance = getOwnershipGuidance(ownershipState);
+	const featureFlowGuidance = getFeatureFlowGuidance(featureFlowState);
 
 	const fileContext =
 		filePaths && filePaths.length > 0
@@ -464,7 +558,7 @@ Keep it concise: 10-45 words. One or two sentences max. Never exceed 240 charact
 - When the user was told to do something manually, suggest that manual step
 - Assume baseline AGENTS/system guidelines are already enforced by the coding agent
 - Do NOT restate generic process defaults (e.g. "follow AGENTS", "run/feed the loop") unless it is the specific blocking action now
-- Prefer delta guidance: what concrete next action should happen now${modeHint}${modeGuidance}${ownershipGuidance}
+- Prefer delta guidance: what concrete next action should happen now${modeHint}${modeGuidance}${ownershipGuidance}${featureFlowGuidance}
 - Return ONLY the prompt text. No quotes, no explanation, no markdown.
 - Hard limit: 240 characters maximum.${phaseGuidance}${unverifiedImplementation ? `
 
@@ -842,6 +936,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext, gener
 	const phase = detectPhase(conversationContext);
 	const baselineGuidelines = extractBaselineGuidelines(ctx.getSystemPrompt());
 	const unverifiedImplementation = detectUnverifiedImplementation(conversationContext);
+	const featureFlowState = extractFeatureFlowSuggestionState(conversationContext, filePaths);
 
 	const controller = new AbortController();
 	pendingController = controller;
@@ -856,6 +951,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext, gener
 			baselineGuidelines,
 			unverifiedImplementation,
 			ownershipState,
+			featureFlowState,
 		);
 		const prompt = revisionHint
 			? `${basePrompt}\n\n<revision_request>\n${revisionHint}\n</revision_request>`

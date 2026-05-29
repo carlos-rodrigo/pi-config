@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { buildLaunchFallbackText } from "./launch-help.js";
 import { getDocumentReviewService } from "./server.js";
-import { openExternal } from "./lib/open-external.js";
+import { openExternal } from "./lib/open-external.ts";
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mkd", ".mdx"]);
 const MARKDOWN_EXTENSION_LIST = Array.from(MARKDOWN_EXTENSIONS).join(", ");

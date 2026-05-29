@@ -9,7 +9,7 @@ LEGACY_PI_SKILLS_DIR="${PI_DIR}/skills"
 
 echo "Installing pi-config from ${REPO_DIR}"
 echo ""
-echo "Note: For extensions only, you can also use:"
+echo "Note: To install packaged extensions and skills, you can also use:"
 echo "  pi install git:github.com/carlos-rodrigo/pi-config"
 echo ""
 
@@ -56,11 +56,6 @@ for stale in "${PI_DIR}"/extensions/*.ts "${PI_DIR}"/extensions/*.test.ts; do
   rm "$stale"
   echo "  ✓ removed stale symlink $(basename "$stale")"
 done
-for stale in "${PI_DIR}"/extensions/lib; do
-  [ -L "$stale" ] || continue
-  rm "$stale"
-  echo "  ✓ removed stale symlink $(basename "$stale")"
-done
 for stale in "${PI_DIR}"/extensions/*; do
   [ -L "$stale" ] || continue
   target_path="$(readlink "$stale")"
@@ -78,7 +73,7 @@ for stale in "${PI_DIR}"/agents/*.md; do
   fi
 done
 
-# --- Extensions (each extension is a directory with index.ts) ---
+# --- Extension directories and shared extension support directories (for example extensions/lib) ---
 for d in "${REPO_DIR}"/extensions/*/; do
   [ -d "$d" ] || continue
   name="$(basename "$d")"
@@ -123,6 +118,21 @@ for f in "${REPO_DIR}"/agents/*.md; do
   echo "  ✓ agents/${name}"
 done
 
+# --- Skills ---
+for d in "${REPO_DIR}"/skills/*/; do
+  [ -f "${d%/}/SKILL.md" ] || continue
+  name="$(basename "$d")"
+  target="${AGENTS_SKILLS_DIR}/${name}"
+  if [ -L "$target" ]; then
+    rm "$target"
+  elif [ -e "$target" ]; then
+    echo "  ⚠ Skipping skills/${name}/ — directory already exists (not a symlink)"
+    continue
+  fi
+  ln -s "${d%/}" "$target"
+  echo "  ✓ skills/${name}/"
+done
+
 # --- Prompts ---
 for f in "${REPO_DIR}"/prompts/*.md; do
   [ -f "$f" ] || continue
@@ -141,6 +151,7 @@ done
 echo ""
 echo "Done. Restart pi or use /reload to pick up changes."
 echo ""
-echo "Note: AGENTS.md and skills are managed separately via the agents repo."
+echo "Note: AGENTS.md is managed separately via the agents repo."
+echo "  Skills from this repo are linked into ~/.agents/skills when available."
 echo "  Skills location: ~/.agents/skills (legacy ~/.pi/agent/skills is removed by this installer)"
 echo "  See: https://github.com/carlos-rodrigo/agents"

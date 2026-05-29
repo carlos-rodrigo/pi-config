@@ -28,7 +28,10 @@
     "test": "npm run test:direct && npm run test:document-reviewer"
   },
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": ["./extensions/*/index.ts"],
+    "skills": ["./skills"],
+    "prompts": ["./prompts"],
+    "themes": ["./themes"]
   },
   "dependencies": {
     "diff": "^7.0.0",

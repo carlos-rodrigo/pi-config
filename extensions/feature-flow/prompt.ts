@@ -5,6 +5,8 @@ export function buildKickoffPrompt(input: {
 	workspacePath: string;
 	fallbackUsed: boolean;
 	fallbackReason?: string;
+	packetDir?: string;
+	learningViewPath?: string;
 }): string {
 	const fallbackSection = input.fallbackUsed
 		? [
@@ -15,9 +17,19 @@ export function buildKickoffPrompt(input: {
 				.filter(Boolean)
 				.join("\n")
 		: "";
+	const packetSection = input.packetDir
+		? [
+			"## Feature Packet",
+			`- Source docs: ${input.packetDir}`,
+			input.learningViewPath ? `- Learning view: ${input.learningViewPath}` : "",
+			"- Treat the markdown docs as source of truth and the HTML view as a generated study guide.",
+		]
+				.filter(Boolean)
+				.join("\n")
+		: "";
 
 	return [
-		"You are starting a new feature workflow.",
+		"You are starting a strategy-first feature workflow.",
 		"",
 		"## Feature Context",
 		`- Brief: ${input.brief}`,
@@ -25,39 +37,52 @@ export function buildKickoffPrompt(input: {
 		`- Branch: ${input.branch}`,
 		`- Workspace: ${input.workspacePath}`,
 		fallbackSection,
+		packetSection,
+		"",
+		"## Role Split",
+		"- The user owns strategic thinking: problem framing, product/system rules, tradeoffs, scope, and acceptance evidence.",
+		"- The agent owns execution thinking: code exploration, implementation options, tests, and mechanical changes.",
+		"- Escalate strategic ambiguity instead of silently deciding what the system should mean.",
 		"",
 		"## Workflow Doctrine",
-		"- Do not force a strict artifact sequence.",
-		"- Choose the lightest workflow that fits after a brief exploration pass.",
-		"- Workflow options:",
-		"  1. Direct implementation for small, clear work.",
-		"  2. Investigate + plan for bounded non-trivial work.",
-		"  3. Full feature workflow for large, risky, or ambiguous work.",
-		"- Explain which path you chose and why.",
+		"- Do not force a strict artifact sequence; choose the lightest workflow that preserves strategic ownership.",
+		"- Possible phases: Frame → Model → Decide → Delegate → Execute → Review/Remember.",
+		"- Each phase should produce or update understandable feature content as a byproduct of the conversation.",
+		"- Explain which path you chose and why before writing durable artifacts.",
 		"",
-		"## Documentation Doctrine",
-		"- Produce useful documentation only when it materially helps future work.",
-		"- Good reasons to document: stabilize scope, preserve durable technical decisions, capture reusable verification, or prevent repeated rediscovery.",
+		"## Feature Documentation Doctrine",
+		"- The feature packet lives under docs/features/ by default, not .features/.",
+		"- Produce durable documentation only when it helps the user understand, decide, delegate, verify, or remember.",
+		"- Good reasons to document: strategic problem framing, current/intended system models, decision tradeoffs, reusable verification, execution handoff, or ownership memory.",
 		"- Do not create docs that only restate the code, the diff, or temporary debugging notes.",
 		"- Preferred destinations:",
 		"  - docs/playbooks/ for reusable procedures and recurring gotchas",
-		`  - docs/features/${input.slug}/prd.md for concise scope/requirements when needed`,
-		`  - docs/features/${input.slug}/design.md for durable technical decisions when needed`,
-		`  - docs/features/${input.slug}/workflows/ for reusable verification flows`,
-		`  - .features/${input.slug}/tasks/ for execution state when work benefits from splitting`,
+		`  - docs/features/${input.slug}/strategy.md for problem framing, desired system behavior, constraints, and non-goals`,
+		`  - docs/features/${input.slug}/system-model.md for current flow → intended flow, concepts, invariants, and code anchors`,
+		`  - docs/features/${input.slug}/decisions.md for strategic choices, rejected options, risks, and escalation points`,
+		`  - docs/features/${input.slug}/proof.md for acceptance evidence, verification flows, and regression gates`,
+		`  - docs/features/${input.slug}/work-orders/ for optional agent delegation briefs when work should be split`,
+		`  - docs/features/${input.slug}/diagrams/ for System Diagram learning views: code flows, component communication, domain concepts, and system models`,
+		`  - docs/features/${input.slug}/index.html as an optional generated learning view when the feature packet is substantial`,
+		"- Do not create .features/ task state unless the user explicitly asks for the legacy task workflow.",
+		"",
+		"## Learning View Doctrine",
+		"- Optimize artifacts for re-owning the mental model: why this matters, how the system works, what changed, and what proof exists.",
+		"- Prefer diagrams, tables, traceability links, and short teach-back sections over long prose.",
+		"- For diagrams, use the system-diagram skill when it would clarify code flow, component communication, domain concepts, boundaries, data flow, or code ownership.",
 		"",
 		"## Execution Rules",
-		"1. Ask clarifying questions only if they materially affect scope or implementation.",
-		"2. Do a short exploration pass before choosing the workflow.",
-		"3. If you create PRD/design docs, open them with open_file, summarize them, and ask for approval before relying on them as execution artifacts.",
-		"4. If docs are unnecessary, keep the plan in chat and proceed.",
-		`5. Only create tasks under .features/${input.slug}/tasks/ when the work should be split across multiple steps or sessions. Tasks must be implementation-ready with repo research, prior art, and verification.`,
+		"1. Ask clarifying questions only if they materially affect strategy, scope, product/system behavior, or implementation risk.",
+		"2. Do a short exploration pass before choosing the workflow path.",
+		"3. If you create strategy/model/decision docs, summarize them and ask for approval before relying on them as execution authority.",
+		"4. If docs are unnecessary, keep the strategy and plan in chat and proceed.",
+		"5. Work orders are delegation contracts: include mission, strategic context, decisions to preserve, agent-owned execution choices, escalation triggers, proof required, and status frontmatter (draft | ready | blocked | done). Only ready work orders may be implemented.",
 		"",
 		"## Hard Gates",
 		"- Get approval before schema, API contract, auth/financial, infra, or major dependency changes.",
 		"- Keep outputs concise and actionable.",
 		"",
-		"Start now by briefly assessing the feature, then either ask the few clarifying questions you need or propose the lightest workflow.",
+		"Start now by briefly assessing the feature, then ask 1–3 strategic questions or propose the lightest workflow and first artifact to create.",
 	]
 		.filter(Boolean)
 		.join("\n");
