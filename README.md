@@ -93,6 +93,8 @@ Agent definitions used by the agent-jobs extension:
 
 ### Feature flow
 
+See [docs/features/README.md](docs/features/README.md) for the feature packet shape and usage examples.
+
 - `/feature <brief>` — Start a strategy-first feature worktree and scaffold `docs/features/<slug>/`.
 - `/feature status [slug]` — Summarize docs, decisions, proof, work orders, diagrams, execution reports, and the next action.
 - `/feature next [slug]` — Write the next recommended strategic prompt to the editor.
