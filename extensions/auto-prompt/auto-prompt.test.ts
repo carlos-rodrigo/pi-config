@@ -333,7 +333,7 @@ test("hasMeaningfulPromptChange ignores whitespace-only rewrites", () => {
 test("normalizeConfiguredModel migrates legacy unsupported codex mini model", () => {
 	assert.deepEqual(normalizeConfiguredModel({ provider: "openai-codex", id: "gpt-5.1-codex-mini" }), {
 		provider: "openai-codex",
-		id: "gpt-5.3-codex-spark",
+		id: "gpt-5.5",
 	});
 });
 

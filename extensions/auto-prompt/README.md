@@ -74,13 +74,13 @@ Example: If the agent says "Done! I've created the webhook handler" without ment
 | `/suggest` | Toggle auto-suggestions on/off |
 | `/suggest now` | Manually trigger a suggestion |
 | `/suggest model` | Show current suggestion model |
-| `/suggest model <provider>/<id>` | Change model (e.g. `/suggest model openai-codex/gpt-5.3-codex-spark`) |
+| `/suggest model <provider>/<id>` | Change model (e.g. `/suggest model openai-codex/gpt-5.5`) |
 | `/improve [text]` | Improve the current editor text (or explicit text argument) using the same prompt-quality principles |
 
 ## Configuration
 
-- **Default model:** `openai-codex/gpt-5.3-codex-spark`
-- **Fallback model:** `openai-codex/gpt-5.3-codex` (if primary unavailable or unsupported)
+- **Default model:** `openai-codex/gpt-5.5` with low thinking
+- **Fallback model:** `openai-codex/gpt-5.4` with low thinking (if primary unavailable or unsupported)
 - State (enabled/disabled, model) persists across session restarts
 - Agent mode context (smart/deep1/deep2/deep3/fast) is included in the suggestion prompt for relevance:
   - `fast`: tiny action + cheap proof check
