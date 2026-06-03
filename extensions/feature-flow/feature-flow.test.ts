@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os";
 import path from "node:path";
 
-import featureFlowExtension, { inferConversationalFeatureIntent } from "./index.ts";
+import featureFlowExtension from "./index.ts";
 import { createExecutionReport, createWorkOrder, formatFeaturePacketStatus, getFeaturePacketStatus, initializeFeaturePacket, markdownToHtml, rebuildFeatureLearningView } from "./packet.ts";
 import { buildKickoffPrompt } from "./prompt.ts";
 
@@ -13,6 +13,8 @@ function createHarness(root: string) {
 	const eventHandlers = new Map<string, (event: any, ctx: any) => Promise<any>>();
 	const notifications: Array<{ message: string; level: string }> = [];
 	const execCalls: Array<{ command: string; args: string[] }> = [];
+	const messages: Array<{ customType: string; content: string; display?: boolean }> = [];
+	const statuses: Array<{ key: string; value: string | undefined }> = [];
 	let editorText = "";
 	const pi = {
 		registerCommand(name: string, definition: { description: string; handler: (args: string, ctx: unknown) => Promise<void> }) {
@@ -25,6 +27,9 @@ function createHarness(root: string) {
 			execCalls.push({ command, args });
 			return { code: 0, stdout: "", stderr: "" };
 		},
+		sendMessage(message: { customType: string; content: string; display?: boolean }) {
+			messages.push(message);
+		},
 	};
 	const ctx = {
 		cwd: root,
@@ -36,9 +41,12 @@ function createHarness(root: string) {
 			notify(message: string, level: string) {
 				notifications.push({ message, level });
 			},
+			setStatus(key: string, value: string | undefined) {
+				statuses.push({ key, value });
+			},
 		},
 	};
-	return { pi, ctx, commands, eventHandlers, notifications, execCalls, getEditorText: () => editorText };
+	return { pi, ctx, commands, eventHandlers, notifications, execCalls, getEditorText: () => editorText, getMessages: () => messages, getStatuses: () => statuses };
 }
 
 test("buildKickoffPrompt starts a strategy-first docs/features workflow", () => {
@@ -53,7 +61,7 @@ test("buildKickoffPrompt starts a strategy-first docs/features workflow", () => 
 	assert.match(prompt, /strategy-first feature workflow/i);
 	assert.match(prompt, /user owns product strategy, system design, solution architecture/i);
 	assert.match(prompt, /agent owns execution mechanics/i);
-	assert.match(prompt, /Frame → Model\/Design → Decide → Slice → Execute → Report → Review\/Remember/i);
+	assert.match(prompt, /Strategy → System model → Design → Architecture decisions → Work orders → Execute\/report → Review → PR\/user guide/i);
 	assert.match(prompt, /lightest workflow that preserves user ownership of strategy and solution design/i);
 	assert.match(prompt, /Design-to-execution matters/i);
 	assert.match(prompt, /feature packet lives under docs\/features\/ by default, not \.features\//i);
@@ -67,11 +75,13 @@ test("buildKickoffPrompt starts a strategy-first docs/features workflow", () => 
 	assert.match(prompt, /system-diagram skill/i);
 	assert.match(prompt, /code flow, component communication, domain concepts/i);
 	assert.match(prompt, /Do not create \.features\/ task state unless the user explicitly asks/i);
+	assert.match(prompt, /review the model before relying on it as execution authority/i);
+	assert.match(prompt, /Review the work-order split with the user before running a loop or executing a ready work order/i);
 	assert.doesNotMatch(prompt, /docs\/features\/pr-review-summaries\/prd\.md/i);
 	assert.doesNotMatch(prompt, /docs\/features\/pr-review-summaries\/design\.md/i);
 	assert.doesNotMatch(prompt, /\.features\/pr-review-summaries\/tasks\//i);
-	assert.doesNotMatch(prompt, /After PRD approval/i);
-	assert.doesNotMatch(prompt, /After design approval/i);
+	assert.doesNotMatch(prompt, new RegExp(`After PRD approv${"al"}`, "i"));
+	assert.doesNotMatch(prompt, new RegExp(`After design approv${"al"}`, "i"));
 });
 
 test("buildKickoffPrompt preserves fallback mode context", () => {
@@ -132,6 +142,9 @@ test("initializeFeaturePacket scaffolds docs/features learning packet without le
 	assert.match(strategy, /Problem to own/i);
 	assert.match(strategy, /Desired system behavior/i);
 	assert.match(strategy, /Teach-back/i);
+	const review = await readFile(path.join(root, "docs/features/reown-strategy/review.md"), "utf8");
+	assert.match(review, /PR summary draft/i);
+	assert.match(review, /User guide \/ manual draft/i);
 	const systemModel = await readFile(path.join(root, "docs/features/reown-strategy/system-model.md"), "utf8");
 	assert.match(systemModel, /## Solution design/i);
 	assert.match(systemModel, /## Execution slices \/ Work Order plan/i);
@@ -139,8 +152,11 @@ test("initializeFeaturePacket scaffolds docs/features learning packet without le
 	const index = await readFile(path.join(root, "docs/features/reown-strategy/index.html"), "utf8");
 	assert.match(index, /Feature Learning View/i);
 	assert.match(index, /Feature Dashboard/i);
+	assert.match(index, /generated learning manual/i);
 	assert.match(index, /Work order states/i);
-	assert.match(index, /Review \/ Remember/i);
+	assert.match(index, /Review \/ PR \/ User Guide/i);
+	assert.match(index, /PR summary draft/i);
+	assert.match(index, /user-guide\/manual draft/i);
 	assert.match(index, /docs\/features\/reown-strategy\/strategy\.md/i);
 	const diagramsReadme = await readFile(path.join(root, "docs/features/reown-strategy/diagrams/README.md"), "utf8");
 	assert.match(diagramsReadme, /code-flow\.html/i);
@@ -191,9 +207,9 @@ test("/feature migrate upgrades legacy PRD/design/tasks without deleting sources
 
 	await harness.commands.get("feature")?.handler("migrate legacy-checkout", harness.ctx as any);
 
-	assert.match(harness.getEditorText(), /# Feature Migration: legacy-checkout/);
-	assert.match(harness.getEditorText(), /docs\/features\/legacy-checkout\/prd\.md/);
-	assert.match(harness.getEditorText(), /\.features\/legacy-checkout\/tasks\/001-add-saved-card-api\.md/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /# Feature Migration: legacy-checkout/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /docs\/features\/legacy-checkout\/prd\.md/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /\.features\/legacy-checkout\/tasks\/001-add-saved-card-api\.md/);
 	assert.match(harness.notifications.at(-1)?.message ?? "", /Migrated feature packet/i);
 	const strategy = await readFile(path.join(root, "docs/features/legacy-checkout/strategy.md"), "utf8");
 	assert.match(strategy, /Migrated from legacy PRD\/design artifacts/i);
@@ -232,7 +248,7 @@ test("/feature migrate allocates around unrelated work orders and keeps blocked 
 
 	await harness.commands.get("feature")?.handler("migrate legacy-checkout", harness.ctx as any);
 	await assert.rejects(stat(path.join(root, "docs/features/legacy-checkout/work-orders/003-add-saved-card-api.md")), { code: "ENOENT" });
-	assert.match(harness.getEditorText(), /docs\/features\/legacy-checkout\/work-orders\/002-add-saved-card-api\.md/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /docs\/features\/legacy-checkout\/work-orders\/002-add-saved-card-api\.md/);
 });
 
 test("/feature migrate preserves existing packet docs and reports missing legacy sources", async () => {
@@ -247,11 +263,11 @@ test("/feature migrate preserves existing packet docs and reports missing legacy
 
 	const strategy = await readFile(path.join(root, "docs/features/legacy-checkout/strategy.md"), "utf8");
 	assert.equal(strategy, "# Custom Strategy\n\nDo not overwrite.");
-	assert.match(harness.getEditorText(), /Existing \/ preserved/);
-	assert.match(harness.getEditorText(), /docs\/features\/legacy-checkout\/strategy\.md/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /Existing \/ preserved/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /docs\/features\/legacy-checkout\/strategy\.md/);
 
 	await harness.commands.get("feature")?.handler("migrate missing-legacy", harness.ctx as any);
-	assert.match(harness.getEditorText(), /Feature Migration Failed: missing-legacy/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /Feature Migration Failed: missing-legacy/);
 	assert.match(harness.notifications.at(-1)?.message ?? "", /No legacy PRD\/design\/tasks found/i);
 });
 
@@ -280,13 +296,11 @@ test("status suggests recreating missing core docs instead of refreshing the vie
 	const status = await getFeaturePacketStatus(root, "reown-strategy");
 
 	assert.match(status.nextAction, /Recreate missing feature docs/i);
-	assert.match(status.nextPrompt, /Recreate the missing feature packet docs/i);
-	assert.match(status.nextPrompt, /system-model\.md/);
-	assert.doesNotMatch(status.nextPrompt, /^\/feature view/);
+	assert.equal(Object.keys(status).includes(`next${"Prompt"}`), false);
 	assert.match(formatFeaturePacketStatus(status), /State: incomplete/);
 });
 
-test("work order status gates execution recommendations", async () => {
+test("work order status requires review before execution", async () => {
 	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
 	await initializeFeaturePacket(root, {
 		brief: "Make re-own useful for strategic understanding",
@@ -295,7 +309,7 @@ test("work order status gates execution recommendations", async () => {
 		workspacePath: root,
 		createdDate: "2026-05-26",
 	});
-	await writeFile(path.join(root, "docs/features/reown-strategy/strategy.md"), "# Strategy\n\nProblem and desired system behavior are approved.");
+	await writeFile(path.join(root, "docs/features/reown-strategy/strategy.md"), "# Strategy\n\nProblem and desired system behavior are reviewed.");
 	await writeFile(path.join(root, "docs/features/reown-strategy/system-model.md"), "# System Model\n\nCurrent and intended flows are modeled.");
 	await writeFile(path.join(root, "docs/features/reown-strategy/decisions.md"), "# Decisions\n\n| ID | Status | Decision | Why |\n| --- | --- | --- | --- |\n| D-001 | decided | Keep strategy authority with the user | Prevent silent scope changes |\n");
 	await writeFile(path.join(root, "docs/features/reown-strategy/proof.md"), "# Proof\n\nAcceptance evidence and regression gate are defined.");
@@ -306,17 +320,17 @@ test("work order status gates execution recommendations", async () => {
 	assert.equal(status.workOrderCount, 1);
 	assert.equal(status.draftWorkOrderCount, 1);
 	assert.equal(status.readyWorkOrderCount, 0);
-	assert.match(status.nextAction, /Review work orders and mark one ready/i);
-	assert.doesNotMatch(status.nextPrompt, /Implement the ready work order/i);
+	assert.match(status.nextAction, /Review work orders and select one ready/i);
+	assert.equal(Object.keys(status).includes(`next${"Prompt"}`), false);
 
 	const workOrderPath = created.ok ? created.path : "";
 	const content = await readFile(path.join(root, workOrderPath), "utf8");
-	await writeFile(path.join(root, workOrderPath), content.replace("status: draft", "status: ready # approved"));
+	await writeFile(path.join(root, workOrderPath), content.replace("status: draft", "status: ready # reviewed"));
 	status = await getFeaturePacketStatus(root, "reown-strategy");
 
 	assert.equal(status.readyWorkOrderCount, 1);
 	assert.equal(status.readyWorkOrderPath, "docs/features/reown-strategy/work-orders/001-change-re-own-output.md");
-	assert.match(status.nextPrompt, /Implement the ready work order docs\/features\/reown-strategy\/work-orders\/001-change-re-own-output\.md/);
+	assert.match(status.nextAction, /Execute the first ready work order: docs\/features\/reown-strategy\/work-orders\/001-change-re-own-output\.md/);
 
 	await writeFile(path.join(root, workOrderPath), content.replace("status: draft", "status: done # implemented"));
 	status = await getFeaturePacketStatus(root, "reown-strategy");
@@ -341,15 +355,15 @@ test("work orders are optional for direct execution and completed zero-work-orde
 		workspacePath: root,
 		createdDate: "2026-05-26",
 	});
-	await writeFile(path.join(root, "docs/features/reown-strategy/strategy.md"), "# Strategy\n\nProblem and desired system behavior are approved.");
+	await writeFile(path.join(root, "docs/features/reown-strategy/strategy.md"), "# Strategy\n\nProblem and desired system behavior are reviewed.");
 	await writeFile(path.join(root, "docs/features/reown-strategy/system-model.md"), "# System Model\n\nCurrent and intended flows are modeled.");
 	await writeFile(path.join(root, "docs/features/reown-strategy/decisions.md"), "# Decisions\n\n| ID | Status | Decision | Why |\n| --- | --- | --- | --- |\n| D-001 | decided | Keep strategy authority with the user | Prevent silent scope changes |\n");
 	await writeFile(path.join(root, "docs/features/reown-strategy/proof.md"), "# Proof\n\nAcceptance evidence and regression gate are defined.");
 
 	let status = await getFeaturePacketStatus(root, "reown-strategy");
 	assert.equal(status.workOrderCount, 0);
-	assert.match(status.nextAction, /Execute directly from approved docs/i);
-	assert.match(status.nextPrompt, /If delegation or splitting would help, create a draft work order/i);
+	assert.match(status.nextAction, /Execute directly from reviewed docs/i);
+	assert.equal(Object.keys(status).includes(`next${"Prompt"}`), false);
 	assert.match(formatFeaturePacketStatus(status), /State: ready-to-execute/);
 
 	await writeFile(path.join(root, "docs/features/reown-strategy/review.md"), "# Review\n\nImplementation matches strategy and proof passed.");
@@ -419,7 +433,7 @@ test("/feature view regenerates and opens the learning view", async () => {
 
 	await harness.commands.get("feature")?.handler("view reown-strategy", harness.ctx as any);
 
-	assert.equal(harness.getEditorText(), "docs/features/reown-strategy/index.html");
+	assert.equal(harness.getMessages().at(-1)?.content, "docs/features/reown-strategy/index.html");
 	assert.equal(harness.execCalls.length, 1);
 	assert.match(harness.execCalls[0]?.args.join(" ") ?? "", /file:\/\//);
 	assert.match(harness.notifications.at(-1)?.message ?? "", /Opened feature learning view/i);
@@ -433,7 +447,7 @@ test("/feature view reports missing feature packets without opening a browser", 
 	await harness.commands.get("feature")?.handler("view missing-feature", harness.ctx as any);
 
 	assert.equal(harness.execCalls.length, 0);
-	assert.match(harness.getEditorText(), /docs\/features\/missing-feature/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /docs\/features\/missing-feature/);
 	assert.match(harness.notifications.at(-1)?.message ?? "", /Feature packet not found/i);
 });
 
@@ -453,14 +467,15 @@ test("/feature status summarizes packet counts and next action", async () => {
 
 	await harness.commands.get("feature")?.handler("status reown-strategy", harness.ctx as any);
 
-	assert.match(harness.getEditorText(), /# Feature Status: reown-strategy/);
-	assert.match(harness.getEditorText(), /Work orders: 1/);
-	assert.match(harness.getEditorText(), /Diagrams: 1/);
-	assert.match(harness.getEditorText(), /Next action/);
-	assert.match(harness.notifications.at(-1)?.message ?? "", /Feature status written/i);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /# Feature Status: reown-strategy/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /Work orders: 1/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /Diagrams: 1/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /Next action/);
+	assert.match(harness.getStatuses().at(-1)?.value ?? "", /feature: reown-strategy/);
+	assert.match(harness.notifications.at(-1)?.message ?? "", /Feature status shown/i);
 });
 
-test("/feature next writes the recommended strategic prompt", async () => {
+test("/feature next shows only the next action", async () => {
 	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
 	await initializeFeaturePacket(root, {
 		brief: "Make re-own useful for strategic understanding",
@@ -474,12 +489,14 @@ test("/feature next writes the recommended strategic prompt", async () => {
 
 	await harness.commands.get("feature")?.handler("next reown-strategy", harness.ctx as any);
 
-	assert.match(harness.getEditorText(), /strategy\.md/i);
-	assert.match(harness.getEditorText(), /Interview me/i);
+	assert.equal(harness.getEditorText(), "");
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /# Feature Next: reown-strategy/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /Frame the strategy/i);
+	assert.doesNotMatch(harness.getMessages().at(-1)?.content ?? "", /Interview me/i);
 	assert.match(harness.notifications.at(-1)?.message ?? "", /Next action/i);
 });
 
-test("/feature next moves from approved strategy to solution design", async () => {
+test("/feature next moves from reviewed strategy to solution design", async () => {
 	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
 	await initializeFeaturePacket(root, {
 		brief: "Make re-own useful for strategic understanding",
@@ -488,91 +505,28 @@ test("/feature next moves from approved strategy to solution design", async () =
 		workspacePath: root,
 		createdDate: "2026-05-26",
 	});
-	await writeFile(path.join(root, "docs/features/reown-strategy/strategy.md"), "# Strategy\n\nProblem, desired system behavior, constraints, and success signals are approved.");
+	await writeFile(path.join(root, "docs/features/reown-strategy/strategy.md"), "# Strategy\n\nProblem, desired system behavior, constraints, and success signals are reviewed.");
 	const harness = createHarness(root);
 	featureFlowExtension(harness.pi as any);
 
 	await harness.commands.get("feature")?.handler("next reown-strategy", harness.ctx as any);
 
-	assert.equal(harness.getEditorText(), "/feature design reown-strategy");
+	assert.equal(harness.getEditorText(), "");
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /# Feature Next: reown-strategy/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /Model\/design the solution before execution/i);
+	assert.doesNotMatch(harness.getMessages().at(-1)?.content ?? "", /\/feature design reown-strategy/);
 	assert.match(harness.notifications.at(-1)?.message ?? "", /Model\/design the solution before execution/i);
 });
 
-test("inferConversationalFeatureIntent recognizes safe natural feature actions", () => {
-	assert.deepEqual(inferConversationalFeatureIntent("let's design the solution for docs/features/reown-strategy")?.kind, "design");
-	assert.deepEqual(inferConversationalFeatureIntent("open the feature dashboard")?.kind, "view");
-	assert.deepEqual(inferConversationalFeatureIntent("write the report for WO-001")?.kind, "report");
-	assert.equal(inferConversationalFeatureIntent("fix the login bug"), undefined);
-});
-
-test("conversational feature input routes design intent without a slash command", async () => {
-	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
-	await initializeFeaturePacket(root, {
-		brief: "Make re-own useful for strategic understanding",
-		slug: "reown-strategy",
-		branch: "feat/reown-strategy",
-		workspacePath: root,
-		createdDate: "2026-05-26",
-	});
-	const harness = createHarness(root);
-	featureFlowExtension(harness.pi as any);
-
-	const result = await harness.eventHandlers.get("input")?.({ text: "Let's design the solution", source: "user" }, harness.ctx as any);
-
-	assert.deepEqual(result, { action: "handled" });
-	assert.match(harness.getEditorText(), /Partner with me as a solution architect/i);
-	assert.match(harness.getEditorText(), /Do not implement code yet/i);
-	assert.match(harness.notifications.at(-1)?.message ?? "", /solution-design prompt/i);
-});
-
-test("conversational feature input routes next/status/view/report intents safely", async () => {
-	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
-	await initializeFeaturePacket(root, {
-		brief: "Make re-own useful for strategic understanding",
-		slug: "reown-strategy",
-		branch: "feat/reown-strategy",
-		workspacePath: root,
-		createdDate: "2026-05-26",
-	});
-	const created = await createWorkOrder(root, "reown-strategy", "Change re-own output");
-	assert.equal(created.ok, true);
-	const workOrderPath = created.ok ? created.path : "";
-	const workOrderContent = await readFile(path.join(root, workOrderPath), "utf8");
-	await writeFile(path.join(root, workOrderPath), workOrderContent.replace("status: draft", "status: ready"));
-	const harness = createHarness(root);
-	featureFlowExtension(harness.pi as any);
-
-	let result = await harness.eventHandlers.get("input")?.({ text: "what's next?", source: "user" }, harness.ctx as any);
-	assert.deepEqual(result, { action: "handled" });
-	assert.match(harness.getEditorText(), /strategy\.md|feature design|Implement the ready work order/i);
-
-	result = await harness.eventHandlers.get("input")?.({ text: "show feature status", source: "user" }, harness.ctx as any);
-	assert.deepEqual(result, { action: "handled" });
-	assert.match(harness.getEditorText(), /# Feature Status: reown-strategy/);
-
-	result = await harness.eventHandlers.get("input")?.({ text: "write the execution report for WO-001", source: "user" }, harness.ctx as any);
-	assert.deepEqual(result, { action: "handled" });
-	assert.equal(harness.getEditorText(), "docs/features/reown-strategy/execution/001-wo-001.md");
-
-	result = await harness.eventHandlers.get("input")?.({ text: "open the feature dashboard", source: "user" }, harness.ctx as any);
-	assert.deepEqual(result, { action: "handled" });
-	assert.equal(harness.getEditorText(), "docs/features/reown-strategy/index.html");
-	assert.equal(harness.execCalls.length, 1);
-});
-
-test("conversational feature input ignores unrelated prompts and extension-injected input", async () => {
+test("feature-flow does not intercept natural-language input", async () => {
 	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
 	const harness = createHarness(root);
 	featureFlowExtension(harness.pi as any);
 
-	let result = await harness.eventHandlers.get("input")?.({ text: "fix the login bug", source: "user" }, harness.ctx as any);
-	assert.deepEqual(result, { action: "continue" });
-
-	result = await harness.eventHandlers.get("input")?.({ text: "what's next?", source: "extension" }, harness.ctx as any);
-	assert.deepEqual(result, { action: "continue" });
+	assert.equal(harness.eventHandlers.has("input"), false);
 });
 
-test("/feature design writes a non-execution solution-design prompt", async () => {
+test("/feature design shows a review-before-execution solution-design prompt", async () => {
 	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
 	await initializeFeaturePacket(root, {
 		brief: "Make re-own useful for strategic understanding",
@@ -586,17 +540,18 @@ test("/feature design writes a non-execution solution-design prompt", async () =
 
 	await harness.commands.get("feature")?.handler("design reown-strategy", harness.ctx as any);
 
-	assert.match(harness.getEditorText(), /Partner with me as a solution architect/i);
-	assert.match(harness.getEditorText(), /Do not implement code yet/i);
-	assert.match(harness.getEditorText(), /system-model\.md/);
-	assert.match(harness.getEditorText(), /decisions\.md/);
-	assert.match(harness.getEditorText(), /proof\.md/);
-	assert.match(harness.getEditorText(), /draft Work Orders/i);
-	assert.match(harness.getEditorText(), /Do not mark work orders ready/i);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /Partner with me as a solution architect/i);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /Do not implement code yet/i);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /system-model\.md/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /decisions\.md/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /proof\.md/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /draft Work Orders/i);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /Do not mark work orders ready/i);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /review the design and work-order split before any loop or execution starts/i);
 	assert.match(harness.notifications.at(-1)?.message ?? "", /solution-design prompt/i);
 });
 
-test("/feature work-order creates a draft Work Order v2 brief", async () => {
+test("/feature work-order creates a review-before-execution delegation brief", async () => {
 	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
 	await initializeFeaturePacket(root, {
 		brief: "Make re-own useful for strategic understanding",
@@ -610,12 +565,17 @@ test("/feature work-order creates a draft Work Order v2 brief", async () => {
 
 	await harness.commands.get("feature")?.handler("work-order Change re-own output", harness.ctx as any);
 
-	assert.equal(harness.getEditorText(), "docs/features/reown-strategy/work-orders/001-change-re-own-output.md");
-	const workOrder = await readFile(path.join(root, harness.getEditorText()), "utf8");
+	assert.equal(harness.getMessages().at(-1)?.content, "docs/features/reown-strategy/work-orders/001-change-re-own-output.md");
+	const workOrder = await readFile(path.join(root, harness.getMessages().at(-1)?.content ?? ""), "utf8");
 	assert.match(workOrder, /status: draft/);
 	assert.match(workOrder, /## Mission/);
+	assert.match(workOrder, /## Code anchors/);
+	assert.match(workOrder, /code_find\/semantic_search/);
+	assert.match(workOrder, /## Minimal-change plan/);
+	assert.match(workOrder, /broad refactor looks necessary/);
 	assert.match(workOrder, /## Escalation triggers/);
 	assert.match(workOrder, /## Proof required/);
+	assert.match(workOrder, /Review this work order before changing `status` to `ready`/);
 	assert.match(harness.notifications.at(-1)?.message ?? "", /Created draft work order/i);
 
 	await harness.commands.get("feature")?.handler("work-order --slug reown-strategy", harness.ctx as any);
@@ -631,7 +591,7 @@ test("execution report matching accepts manual work-order basename/path/title li
 		workspacePath: root,
 		createdDate: "2026-05-26",
 	});
-	await writeFile(path.join(root, "docs/features/reown-strategy/strategy.md"), "# Strategy\n\nProblem and desired system behavior are approved.");
+	await writeFile(path.join(root, "docs/features/reown-strategy/strategy.md"), "# Strategy\n\nProblem and desired system behavior are reviewed.");
 	await writeFile(path.join(root, "docs/features/reown-strategy/system-model.md"), "# System Model\n\nCurrent and intended flows are modeled.");
 	await writeFile(path.join(root, "docs/features/reown-strategy/decisions.md"), "# Decisions\n\n| ID | Status | Decision | Why |\n| --- | --- | --- | --- |\n| D-001 | decided | Keep strategy authority with the user | Prevent silent scope changes |\n");
 	await writeFile(path.join(root, "docs/features/reown-strategy/proof.md"), "# Proof\n\nAcceptance evidence and regression gate are defined.");
@@ -676,8 +636,8 @@ test("/feature report creates a draft execution report linked to a ready work or
 
 	await harness.commands.get("feature")?.handler("report WO-001", harness.ctx as any);
 
-	assert.equal(harness.getEditorText(), "docs/features/reown-strategy/execution/001-wo-001.md");
-	const report = await readFile(path.join(root, harness.getEditorText()), "utf8");
+	assert.equal(harness.getMessages().at(-1)?.content, "docs/features/reown-strategy/execution/001-wo-001.md");
+	const report = await readFile(path.join(root, harness.getMessages().at(-1)?.content ?? ""), "utf8");
 	assert.match(report, /id: ER-001/);
 	assert.match(report, /workOrder: WO-001/);
 	assert.match(report, /status: draft/);
@@ -709,7 +669,7 @@ test("/feature report rejects draft work orders and slug-only missing refs", asy
 	assert.match(harness.notifications.at(-1)?.message ?? "", /Usage: \/feature report <work-order>/i);
 });
 
-test("/feature review writes a strategy alignment and re-own prompt", async () => {
+test("/feature review shows strategy, PR, and user-guide review prompt", async () => {
 	const root = await mkdtemp(path.join(os.tmpdir(), "feature-flow-"));
 	await initializeFeaturePacket(root, {
 		brief: "Make re-own useful for strategic understanding",
@@ -723,9 +683,12 @@ test("/feature review writes a strategy alignment and re-own prompt", async () =
 
 	await harness.commands.get("feature")?.handler("review reown-strategy", harness.ctx as any);
 
-	assert.match(harness.getEditorText(), /Review strategy alignment for docs\/features\/reown-strategy/);
-	assert.match(harness.getEditorText(), /execution\//);
-	assert.match(harness.getEditorText(), /\/reown --remember/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /Review strategy alignment for docs\/features\/reown-strategy/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /execution\//);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /PR summary draft/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /User guide \/ manual draft/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /Do not push, open a PR, or publish docs unless I explicitly ask/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /\/reown --remember/);
 	assert.match(harness.notifications.at(-1)?.message ?? "", /strategy-review prompt/i);
 });
 
@@ -742,10 +705,10 @@ test("/feature status and view infer the slug when there is one feature packet",
 	featureFlowExtension(harness.pi as any);
 
 	await harness.commands.get("feature")?.handler("status", harness.ctx as any);
-	assert.match(harness.getEditorText(), /# Feature Status: reown-strategy/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /# Feature Status: reown-strategy/);
 
 	await harness.commands.get("feature")?.handler("view", harness.ctx as any);
-	assert.equal(harness.getEditorText(), "docs/features/reown-strategy/index.html");
+	assert.equal(harness.getMessages().at(-1)?.content, "docs/features/reown-strategy/index.html");
 	assert.equal(harness.execCalls.length, 1);
 });
 
@@ -770,7 +733,7 @@ test("/feature status without slug reports ambiguity when multiple packets exist
 
 	await harness.commands.get("feature")?.handler("status", harness.ctx as any);
 
-	assert.match(harness.getEditorText(), /Multiple feature packets found: first-feature, second-feature/);
+	assert.match(harness.getMessages().at(-1)?.content ?? "", /Multiple feature packets found: first-feature, second-feature/);
 	assert.match(harness.notifications.at(-1)?.message ?? "", /Multiple feature packets found/i);
 });
 

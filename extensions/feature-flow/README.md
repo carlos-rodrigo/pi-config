@@ -17,12 +17,12 @@ pi install ./extensions/feature-flow
 | `/feature <brief> --window` | Same workflow, but launches in a new tmux window instead of a split pane. |
 | `/feature list` | Lists active `feat/*` worktrees. |
 | `/feature status [slug]` | Summarizes feature packet docs, work orders, diagrams, execution reports, proof gaps, and next action. |
-| `/feature next [slug]` | Writes the next recommended strategic prompt to the editor. |
-| `/feature design [slug]` | Writes a non-execution solution-design prompt for system model, decisions, proof, and draft Work Orders. |
+| `/feature next [slug]` | Shows the next action in the conversation and status line. |
+| `/feature design [slug]` | Shows a non-execution solution-design prompt for system model, decisions, proof, and draft Work Orders. |
 | `/feature migrate <slug>` | Upgrades legacy `prd.md` / `design.md` / `.features` tasks into the strategy-first packet shape. |
 | `/feature work-order <title> [--slug <name>]` | Creates a draft Work Order v2 delegation brief. |
 | `/feature report <work-order> [--slug <name>]` | Creates a draft execution report linked to a work order id/path/title. |
-| `/feature review [slug]` | Writes a strategy-review prompt that compares intent, execution, proof, and optional `/reown --remember` memory. |
+| `/feature review [slug]` | Shows a strategy-review prompt that compares intent, execution, proof, and optional `/reown --remember` memory. |
 | `/feature view [slug]` | Regenerates/opens `docs/features/<slug>/index.html`. |
 | `/feature open <slug> [--window]` | Opens feature workspace in tmux (`pi -c`) as pane by default or window with `--window`. |
 | `/feature reopen <slug> [--window]` | Alias for `/feature open <slug> [--window]`. |
@@ -30,20 +30,15 @@ pi install ./extensions/feature-flow
 
 When `[slug]` is omitted, feature-flow infers it only when there is exactly one `docs/features/` packet.
 
-## Conversational routing
+## Command-first routing
 
-Commands are the stable API, but you can also use natural language for safe workflow actions when a feature packet is active:
+Feature-flow intentionally does not intercept natural-language prompts. Use `/feature ...` commands for workflow actions, and use normal chat for strategy interviews, answers, and implementation discussion.
 
-| Say | Equivalent behavior |
-| --- | --- |
-| "what's next?" | writes the `/feature next` prompt |
-| "show feature status" | writes `/feature status` output |
-| "let's design the solution" | writes the `/feature design` prompt |
-| "open the dashboard" | regenerates/opens `/feature view` |
-| "review this feature" | writes the `/feature review` prompt |
-| "write the report for WO-001" | creates `/feature report WO-001` when the work order is ready/done |
+Command output is shown in the conversation instead of being pasted into the composer. `/feature next` shows only the next action; it does not prepare or submit a prompt for you.
 
-Conversational routing does not auto-implement code or mark work orders ready. If the active feature is ambiguous, the message passes through to the agent instead of guessing.
+## Workflow shape
+
+The intended path is strategy → system model → design → architecture decisions → work orders → execution reports → final review → PR summary/user guide. Keep it lightweight: skip optional artifacts when the change is small, and only use Work Orders when delegation, review, or splitting helps.
 
 ## Legacy migration
 
@@ -99,18 +94,18 @@ The packet is designed for ownership boundaries:
 
 ## Solution design bridge
 
-`/feature design [slug]` is the bridge from strategy to executable work. It writes a prompt that asks the agent to inspect the codebase with you as solution architect, then update:
+`/feature design [slug]` is the bridge from strategy to executable work. It shows a prompt that asks the agent to inspect the codebase with you as solution architect, then update:
 
 - `system-model.md` — current flow, intended flow, solution design, execution slices, concepts, boundaries, code anchors,
 - `decisions.md` — architecture/system decisions the user must own,
 - `proof.md` — targeted checks, manual/E2E checks, regression gates,
 - `work-orders/` — draft execution slices derived from the design.
 
-It explicitly says **do not implement yet** and **do not mark work orders ready**. The user reviews the design and approves slices before execution.
+It explicitly says **do not implement yet** and **do not mark work orders ready**. The user reviews the design and work-order split before execution or loop runs.
 
 ## Work Order v2
 
-Work orders are optional delegation briefs for execution that should be split, approved, or handed off. Small approved changes may execute directly from strategy/model/decision/proof docs. Work orders live in `docs/features/<slug>/work-orders/` and use frontmatter:
+Work orders are optional delegation briefs for execution that should be split, reviewed, or handed off. Small changes may execute directly from reviewed strategy/model/decision/proof docs. Work orders live in `docs/features/<slug>/work-orders/` and use frontmatter:
 
 ```yaml
 ---
@@ -123,12 +118,12 @@ created: 2026-05-26
 
 Status semantics:
 
-- `draft` — not approved for execution.
-- `ready` — user approved; agent may execute.
+- `draft` — still being shaped or reviewed; agents must not implement.
+- `ready` — reviewed and selected as executable; an agent or loop may start it.
 - `blocked` — waiting on a decision/dependency/proof.
 - `done` — implemented and execution report exists.
 
-When work orders exist, `/feature next` only recommends implementation for one marked `ready`. If no work orders exist, `/feature next` suggests direct execution from approved docs or creating a work order only when delegation/splitting is useful. If a work order is marked `done` before an execution report exists, `/feature next` prioritizes writing the missing report.
+When work orders exist, `/feature next` only recommends implementation for one marked `ready`. If no work orders exist, `/feature next` suggests direct execution from reviewed docs or creating a work order only when delegation/splitting is useful. If a work order is marked `done` before an execution report exists, `/feature next` prioritizes writing the missing report.
 
 ## Execution Reports v1
 
@@ -149,6 +144,10 @@ Status semantics:
 - `complete` — report captures repo-relative files changed, deviations, proof results, and strategic follow-up.
 
 Use `/feature report WO-001` after implementation has started from a `ready` or `done` work order, then fill evidence and mark the report `complete`. Duplicate reports for the same work order are rejected.
+
+## Final review, PR, and user guide
+
+`/feature review [slug]` shows a final review prompt after proof evidence exists. It asks the agent to update `review.md` with strategy alignment, a PR summary draft, and a user-guide/manual draft. It does not push, open a PR, publish docs, or save ownership memory unless you explicitly ask.
 
 ## Fallback behavior
 

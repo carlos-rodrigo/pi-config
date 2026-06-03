@@ -72,7 +72,6 @@ export type FeaturePacketStatus = {
 	openDecisionCount: number;
 	incompleteProofCount: number;
 	nextAction: string;
-	nextPrompt: string;
 	error?: string;
 };
 
@@ -422,7 +421,7 @@ function buildReviewMarkdown(input: FeaturePacketInput): string {
 	const title = titleizeSlug(input.slug);
 	return `# Strategy Review: ${title}
 
-> Final alignment check: strategy → decisions → implementation → proof.
+> Final alignment check: strategy → system model → design/architecture decisions → work orders → implementation → proof → PR/user guide.
 
 ## Original intent
 
@@ -445,6 +444,16 @@ State the rule that is actually true after implementation.
 ## What to retain
 
 - [ ] The mental model future you should remember.
+
+## PR summary draft
+
+- Summary:
+- Verification:
+- Risks / follow-ups:
+
+## User guide / manual draft
+
+Explain the feature in user-facing terms: when to use it, what it does, and any limits or caveats.
 
 ## Follow-up questions
 
@@ -472,8 +481,8 @@ created: ${input.createdDate ?? today()}
 
 Status meaning:
 
-- \`draft\` — strategy or proof still needs review; agents must not implement.
-- \`ready\` — user approved this delegation brief; agents may execute it.
+- \`draft\` — still being shaped or reviewed; agents must not implement.
+- \`ready\` — reviewed and selected as executable; an agent or loop may start it.
 - \`blocked\` — waiting for a strategic decision, dependency, or missing proof.
 - \`done\` — implementation and execution report are complete.
 
@@ -481,8 +490,9 @@ Each work order should include:
 
 - Mission
 - Strategic context
+- Code anchors from code_find/semantic_search
+- Minimal-change plan
 - Decisions to preserve
-- Agent-owned execution choices
 - Escalation triggers
 - Proof required
 - Readiness checklist
@@ -510,6 +520,18 @@ What outcome should this work order produce?
 
 Why this matters in the feature strategy and system model.
 
+## Code anchors
+
+Use code_find/semantic_search before execution and record the relevant files, functions, components, or tests here.
+
+- [ ] Anchor:
+
+## Minimal-change plan
+
+Describe the smallest repo-consistent change. Do not introduce new patterns unless the existing code cannot support the behavior.
+
+- [ ] Plan:
+
 ## Decisions to preserve
 
 - [ ] D-XXX — decision/rule this work must preserve.
@@ -519,7 +541,7 @@ Why this matters in the feature strategy and system model.
 The agent may decide:
 
 - implementation details that do not change product/system meaning,
-- local naming and small refactors,
+- local naming and small cleanup,
 - test structure that proves the required behavior.
 
 ## Escalation triggers
@@ -527,9 +549,10 @@ The agent may decide:
 Stop and ask if:
 
 - product/system behavior changes,
-- an approved decision conflicts with the code,
+- a decision conflicts with the code,
 - proof cannot be produced,
-- scope expands beyond this mission.
+- scope expands beyond this mission,
+- a broad refactor looks necessary.
 
 ## Proof required
 
@@ -538,10 +561,11 @@ Stop and ask if:
 
 ## Readiness checklist
 
-- [ ] Strategy/model context is approved.
+- [ ] Strategy/model context has been reviewed.
 - [ ] Decisions referenced above are resolved.
+- [ ] Code anchors and minimal-change plan are recorded.
 - [ ] Proof required is specific enough to verify externally.
-- [ ] Change \`status\` to \`ready\` only after user approval.
+- [ ] Review this work order before changing \`status\` to \`ready\`.
 
 ## Execution report
 
@@ -703,7 +727,7 @@ export async function createExecutionReport(root: string, slug: string, workOrde
 	const workOrder = matches[0]!;
 	const workOrderId = workOrderStableId(workOrder);
 	if (workOrder.status === "draft" || workOrder.status === "blocked") {
-		return { ok: false, error: `Work order ${workOrderId} is ${workOrder.status}; mark it ready after approval before creating an execution report.` };
+		return { ok: false, error: `Work order ${workOrderId} is ${workOrder.status}; review it and mark it ready before creating an execution report.` };
 	}
 	const existingReports = await listExecutionReports(root, slug);
 	const duplicate = existingReports.find((report) => reportReferencesWorkOrder(report.workOrder, workOrder));
@@ -738,7 +762,7 @@ function buildMigratedStrategyMarkdown(input: { slug: string; brief: string; prd
 
 ## Problem to own
 
-Extract and approve the product/system problem from the legacy PRD below.
+Extract and review the product/system problem from the legacy PRD below.
 
 ## Desired system behavior
 
@@ -773,7 +797,7 @@ ${input.design ? excerptMarkdown(input.design, 2500) : "_No legacy design.md fou
 function buildMigratedSystemModelMarkdown(input: { slug: string; design: string; prd: string; taskCount: number }): string {
 	return `# System Model: ${titleizeSlug(input.slug)}
 
-> Migrated from legacy PRD/design/tasks. Treat this as a design workspace, not approved execution authority yet.
+> Migrated from legacy PRD/design/tasks. Treat this as a design workspace, not execution authority yet.
 
 ## Current system story
 
@@ -789,7 +813,7 @@ Refine the architecture/path with the user before execution.
 
 ## Execution slices / Work Order plan
 
-${input.taskCount > 0 ? `Migrated ${input.taskCount} legacy task(s) into draft Work Orders under ./work-orders/. Review and approve them before marking ready.` : "No legacy tasks found. Create Work Orders only if delegation/splitting helps."}
+${input.taskCount > 0 ? `Migrated ${input.taskCount} legacy task(s) into draft Work Orders under ./work-orders/. Review them before marking ready.` : "No legacy tasks found. Create Work Orders only if delegation/splitting helps."}
 
 | Slice | Mission | Depends on | Proof |
 | --- | --- | --- | --- |
@@ -829,7 +853,7 @@ function buildMigratedDecisionsMarkdown(input: { slug: string }): string {
 
 | ID | Status | Decision | Why | Rejected / tradeoff | Escalation trigger |
 | --- | --- | --- | --- | --- | --- |
-| D-001 | open | Confirm migrated strategy/system design | Legacy artifacts need strategy-first approval | TBD | Agent is about to implement from unapproved assumptions |
+| D-001 | open | Confirm migrated strategy/system design | Legacy artifacts need strategy-first review | TBD | Agent is about to implement from unreviewed assumptions |
 
 ## Decision workshop notes
 
@@ -922,7 +946,7 @@ Review and refine this migrated legacy task before execution.
 
 ## Agent-owned choices
 
-- Implementation mechanics that do not change approved strategy/design.
+- Implementation mechanics that do not change reviewed strategy/design.
 
 ## Escalation triggers
 
@@ -940,10 +964,11 @@ ${excerptMarkdown(input.legacyContent)}
 
 ## Readiness checklist
 
-- [ ] Strategy/model context is approved.
+- [ ] Strategy/model context has been reviewed.
 - [ ] Decisions referenced above are resolved.
+- [ ] Code anchors and minimal-change plan are recorded.
 - [ ] Proof required is specific enough to verify externally.
-- [ ] Change \`status\` to \`ready\` only after user approval.
+- [ ] Review this work order before changing \`status\` to \`ready\`.
 `;
 }
 
@@ -1062,7 +1087,7 @@ export function formatFeatureMigrationResult(result: FeatureMigrationResult): st
 		...(result.migratedWorkOrders.length ? result.migratedWorkOrders.map((file) => `- ${file}`) : ["- None"]),
 		"",
 		"## Next",
-		`Run /feature design ${result.slug} to refine the migrated strategy/system design/proof and approve draft Work Orders before execution.`,
+		`Run /feature design ${result.slug} to refine the migrated strategy/system design/proof and review draft Work Orders before execution.`,
 	].join("\n");
 }
 
@@ -1103,7 +1128,7 @@ function metricCard(label: string, value: number | string, detail: string): stri
 
 function buildWorkOrderDashboard(slug: string, workOrders: WorkOrderInfo[]): string {
 	if (workOrders.length === 0) {
-		return `<p>No work orders yet. That is OK for small/direct features; create work orders only when delegation, approval, or splitting helps.</p>`;
+		return `<p>No work orders yet. That is OK for small/direct features; create work orders only when delegation, review, or splitting helps.</p>`;
 	}
 	const rows = workOrders.map((workOrder) => {
 		const href = featureRelativeLink(slug, workOrder.path);
@@ -1154,17 +1179,13 @@ function buildFeatureDashboardHtml(input: {
 			<div>
 				<div class="section-kicker">feature dashboard</div>
 				<h1>Feature Dashboard</h1>
-				<p>Strategy → system model → decisions → proof → execution evidence → review. Markdown and JSON remain the source of truth; this page is a generated learning view.</p>
+				<p>Strategy → system model → design → architecture decisions → work orders → execution evidence → review → PR/user guide. Markdown and JSON remain the source of truth; this page is a generated learning manual.</p>
 			</div>
 			<span class="state-badge state-${stateClass(state)}">${escapeHtml(state)}</span>
 		</div>
 		<div class="next-panel">
 			<strong>Next action</strong>
 			<p>${escapeHtml(input.status.nextAction)}</p>
-			<details>
-				<summary>Suggested prompt</summary>
-				<pre><code>${escapeHtml(input.status.nextPrompt)}</code></pre>
-			</details>
 		</div>
 		${missingDocs}
 		<div class="metric-grid">
@@ -1188,8 +1209,8 @@ function buildFeatureDashboardHtml(input: {
 				${buildDiagramDashboard(input.diagrams)}
 			</article>
 			<article>
-				<h2>Review / Remember</h2>
-				<p>After evidence is complete, run <code>/feature review ${escapeHtml(input.slug)}</code> to write the strategy alignment teach-back. Use <code>/reown --remember</code> only when the lesson should become searchable ownership memory.</p>
+				<h2>Review / PR / User Guide</h2>
+				<p>After evidence is complete, run <code>/feature review ${escapeHtml(input.slug)}</code> to write the strategy alignment teach-back, PR summary draft, and user-guide/manual draft. Use <code>/reown --remember</code> only when the lesson should become searchable ownership memory.</p>
 			</article>
 		</div>
 	</section>`;
@@ -1571,77 +1592,41 @@ function chooseNextAction(input: {
 	draftExecutionReportCount: number;
 	openDecisionCount: number;
 	incompleteProofCount: number;
-}): { nextAction: string; nextPrompt: string } {
+}): { nextAction: string } {
 	if (input.missingCoreDocs.length) {
-		return {
-			nextAction: `Recreate missing feature docs: ${input.missingCoreDocs.join(", ")}`,
-			nextPrompt: `Recreate the missing feature packet docs for docs/features/${input.slug}/: ${input.missingCoreDocs.join(", ")}. Preserve existing docs, use the strategy-first templates, and then run /feature view ${input.slug}.`,
-		};
+		return { nextAction: `Recreate missing feature docs: ${input.missingCoreDocs.join(", ")}` };
 	}
 	if (isDefaultStrategy(input.strategy)) {
-		return {
-			nextAction: "Frame the strategy: problem, desired system behavior, constraints, and success signals.",
-			nextPrompt: `Help me fill docs/features/${input.slug}/strategy.md. Interview me on the problem, desired system behavior, constraints, non-goals, and success evidence. Do not implement yet.`,
-		};
+		return { nextAction: "Frame the strategy: problem, desired system behavior, constraints, and success signals." };
 	}
 	if (isDefaultSystemModel(input.systemModel)) {
-		return {
-			nextAction: "Model/design the solution before execution: system story, decisions, proof, and slices.",
-			nextPrompt: `/feature design ${input.slug}`,
-		};
+		return { nextAction: "Model/design the solution before execution: system story, decisions, proof, and slices." };
 	}
 	if (input.openDecisionCount > 0 || isDefaultDecisions(input.decisions)) {
-		return {
-			nextAction: "Resolve strategic decisions before delegation.",
-			nextPrompt: `Walk me through the open decisions in docs/features/${input.slug}/decisions.md. Present options, tradeoffs, recommendation, and what I need to decide.`,
-		};
+		return { nextAction: "Resolve strategic decisions before delegation." };
 	}
 	if (input.incompleteProofCount > 0 || isDefaultProof(input.proof)) {
-		return {
-			nextAction: "Define proof before delegation.",
-			nextPrompt: `Update docs/features/${input.slug}/proof.md with acceptance evidence, targeted checks, manual/E2E checks, and regression gates before creating or approving work orders.`,
-		};
+		return { nextAction: "Define proof before delegation." };
 	}
 	if (input.workOrderCount === 0 && input.executionReportCount === 0 && isDefaultReview(input.review)) {
-		return {
-			nextAction: "Execute directly from approved docs, or create a work order only if delegation is needed.",
-			nextPrompt: `Implement directly from docs/features/${input.slug}/strategy.md, system-model.md, decisions.md, and proof.md if this is small enough for one execution step. If delegation or splitting would help, create a draft work order under docs/features/${input.slug}/work-orders/ first. Run proof and record implementation evidence before final review.`,
-		};
+		return { nextAction: "Execute directly from reviewed docs, or create a work order only if delegation is needed." };
 	}
 	if (input.doneWorkOrderWithoutReportCount > 0) {
-		return {
-			nextAction: "Write missing execution report(s) for completed work orders.",
-			nextPrompt: `Create execution report(s) under docs/features/${input.slug}/execution/ for done work orders that do not have reports yet. Link each report to its workOrder id, record repo-relative files changed, proof results, deviations, and strategic follow-up.`,
-		};
+		return { nextAction: "Write missing execution report(s) for completed work orders." };
 	}
 	if (input.draftExecutionReportCount > 0) {
-		return {
-			nextAction: "Complete draft execution reports with proof evidence.",
-			nextPrompt: `Review draft execution reports under docs/features/${input.slug}/execution/. Add proof evidence, repo-relative changed files, deviations, and strategic follow-up, then mark complete reports as status: complete.`,
-		};
+		return { nextAction: "Complete draft execution reports with proof evidence." };
 	}
 	if (input.readyWorkOrderCount > 0) {
-		return {
-			nextAction: `Execute the first ready work order: ${input.readyWorkOrderPath}`,
-			nextPrompt: `Implement the ready work order ${input.readyWorkOrderPath}. Preserve strategic decisions, escalate product/system ambiguity, run proof, write an execution report under docs/features/${input.slug}/execution/, and mark the work order done when complete.`,
-		};
+		return { nextAction: `Execute the first ready work order: ${input.readyWorkOrderPath}` };
 	}
 	if (input.draftWorkOrderCount > 0 || input.blockedWorkOrderCount > 0) {
-		return {
-			nextAction: "Review work orders and mark one ready before execution.",
-			nextPrompt: `Review the draft/blocked work orders under docs/features/${input.slug}/work-orders/. Resolve strategic ambiguity, verify proof requirements, and change exactly one approved work order to status: ready. Do not implement until a work order is ready.`,
-		};
+		return { nextAction: "Review work orders and select one ready before execution." };
 	}
 	if (isDefaultReview(input.review)) {
-		return {
-			nextAction: "Review strategy alignment and write the final teach-back.",
-			nextPrompt: `Review strategy alignment for docs/features/${input.slug}/: compare original intent, decisions, implementation, execution reports, and proof. Update review.md with match/mismatch, product/system rule now, what to retain, and follow-ups. If useful, run /reown --remember after the review to save searchable ownership memory.`,
-		};
+		return { nextAction: "Review strategy alignment and write the final teach-back." };
 	}
-	return {
-		nextAction: "Feature packet looks complete; refresh the learning view or decide the next strategic question.",
-		nextPrompt: `/feature view ${input.slug}`,
-	};
+	return { nextAction: "Feature packet looks complete; refresh the learning view or decide the next strategic question." };
 }
 
 export async function getFeaturePacketStatus(root: string, slug: string): Promise<FeaturePacketStatus> {
@@ -1667,7 +1652,6 @@ export async function getFeaturePacketStatus(root: string, slug: string): Promis
 				openDecisionCount: 0,
 				incompleteProofCount: 0,
 				nextAction: "Create a feature packet first.",
-				nextPrompt: `/feature <brief> --slug ${slug}`,
 				error: `Feature packet is not a directory: ${packetDir}`,
 			};
 		}
@@ -1691,7 +1675,6 @@ export async function getFeaturePacketStatus(root: string, slug: string): Promis
 				openDecisionCount: 0,
 				incompleteProofCount: 0,
 				nextAction: "Create a feature packet first.",
-				nextPrompt: `/feature <brief> --slug ${slug}`,
 				error: `Feature packet not found: ${packetDir}`,
 			};
 		}
@@ -1803,7 +1786,7 @@ export function formatFeaturePacketStatus(status: FeaturePacketStatus): string {
 	if (status.error) {
 		lines.push("## Error", status.error, "");
 	}
-	lines.push("## Next action", status.nextAction, "", "## Suggested prompt", status.nextPrompt);
+	lines.push("## Next action", status.nextAction);
 	return lines.join("\n");
 }
 
