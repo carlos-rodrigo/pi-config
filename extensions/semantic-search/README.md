@@ -34,7 +34,7 @@ Default `semantic_search`, `/code-search`, and `/index rebuild` require local Ol
 ollama serve
 
 ollama pull nomic-embed-text
-ollama pull qwen2.5-coder:14b
+ollama pull qwen2.5-coder:7b
 # optional stronger/larger embedding model
 ollama pull mxbai-embed-large
 ```
@@ -45,7 +45,7 @@ Configuration:
 
 - `OLLAMA_HOST` or `OLLAMA_BASE_URL` — defaults to `http://127.0.0.1:11434`
 - `OLLAMA_EMBED_MODEL` or `PI_SEMANTIC_SEARCH_EMBED_MODEL` — embedding model, defaults to `nomic-embed-text`
-- `PI_SEMANTIC_SEARCH_SUMMARY_MODEL` — generation model for semantic-card summaries, defaults to `qwen2.5-coder:14b`
+- `PI_SEMANTIC_SEARCH_SUMMARY_MODEL` — generation model for semantic-card summaries, defaults to `qwen2.5-coder:7b`
 - `PI_SEMANTIC_SEARCH_SUMMARIES=false` — disables default summary generation and now causes the required default path to fail; prefer explicit lexical/debug commands when you intentionally want lower-quality local summaries
 - `PI_SEMANTIC_SEARCH_SUMMARY_CONCURRENCY` — parallel summary requests, defaults to `2`
 - `PI_SEMANTIC_SEARCH_EMBED_MAX_CHARS` — max characters sent per Ollama embedding input before adaptive retries; defaults to `6000`

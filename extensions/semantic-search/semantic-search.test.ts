@@ -447,7 +447,7 @@ test("Ollama config defaults to local embedding and strong summary models", () =
 		maxInputChars: 6_000,
 	});
 	assert.deepEqual(resolveOllamaSummaryConfig({}, {}), {
-		model: "qwen2.5-coder:14b",
+		model: "qwen2.5-coder:7b",
 		baseUrl: "http://127.0.0.1:11434",
 		timeoutMs: 180_000,
 		maxInputChars: 10_000,
@@ -525,7 +525,7 @@ test("index command treats build as rebuild instead of an embedding model", asyn
 		assert.ok(seenModels.length > 0, "expected the command to request Ollama");
 		assert.ok(!seenModels.includes("build"), "build should be parsed as a command alias, not a model");
 		assert.ok(seenModels.includes("nomic-embed-text"));
-		assert.ok(seenModels.includes("qwen2.5-coder:14b"));
+		assert.ok(seenModels.includes("qwen2.5-coder:7b"));
 
 		seenModels.length = 0;
 		await commands.get("index").handler("build --summary-model qwen2.5-coder:32b", {
@@ -626,7 +626,7 @@ test("extension registers semantic search tools and command entrypoints", async 
 			assert.equal(result.details.query, "vector search");
 			assert.equal(result.details.embeddingUsed, true);
 			assert.equal(result.details.index.embedding.model, "nomic-embed-text");
-			assert.equal(result.details.index.summary.model, "qwen2.5-coder:14b");
+			assert.equal(result.details.index.summary.model, "qwen2.5-coder:7b");
 			assert.equal(result.details.results.length, 1);
 		});
 	} finally {
@@ -665,7 +665,7 @@ test("semantic_search reports required Ollama setup instead of falling back to l
 		assert.equal(result.details.requirement, "ollama");
 		assert.match(result.content[0].text, /requires local Ollama summaries and embeddings/i);
 		assert.match(result.content[0].text, /ollama pull nomic-embed-text/);
-		assert.match(result.content[0].text, /ollama pull qwen2\.5-coder:14b/);
+		assert.match(result.content[0].text, /ollama pull qwen2\.5-coder:7b/);
 		assert.doesNotMatch(result.content[0].text, /src\/search\/index\.ts/);
 	} finally {
 		globalThis.fetch = originalFetch;
