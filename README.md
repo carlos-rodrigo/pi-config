@@ -77,7 +77,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[session-query](extensions/session-query/)** — Query previous Pi session files for context and decisions.
 - **[verify](extensions/verify/)** — Preflight `verification_plan`, back-pressure verification hook, and `/setup-verify` scaffolder.
 - **[web-tools](extensions/web-tools/)** — Web search and fetch tools.
-- **[workflow-modes](extensions/workflow-modes/)** — Smart/deep1/deep2/deep3/fast mode switching.
+- **[workflow-modes](extensions/workflow-modes/)** — Smart/deep2/deep3/fast mode switching.
 - **[worktree-manager](extensions/worktree-manager/)** — Git worktree lifecycle manager.
 
 ### [Skills](skills/)

@@ -6,7 +6,7 @@
  * │   ▌Implement the error handling changes                │  ← gray ghost text
  * ╰─ 42% of 200k · 84k ctx · 1.2M burned · $1.14 ─ ~/project (main) ─╯
  *
- * Top left:     agent mode (Smart in green, Deep¹/²/³ in red, Fast in yellow)
+ * Top left:     agent mode (Smart in green, Deep²/³ in red, Fast in yellow)
  * Top right:    model · thinking-level (level in green)
  * Bottom left:  context% of Nk · current context tokens · cumulative tokens burned · $cost - status
  * Bottom right: cwd plus git state — branch (main checkout) or worktree info
@@ -47,7 +47,6 @@ export function formatWorkflowModeLabel(rawMode: string | null | undefined): str
 
 	const normalized = value.toLowerCase();
 	if (["smart", "s"].includes(normalized)) return "Smart";
-	if (["deep1", "deep¹", "d1"].includes(normalized)) return "Deep¹";
 	if (["deep", "deep2", "deep²", "d", "d2"].includes(normalized)) return "Deep²";
 	if (["deep3", "deep³", "d3"].includes(normalized)) return "Deep³";
 	if (["fast", "f", "rush", "r"].includes(normalized)) return "Fast";

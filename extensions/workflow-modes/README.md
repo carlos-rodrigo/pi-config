@@ -1,6 +1,6 @@
 # workflow-modes
 
-Switch between agent modes (smart/deep1/deep2/deep3/fast) with commands or keyboard shortcut.
+Switch between agent modes (smart/deep2/deep3/fast) with commands or keyboard shortcut.
 
 ## Install
 
@@ -12,21 +12,20 @@ pi install ./extensions/workflow-modes
 
 | Feature | Description |
 |---------|-------------|
-| `/smart`, `/deep`, `/deep1`, `/deep2`, `/deep3`, `/fast` | Switch to a specific mode/effort (`/deep` aliases to `/deep2`) |
-| `/mode <name>` | Switch mode by name (accepts aliases, including `deep1`, `deep2`, `deep3`) |
-| `Ctrl+Shift+M` | Cycle through modes: smart → deep1 → deep2 → deep3 → fast → smart |
+| `/smart`, `/deep`, `/deep2`, `/deep3`, `/fast` | Switch to a specific mode/effort (`/deep` aliases to `/deep2`) |
+| `/mode <name>` | Switch mode by name (accepts aliases, including `deep2`, `deep3`, `rush`) |
+| `Ctrl+Shift+M` | Cycle through modes: smart → fast → deep2 → deep3 → smart |
 | `--workflow-mode <name>` | Start Pi in a specific mode without colliding with Pi’s built-in `--mode` flag |
 
 ## Modes
 
 | Mode | Preferred model | Thinking | Use case |
 |------|-----------------|----------|----------|
-| **smart** | `openai-codex/gpt-5.5` | low | Default — small/narrow work, repo questions, cheap-to-verify edits |
-| **deep1** | `openai-codex/gpt-5.5` | low | Deep naming for narrow GPT-5.5 work |
+| **smart** | `anthropic/claude-fable-5` | low | Default — small/narrow work, repo questions, cheap-to-verify edits |
 | **deep** / **deep2** | `openai-codex/gpt-5.5` | medium | Normal deep work: bug fixes, feature work, multi-file edits |
 | **deep3** | `openai-codex/gpt-5.5` | xhigh | Hard debugging, broad/high-risk work, maximum quality |
-| **fast** | `anthropic/claude-sonnet-4-6` | off | Quick tasks, simple edits |
+| **fast** | `openai-codex/gpt-5.5` | off | No-thinking GPT-5.5 for quick tasks and simple edits |
 
-Deep modes prefer `openai-codex/gpt-5.5`. `/deep` is the same as `/deep2`; it falls back to `gpt-5.4` with high thinking and `gpt-5.3-codex` with xhigh thinking if needed.
+GPT-5.5 modes prefer outcome-focused prompts: state the target, what good means, constraints, and how to verify. `/deep` is the same as `/deep2`; it falls back to `gpt-5.4` with high thinking and `gpt-5.3-codex` with xhigh thinking if needed. `/fast` is GPT-5.5 with thinking off for quick, cheap-to-verify work.
 
 Startup note: if you launch Pi with an explicit model/thinking selection (`--model`, `--models`, or `--thinking`), workflow-modes now preserves that choice unless you also pass `--workflow-mode`.

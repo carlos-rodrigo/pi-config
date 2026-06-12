@@ -58,7 +58,7 @@ pi install ./extensions/worktree-manager
 | [semantic-search](semantic-search/) | Local Ollama-backed hybrid code index, semantic search tool, and repo concept map |
 | [session-query](session-query/) | Query previous Pi session files for context and decisions |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
-| [workflow-modes](workflow-modes/) | Smart/deep1/deep2/deep3/fast mode switching |
+| [workflow-modes](workflow-modes/) | Smart/deep2/deep3/fast mode switching |
 | [verify](verify/) | Preflight `verification_plan`, back-pressure hook, and `scripts/verify.sh` scaffolding via `/setup-verify` |
 | [worktree-manager](worktree-manager/) | Git worktree management commands |
 

@@ -1,11 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 
-type AgentMode = "smart" | "deep1" | "deep2" | "deep3" | "fast";
+type AgentMode = "smart" | "deep2" | "deep3" | "fast";
 type ModelLike = { provider?: string; id?: string; model?: string } | undefined;
 
 const MODE_LABEL: Record<AgentMode, string> = {
 	smart: "Smart",
-	deep1: "Deep¹",
 	deep2: "Deep²",
 	deep3: "Deep³",
 	fast: "Fast",
@@ -13,7 +12,6 @@ const MODE_LABEL: Record<AgentMode, string> = {
 
 const MODE_STATUS_COLOR: Record<AgentMode, "success" | "error" | "warning"> = {
 	smart: "success",
-	deep1: "error",
 	deep2: "error",
 	deep3: "error",
 	fast: "warning",
@@ -28,19 +26,7 @@ type ModeProfile = {
 
 const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
 	smart: {
-		models: [
-			{ provider: "openai-codex", model: "gpt-5.5" },
-			{ provider: "openai-codex", model: "gpt-5.4", thinking: "medium" },
-			{ provider: "anthropic", model: "claude-opus-4-5", thinking: "high" },
-		],
-		thinking: "low",
-	},
-	deep1: {
-		models: [
-			{ provider: "openai-codex", model: "gpt-5.5" },
-			{ provider: "openai-codex", model: "gpt-5.4", thinking: "medium" },
-			{ provider: "anthropic", model: "claude-opus-4-5", thinking: "high" },
-		],
+		models: [{ provider: "anthropic", model: "claude-fable-5" }],
 		thinking: "low",
 	},
 	deep2: {
@@ -59,16 +45,22 @@ const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
 		],
 		thinking: "xhigh",
 	},
-	fast: { models: [{ provider: "anthropic", model: "claude-sonnet-4-6" }], thinking: "off" },
+	fast: {
+		models: [
+			{ provider: "openai-codex", model: "gpt-5.5" },
+			{ provider: "openai-codex", model: "gpt-5.4" },
+			{ provider: "anthropic", model: "claude-opus-4-5" },
+		],
+		thinking: "off",
+	},
 };
 
-const MODE_CYCLE: AgentMode[] = ["smart", "deep1", "deep2", "deep3", "fast"];
+const MODE_CYCLE: AgentMode[] = ["smart", "fast", "deep2", "deep3"];
 
 export function normalizeMode(raw: string | undefined): AgentMode | undefined {
 	if (!raw) return undefined;
 	const value = raw.trim().toLowerCase();
 	if (["smart", "s"].includes(value)) return "smart";
-	if (["deep1", "deep¹", "d1"].includes(value)) return "deep1";
 	if (["deep", "deep2", "deep²", "d", "d2"].includes(value)) return "deep2";
 	if (["deep3", "deep³", "d3"].includes(value)) return "deep3";
 	if (["fast", "f", "rush", "r"].includes(value)) return "fast";
@@ -198,19 +190,19 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.registerFlag("workflow-mode", {
-		description: "Start in agent mode (smart | deep1 | deep2 | deep3 | fast)",
+		description: "Start in agent mode (smart | deep2 | deep3 | fast)",
 		type: "string",
 	});
 
 	pi.registerShortcut("ctrl+shift+m", {
-		description: "Cycle agent mode (Smart/Deep¹/Deep²/Deep³/Fast)",
+		description: "Cycle agent mode (Smart/Deep²/Deep³/Fast)",
 		handler: async (ctx: ExtensionContext) => {
 			await cycleMode(ctx);
 		},
 	});
 
 	pi.registerCommand("mode", {
-		description: "Switch agent mode: smart | deep1 | deep2 | deep3 | fast",
+		description: "Switch agent mode: smart | deep2 | deep3 | fast",
 		handler: async (args, ctx) => {
 			const input = args.trim();
 			if (!input) {
@@ -228,13 +220,13 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (input.toLowerCase() === "help") {
-				ctx.ui.notify("Usage: /mode smart | /mode deep1 | /mode deep2 | /mode deep3 | /mode fast", "info");
+				ctx.ui.notify("Usage: /mode smart | /mode deep2 | /mode deep3 | /mode fast", "info");
 				return;
 			}
 
 			const mode = normalizeMode(input);
 			if (!mode) {
-				ctx.ui.notify("Unknown mode. Use: smart, deep1, deep2, deep3, or fast", "error");
+				ctx.ui.notify("Unknown mode. Use: smart, deep2, deep3, or fast", "error");
 				return;
 			}
 
@@ -253,13 +245,6 @@ export default function (pi: ExtensionAPI) {
 		description: "Switch agent mode to Deep² (medium reasoning)",
 		handler: async (_args, ctx) => {
 			await applyMode("deep2", ctx);
-		},
-	});
-
-	pi.registerCommand("deep1", {
-		description: "Switch agent mode to Deep¹ (low reasoning)",
-		handler: async (_args, ctx) => {
-			await applyMode("deep1", ctx);
 		},
 	});
 

@@ -82,10 +82,9 @@ Example: If the agent says "Done! I've created the webhook handler" without ment
 - **Default model:** `openai-codex/gpt-5.5` with low thinking
 - **Fallback model:** `openai-codex/gpt-5.4` with low thinking (if primary unavailable or unsupported)
 - State (enabled/disabled, model) persists across session restarts
-- Agent mode context (smart/deep1/deep2/deep3/fast) is included in the suggestion prompt for relevance:
-  - `fast`: tiny action + cheap proof check
+- Agent mode context (smart/deep2/deep3/fast) is included in the suggestion prompt for relevance:
+  - `fast`: GPT-5.5 with thinking off for tiny actions + cheap proof check
   - `smart`: narrow next action + focused check
-  - `deep1`: narrow implementation step + focused proof check
   - `deep`/`deep2`: outcome/constraints + `verification_plan` or focused/regression checks
   - `deep3`: reproduce/diagnose first, patch only if localized, then focused + regression checks
 - Ownership context from `ownership-loop` is included when active, especially to surface optional `/reown`, explicit `/reown --remember`, or `/own` before non-trivial implementation

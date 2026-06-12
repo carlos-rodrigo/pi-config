@@ -74,15 +74,15 @@ test("buildSuggestionPrompt describes the 3-part structure: what, verify, refere
 
 // --- Mode awareness ---
 
-test("buildSuggestionPrompt is mode-aware for deep1 work", () => {
+test("buildSuggestionPrompt is mode-aware for fast GPT-5.5 work", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Implement the focused fix.\n\nAssistant: Let's keep this narrow.",
-		"deep1",
+		"fast",
 	);
 
-	assert.match(prompt, /Current agent mode: deep1/i);
-	assert.match(prompt, /GPT-5\.5 low/i);
-	assert.match(prompt, /focused proof check/i);
+	assert.match(prompt, /Current agent mode: fast/i);
+	assert.match(prompt, /GPT-5\.5 no thinking/i);
+	assert.match(prompt, /cheap proof check/i);
 });
 
 test("buildSuggestionPrompt is mode-aware for deep work", () => {
@@ -114,7 +114,7 @@ test("buildSuggestionPrompt is mode-aware for fast work", () => {
 	);
 
 	assert.match(prompt, /Current agent mode: fast/i);
-	assert.match(prompt, /prefer tiny, concrete next actions with a cheap proof check/i);
+	assert.match(prompt, /prefer tiny concrete actions/i);
 });
 
 test("buildSuggestionPrompt is mode-aware for smart work", () => {
