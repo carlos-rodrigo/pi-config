@@ -1,7 +1,7 @@
 {
   "name": "@carlosrodrigo/pi-config",
   "version": "0.1.0",
-  "description": "Personal pi extensions and themes — bordered editor, compaction, verify, and more",
+  "description": "Personal pi extensions and themes — bordered editor, prompt queue, semantic search, verify, and more",
   "keywords": ["pi-package"],
   "type": "module",
   "license": "MIT",

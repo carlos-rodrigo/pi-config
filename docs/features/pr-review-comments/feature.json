@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "slug": "pr-review-comments",
+  "title": "PR-Native Document Review Comments",
+  "status": "implemented",
+  "source": "migrated from legacy PRD/design docs",
+  "nextAction": "Use system-model.md for architecture context and proof.md for regression checks before changing PR review behavior.",
+  "verification": [
+    "npm run test:document-reviewer",
+    "bash scripts/verify.sh"
+  ]
+}

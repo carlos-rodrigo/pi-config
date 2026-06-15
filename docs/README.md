@@ -19,7 +19,7 @@ Curated guides for building specific types of things. Each playbook covers patte
 
 ## Features (`features/`)
 
-Durable feature knowledge when it materially helps future work: concise briefs/PRDs, technical designs, and verification workflows. Persists after feature completes (moved to `archive/`).
+Durable feature knowledge when it materially helps future work: strategy briefs, system models, decisions, proof, and review notes. Persists after feature completes (moved to `archive/`).
 
 Write feature docs when they:
 - stabilize scope or requirements,
@@ -35,5 +35,5 @@ Do not create feature docs by default for every change.
 
 - Playbooks follow the template in each file (Overview → Patterns → Constraints → Gotchas)
 - Playbooks stay under 200 lines — split if growing beyond that
-- Feature `workflows/` should capture reusable verification flows, not one-off notes
+- Feature `proof.md` should capture reusable verification flows, not one-off notes
 - Agents update relevant docs only when they discover durable, reusable knowledge during implementation

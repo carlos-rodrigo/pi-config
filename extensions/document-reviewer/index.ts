@@ -24,7 +24,7 @@ function reviewHelpText(): string {
 		"  /review <path-to-markdown-file>",
 		"",
 		"Examples:",
-		"  /review .features/document-reviewer-extension/prd.md",
+		"  /review docs/features/README.md",
 		"  /review 'docs/Design Notes.md'",
 		"",
 		"Notes:",

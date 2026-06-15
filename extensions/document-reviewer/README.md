@@ -22,7 +22,7 @@ pi install ./extensions/document-reviewer
 ## Usage
 
 ```text
-/review .features/document-reviewer-extension/prd.md
+/review docs/features/README.md
 /review "docs/Design Notes.md"
 /review help
 ```

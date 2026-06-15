@@ -15,7 +15,6 @@ import {
 	shouldRetryAutoPromptWithFallback,
 	detectPhase,
 	detectUnverifiedImplementation,
-	extractOwnershipSuggestionState,
 	extractFeaturePacketSuggestionState,
 	type ConversationPhase,
 } from "./index.ts";
@@ -128,89 +127,24 @@ test("buildSuggestionPrompt is mode-aware for smart work", () => {
 	assert.match(prompt, /focused check/i);
 });
 
-test("buildSuggestionPrompt treats re-own as available rather than forced", () => {
-	const prompt = buildSuggestionPrompt(
-		"User: Implement the ownership loop.\n\nAssistant: Done, tests passed.",
-		"deep",
-		[],
-		[],
-		"shipping",
-		undefined,
-		false,
-		{ active: true, task: "ownership loop", phase: "changes-detected", changedSinceStory: true, reownRequested: false },
-	);
-
-	assert.match(prompt, /Ownership loop active/i);
-	assert.match(prompt, /re-own is available/i);
-	assert.match(prompt, /\/reown --remember/i);
-	assert.match(prompt, /do not force it as the next step/i);
-});
-
-test("buildSuggestionPrompt nudges passive idle ownership toward story-first work", () => {
-	const prompt = buildSuggestionPrompt(
-		"User: Build this feature.\n\nAssistant: I can do that.",
-		"deep",
-		[],
-		[],
-		"building",
-		undefined,
-		false,
-		{ active: true, mode: "passive", phase: "idle" },
-	);
-
-	assert.match(prompt, /Ownership loop passive/i);
-	assert.match(prompt, /consider suggesting \/own/i);
-	assert.match(prompt, /skip this for tiny tasks/i);
-});
-
-test("buildSuggestionPrompt avoids conversational save-or-skip for legacy pending cards", () => {
-	const prompt = buildSuggestionPrompt(
-		"User: Re-own this change.\n\nAssistant: Memory recommendation: save it.",
-		"deep",
-		[],
-		[],
-		"shipping",
-		undefined,
-		false,
-		{ active: true, mode: "passive", phase: "reown-requested", memoryCardPending: true, memoryCardPath: "docs/ownership/workflow-modes.md" },
-	);
-
-	assert.match(prompt, /legacy memory-card state exists/i);
-	assert.match(prompt, /do not suggest conversational save\/skip/i);
-	assert.match(prompt, /\/reown --remember/i);
-	assert.match(prompt, /docs\/ownership\/workflow-modes\.md/);
-});
-
-test("extractOwnershipSuggestionState returns latest ownership-loop entry", () => {
-	const state = extractOwnershipSuggestionState([
-		{ type: "custom", customType: "ownership-loop", data: { active: true, task: "old" } },
-		{ type: "custom", customType: "workflow-mode", data: { mode: "deep2" } as any },
-		{ type: "custom", customType: "ownership-loop", data: { active: true, mode: "passive", task: "new", changedSinceStory: true } },
-	]);
-
-	assert.equal(state?.task, "new");
-	assert.equal(state?.mode, "passive");
-	assert.equal(state?.changedSinceStory, true);
-});
-
 test("extractFeaturePacketSuggestionState detects feature packets, slug, and work-order stage", () => {
 	const state = extractFeaturePacketSuggestionState(
-		"Assistant: Created docs/features/reown-strategy/work-orders/001-change-output.md with status: ready for WO-001.",
+		"Assistant: Created docs/features/saved-search-filters/work-orders/001-change-output.md with status: ready for WO-001.",
 	);
 
 	assert.equal(state?.active, true);
-	assert.equal(state?.slug, "reown-strategy");
-	assert.equal(state?.packetDir, "docs/features/reown-strategy");
+	assert.equal(state?.slug, "saved-search-filters");
+	assert.equal(state?.packetDir, "docs/features/saved-search-filters");
 	assert.equal(state?.workOrderId, "WO-001");
 	assert.equal(state?.stage, "execute");
 });
 
 test("extractFeaturePacketSuggestionState detects solution-design stage", () => {
 	const state = extractFeaturePacketSuggestionState(
-		"Assistant: Next action: update docs/features/reown-strategy/system-model.md with solution design and execution slices.",
+		"Assistant: Next action: update docs/features/saved-search-filters/system-model.md with solution design and execution slices.",
 	);
 
-	assert.equal(state?.slug, "reown-strategy");
+	assert.equal(state?.slug, "saved-search-filters");
 	assert.equal(state?.stage, "design");
 });
 
@@ -222,37 +156,35 @@ test("extractFeaturePacketSuggestionState ignores unrelated conversations", () =
 
 test("buildSuggestionPrompt includes feature-packet next-action guidance", () => {
 	const prompt = buildSuggestionPrompt(
-		"User: Continue the feature.\n\nAssistant: docs/features/reown-strategy has a done work order missing an execution report.",
+		"User: Continue the feature.\n\nAssistant: docs/features/saved-search-filters has a done work order missing an execution report.",
 		"deep",
-		["docs/features/reown-strategy/work-orders/001-change-output.md"],
+		["docs/features/saved-search-filters/work-orders/001-change-output.md"],
 		[],
 		"shipping",
 		undefined,
 		false,
-		undefined,
-		extractFeaturePacketSuggestionState("Assistant: WO-001 is done but missing execution report in docs/features/reown-strategy."),
+		extractFeaturePacketSuggestionState("Assistant: WO-001 is done but missing execution report in docs/features/saved-search-filters."),
 	);
 
 	assert.match(prompt, /Feature packet active/i);
-	assert.match(prompt, /docs\/features\/reown-strategy/i);
-	assert.match(prompt, /reading docs\/features\/reown-strategy/i);
+	assert.match(prompt, /docs\/features\/saved-search-filters/i);
+	assert.match(prompt, /reading docs\/features\/saved-search-filters/i);
 	assert.match(prompt, /execution report for WO-001/i);
 	assert.match(prompt, /repo-relative files/i);
 });
 
 test("buildSuggestionPrompt can suggest the feature design bridge", () => {
 	const featureState = extractFeaturePacketSuggestionState(
-		"Assistant: strategy.md is approved. Next action is to model/design the solution before execution for docs/features/reown-strategy.",
+		"Assistant: strategy.md is approved. Next action is to model/design the solution before execution for docs/features/saved-search-filters.",
 	);
 	const prompt = buildSuggestionPrompt(
 		"User: What's next?\n\nAssistant: strategy.md is approved; model/design the solution before execution.",
 		"deep",
-		["docs/features/reown-strategy/strategy.md"],
+		["docs/features/saved-search-filters/strategy.md"],
 		[],
 		"planning",
 		undefined,
 		false,
-		undefined,
 		featureState,
 	);
 

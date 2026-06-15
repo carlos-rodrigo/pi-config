@@ -67,17 +67,6 @@ const pendingSuggestionTimers = new Set<ReturnType<typeof setTimeout>>();
 
 type ContentBlock = { type?: string; text?: string; thinking?: string };
 type SessionEntry = { type: string; message?: { role?: string; content?: unknown } };
-export type OwnershipSuggestionState = {
-	active?: boolean;
-	mode?: "passive" | "strict" | "off";
-	task?: string;
-	phase?: string;
-	changedSinceStory?: boolean;
-	reownRequested?: boolean;
-	memoryCardPending?: boolean;
-	memoryCardPath?: string;
-};
-
 export type FeaturePacketSuggestionState = {
 	active: true;
 	slug?: string;
@@ -344,16 +333,6 @@ export function detectUnverifiedImplementation(conversationContext: string): boo
 	return hasImplementation && !hasVerification;
 }
 
-export function extractOwnershipSuggestionState(
-	entries: Array<{ type?: string; customType?: string; data?: OwnershipSuggestionState }>,
-): OwnershipSuggestionState | undefined {
-	for (let i = entries.length - 1; i >= 0; i--) {
-		const entry = entries[i];
-		if (entry.type === "custom" && entry.customType === "ownership-loop") return entry.data;
-	}
-	return undefined;
-}
-
 function pushUniqueSignal(signals: string[], signal: string): void {
 	if (!signals.includes(signal)) signals.push(signal);
 }
@@ -365,7 +344,6 @@ export function extractFeaturePacketSuggestionState(conversationContext: string,
 
 	if (/docs\/features\//i.test(combined)) pushUniqueSignal(signals, "docs/features packet");
 	if (/\bfeature packet\b/i.test(combined)) pushUniqueSignal(signals, "feature packet workflow");
-	if (/\/feature\b/i.test(combined)) pushUniqueSignal(signals, "legacy /feature command");
 	if (/\bwork orders?\b|\bWO-\d{3,}\b/i.test(combined)) pushUniqueSignal(signals, "work orders");
 	if (/\bexecution reports?\b|\bER-\d{3,}\b/i.test(combined)) pushUniqueSignal(signals, "execution reports");
 
@@ -373,25 +351,24 @@ export function extractFeaturePacketSuggestionState(conversationContext: string,
 
 	const slug =
 		combined.match(/docs\/features\/([a-z0-9][a-z0-9-]*)\b/i)?.[1] ??
-		combined.match(/--slug\s+([a-z0-9][a-z0-9-]*)\b/i)?.[1] ??
-		combined.match(/\/feature\s+(?:status|next|design|plan|view|review)\s+([a-z0-9][a-z0-9-]*)\b/i)?.[1];
+		combined.match(/--slug\s+([a-z0-9][a-z0-9-]*)\b/i)?.[1];
 	const workOrderId = combined.match(/\bWO-\d{3,}\b/i)?.[0]?.toUpperCase();
 	const packetDir = slug ? `docs/features/${slug}` : undefined;
 
 	let stage: FeaturePacketSuggestionState["stage"] = "status";
-	if (/missing execution report|done work order|status:\s*done|\/feature\s+report\b|draft execution report|execution reports?/.test(lower)) {
+	if (/missing execution report|done work order|status:\s*done|draft execution report|execution reports?/.test(lower)) {
 		stage = "report";
 	} else if (/ready work order|status:\s*ready|implement the ready work order/.test(lower)) {
 		stage = "execute";
-	} else if (/draft work order|blocked work order|status:\s*(draft|blocked)|mark one ready|\/feature\s+work-order\b|work-orders\//.test(lower)) {
+	} else if (/draft work order|blocked work order|status:\s*(draft|blocked)|mark one ready|work-orders\//.test(lower)) {
 		stage = "work-order-review";
-	} else if (/\/feature\s+(design|plan)\b|system-model\.md|solution design|execution slices|design-to-execution|model\/design/.test(lower)) {
+	} else if (/system-model\.md|solution design|execution slices|design-to-execution|model\/design/.test(lower)) {
 		stage = "design";
 	} else if (/strategy\.md|decisions\.md|proof\.md|open decisions?|incomplete proof|define proof|frame the strategy/.test(lower)) {
 		stage = "strategy";
-	} else if (/review\.md|\/feature\s+review\b|strategy review|teach-back|reown --remember/.test(lower)) {
+	} else if (/review\.md|strategy review|teach-back/.test(lower)) {
 		stage = "review";
-	} else if (/index\.html|\/feature\s+view\b|learning view/.test(lower)) {
+	} else if (/index\.html|learning view/.test(lower)) {
 		stage = "view";
 	}
 
@@ -432,37 +409,13 @@ function getFeaturePacketGuidance(featurePacketState?: FeaturePacketSuggestionSt
 - Execution-report stage: suggest creating/completing the execution report for ${workOrder}, recording repo-relative files, proof, deviations, and marking reports complete.`;
 		case "review":
 			return `${base}
-- Review stage: suggest updating review.md and use /reown --remember only when searchable ownership memory is useful.`;
+- Review stage: suggest updating review.md with final alignment, proof evidence, and follow-up decisions.`;
 		case "view":
 			return `${base}
 - Learning-view stage: suggest regenerating or opening the packet dashboard after source docs/reports/diagrams change.`;
 		default:
 			return base;
 	}
-}
-
-function getOwnershipGuidance(ownershipState?: OwnershipSuggestionState): string {
-	if (!ownershipState?.active || ownershipState.mode === "off") return "";
-	const task = ownershipState.task ? ` for ${ownershipState.task}` : "";
-	if (ownershipState.memoryCardPending) {
-		const path = ownershipState.memoryCardPath ? ` at ${ownershipState.memoryCardPath}` : "";
-		return `
-- Ownership loop active${task}: legacy memory-card state exists${path}; do not suggest conversational save/skip. If searchable memory is explicitly wanted, suggest /reown --remember or /own-remember.`;
-	}
-	if (ownershipState.changedSinceStory && !ownershipState.reownRequested) {
-		return `
-- Ownership loop active${task}: code changed and re-own is available. Mention /reown only when the user wants to explain/compare the work, or /reown --remember when they want searchable memory; do not force it as the next step.`;
-	}
-	if (ownershipState.phase === "story-requested") {
-		return `
-- Ownership loop active${task}: prefer prompts that approve/refine the Initial Change Story before implementation, not prompts that skip straight to coding.`;
-	}
-	if (ownershipState.phase === "idle") {
-		return `
-- Ownership loop passive: for non-trivial implementation prompts, consider suggesting /own or a short Initial Change Story first; skip this for tiny tasks.`;
-	}
-	return `
-- Ownership loop active${task}: keep prompts anchored to the ownership story and proof plan.`;
 }
 
 function getWorkflowModeGuidance(workflowMode?: string): string {
@@ -493,12 +446,10 @@ export function buildSuggestionPrompt(
 	phase?: ConversationPhase,
 	baselineGuidelines?: string[],
 	unverifiedImplementation?: boolean,
-	ownershipState?: OwnershipSuggestionState,
 	featurePacketState?: FeaturePacketSuggestionState,
 ): string {
 	const modeHint = workflowMode ? `\n- Current agent mode: ${workflowMode}` : "";
 	const modeGuidance = getWorkflowModeGuidance(workflowMode);
-	const ownershipGuidance = getOwnershipGuidance(ownershipState);
 	const featurePacketGuidance = getFeaturePacketGuidance(featurePacketState);
 
 	const fileContext =
@@ -559,7 +510,7 @@ Keep it concise: 10-45 words. One or two sentences max. Never exceed 240 charact
 - When the user was told to do something manually, suggest that manual step
 - Assume baseline AGENTS/system guidelines are already enforced by the coding agent
 - Do NOT restate generic process defaults (e.g. "follow AGENTS", "run/feed the loop") unless it is the specific blocking action now
-- Prefer delta guidance: what concrete next action should happen now${modeHint}${modeGuidance}${ownershipGuidance}${featurePacketGuidance}
+- Prefer delta guidance: what concrete next action should happen now${modeHint}${modeGuidance}${featurePacketGuidance}
 - Return ONLY the prompt text. No quotes, no explanation, no markdown.
 - Hard limit: 240 characters maximum.${phaseGuidance}${unverifiedImplementation ? `
 
@@ -921,7 +872,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext, gener
 	const entries = ctx.sessionManager.getEntries() as Array<{
 		type: string;
 		customType?: string;
-		data?: { mode?: string } & OwnershipSuggestionState;
+		data?: { mode?: string };
 	}>;
 	for (let i = entries.length - 1; i >= 0; i--) {
 		if (entries[i].type === "custom" && entries[i].customType === "workflow-mode") {
@@ -929,7 +880,6 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext, gener
 			break;
 		}
 	}
-	const ownershipState = extractOwnershipSuggestionState(entries);
 
 	// Extract context signals for richer prompt generation
 	const filePaths = extractFilePaths(conversationContext);
@@ -951,7 +901,6 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext, gener
 			phase,
 			baselineGuidelines,
 			unverifiedImplementation,
-			ownershipState,
 			featurePacketState,
 		);
 		const prompt = revisionHint

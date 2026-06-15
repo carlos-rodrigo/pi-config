@@ -27,6 +27,7 @@ pi install ./extensions/document-reviewer
 pi install ./extensions/file-opener
 pi install ./extensions/git-blame
 pi install ./extensions/lazygit
+pi install ./extensions/prompt-queue
 pi install ./extensions/review-mode
 pi install ./extensions/semantic-search
 pi install ./extensions/session-query
@@ -68,6 +69,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[file-opener](extensions/file-opener/)** — Syntax-highlighted file viewer, nvim opener, and diff viewer.
 - **[git-blame](extensions/git-blame/)** — Interactive git blame overlay.
 - **[lazygit](extensions/lazygit/)** — LazyGit launcher via tmux.
+- **[prompt-queue](extensions/prompt-queue/)** — Interactive queue palette for staging prompts and running them serially.
 - **[review-mode](extensions/review-mode/)** — Overlay review workbench for local/staged/unstaged/outgoing diffs.
 - **[semantic-search](extensions/semantic-search/)** — Local Ollama-backed hybrid code index, semantic search, and repo concept map.
 - **[session-query](extensions/session-query/)** — Query previous Pi session files for context and decisions.

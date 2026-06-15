@@ -61,13 +61,13 @@ test("computeSelectionMetadata expands link-only selections to the full markdown
 
 test("computeSelectionMetadata matches selections that span inline code, headings, and linked list items", () => {
 	const md = [
-		"Improve how agents build, transfer, and retain context across sessions. Replaces compound/LEARNINGS with auto-maintained `docs/`, adds research phase and backpressure to `implement-task`, rewrites handoff for structured context packets, adds deterministic hooks, and restructures feature specs into `docs/features/` with verification workflows.",
+		"Improve how agents build, transfer, and retain context across sessions. Replaces ad-hoc notes with auto-maintained `docs/`, adds research phase and backpressure to `implement-task`, rewrites handoff for structured context packets, adds deterministic hooks, and restructures feature packets around `docs/features/` proof files.",
 		"",
 		"Informed by:",
 		"- [Advanced Context Engineering](https://www.humanlayer.dev/blog/advanced-context-engineering)",
 	].join("\n");
 	const selection = [
-		"Improve how agents build, transfer, and retain context across sessions. Replaces compound/LEARNINGS with auto-maintained docs/, adds research phase and backpressure to implement-task, rewrites handoff for structured context packets, adds deterministic hooks, and restructures feature specs into docs/features/ with verification workflows.",
+		"Improve how agents build, transfer, and retain context across sessions. Replaces ad-hoc notes with auto-maintained docs/, adds research phase and backpressure to implement-task, rewrites handoff for structured context packets, adds deterministic hooks, and restructures feature packets around docs/features/ proof files.",
 		"",
 		"Informed by:",
 		"Advanced Context Engineering",

@@ -10,7 +10,7 @@ Use it when you want to keep product/system ownership while delegating implement
 
 ```text
 docs/features/<slug>/
-  feature.json
+  feature.json      # optional durable packet metadata: title, status, next action, verification summary
   strategy.md       # intent, scope, constraints, success evidence
   system-model.md   # current flow, intended flow, concepts, boundaries, design
   decisions.md      # user-owned architecture/product decisions
@@ -40,16 +40,18 @@ docs/features/saved-search-filters/proof.md
 
 3. If execution needs delegation or sequencing, create approved work orders or `.features/<slug>/tasks/` briefs with concrete feedback loops.
 
-4. After implementation, record evidence in the packet's `execution/` directory or in ignored `.features/<slug>/execution/`, depending on the workflow being used.
+4. Use `.features/<slug>/tasks/_active.md` only as an ignored, operational task-loop board while actively executing `.features/` task briefs. Do not treat it as durable feature state.
+
+5. After implementation, record evidence in the packet's `execution/` directory or in ignored `.features/<slug>/execution/`, depending on the workflow being used.
 
 ## Example: migrate legacy feature docs
 
 If a feature still has legacy artifacts:
 
 ```text
-docs/features/pr-review-comments/prd.md
-docs/features/pr-review-comments/design.md
-.features/pr-review-comments/tasks/*.md
+docs/features/legacy-feature/prd.md
+docs/features/legacy-feature/design.md
+.features/legacy-feature/tasks/*.md
 ```
 
 Manually preserve old sources, create/update the strategy-first docs, and only mark work orders/tasks `ready` after the strategy, system model, decisions, and proof are clear.
