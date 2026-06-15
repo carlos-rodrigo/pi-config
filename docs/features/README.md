@@ -4,6 +4,8 @@
 
 Use it when you want to keep product/system ownership while delegating implementation mechanics to agents.
 
+> Note: this repo no longer ships a feature orchestration extension or `/feature` commands. Create/update these files directly, or ask the relevant planning/task skill to maintain them.
+
 ## Packet shape
 
 ```text
@@ -17,48 +19,28 @@ docs/features/<slug>/
   execution/        # reports after implementation
   diagrams/         # optional system diagrams
   review.md         # final alignment / teach-back
-  index.html        # generated dashboard; markdown remains source of truth
+  index.html        # optional generated dashboard; markdown remains source of truth
 ```
 
 ## Example: start a new feature
 
-```text
-/feature Add saved filters to semantic search --slug saved-search-filters
+1. Create a slugged packet directory:
+
+```bash
+mkdir -p docs/features/saved-search-filters/{work-orders,execution,diagrams}
 ```
 
-This creates a feature worktree and scaffolds:
-
-```text
-docs/features/saved-search-filters/
-```
-
-Then use the strategy-first loop:
+2. Draft the strategy/system files you need:
 
 ```text
-/feature status saved-search-filters
-/feature design saved-search-filters
-/feature view saved-search-filters
+docs/features/saved-search-filters/strategy.md
+docs/features/saved-search-filters/system-model.md
+docs/features/saved-search-filters/proof.md
 ```
 
-After the design is reviewed, create optional execution slices:
+3. If execution needs delegation or sequencing, create approved work orders or `.features/<slug>/tasks/` briefs with concrete feedback loops.
 
-```text
-/feature work-order "Persist saved filters" --slug saved-search-filters
-/feature work-order "Expose saved filters in search UI" --slug saved-search-filters
-```
-
-Manually mark only approved Work Orders as ready:
-
-```yaml
-status: ready
-```
-
-After implementation, capture proof:
-
-```text
-/feature report WO-001 --slug saved-search-filters
-/feature review saved-search-filters
-```
+4. After implementation, record evidence in the packet's `execution/` directory or in ignored `.features/<slug>/execution/`, depending on the workflow being used.
 
 ## Example: migrate legacy feature docs
 
@@ -70,13 +52,7 @@ docs/features/pr-review-comments/design.md
 .features/pr-review-comments/tasks/*.md
 ```
 
-Run:
-
-```text
-/feature migrate pr-review-comments
-```
-
-Migration preserves old sources and creates strategy-first docs plus draft Work Orders. Review the migrated strategy, system model, decisions, and proof before marking any Work Order `ready`.
+Manually preserve old sources, create/update the strategy-first docs, and only mark work orders/tasks `ready` after the strategy, system model, decisions, and proof are clear.
 
 ## Ownership rule
 

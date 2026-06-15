@@ -78,7 +78,7 @@ export type OwnershipSuggestionState = {
 	memoryCardPath?: string;
 };
 
-export type FeatureFlowSuggestionState = {
+export type FeaturePacketSuggestionState = {
 	active: true;
 	slug?: string;
 	packetDir?: string;
@@ -358,14 +358,14 @@ function pushUniqueSignal(signals: string[], signal: string): void {
 	if (!signals.includes(signal)) signals.push(signal);
 }
 
-export function extractFeatureFlowSuggestionState(conversationContext: string, filePaths: string[] = []): FeatureFlowSuggestionState | undefined {
+export function extractFeaturePacketSuggestionState(conversationContext: string, filePaths: string[] = []): FeaturePacketSuggestionState | undefined {
 	const combined = [conversationContext, ...filePaths].join("\n");
 	const lower = combined.toLowerCase();
 	const signals: string[] = [];
 
 	if (/docs\/features\//i.test(combined)) pushUniqueSignal(signals, "docs/features packet");
-	if (/\bfeature packet\b|\bfeature-flow\b/i.test(combined)) pushUniqueSignal(signals, "feature packet workflow");
-	if (/\/feature\b/i.test(combined)) pushUniqueSignal(signals, "/feature command");
+	if (/\bfeature packet\b/i.test(combined)) pushUniqueSignal(signals, "feature packet workflow");
+	if (/\/feature\b/i.test(combined)) pushUniqueSignal(signals, "legacy /feature command");
 	if (/\bwork orders?\b|\bWO-\d{3,}\b/i.test(combined)) pushUniqueSignal(signals, "work orders");
 	if (/\bexecution reports?\b|\bER-\d{3,}\b/i.test(combined)) pushUniqueSignal(signals, "execution reports");
 
@@ -378,7 +378,7 @@ export function extractFeatureFlowSuggestionState(conversationContext: string, f
 	const workOrderId = combined.match(/\bWO-\d{3,}\b/i)?.[0]?.toUpperCase();
 	const packetDir = slug ? `docs/features/${slug}` : undefined;
 
-	let stage: FeatureFlowSuggestionState["stage"] = "status";
+	let stage: FeaturePacketSuggestionState["stage"] = "status";
 	if (/missing execution report|done work order|status:\s*done|\/feature\s+report\b|draft execution report|execution reports?/.test(lower)) {
 		stage = "report";
 	} else if (/ready work order|status:\s*ready|implement the ready work order/.test(lower)) {
@@ -405,38 +405,37 @@ export function extractFeatureFlowSuggestionState(conversationContext: string, f
 	};
 }
 
-function getFeatureFlowGuidance(featureFlowState?: FeatureFlowSuggestionState): string {
-	if (!featureFlowState?.active) return "";
-	const slugSuffix = featureFlowState.slug ? ` ${featureFlowState.slug}` : "";
-	const packet = featureFlowState.packetDir ?? "docs/features/<slug>";
-	const workOrder = featureFlowState.workOrderId ?? "<work-order>";
-	const signals = featureFlowState.signals.length ? ` Signals: ${featureFlowState.signals.join(", ")}.` : "";
+function getFeaturePacketGuidance(featurePacketState?: FeaturePacketSuggestionState): string {
+	if (!featurePacketState?.active) return "";
+	const packet = featurePacketState.packetDir ?? "docs/features/<slug>";
+	const workOrder = featurePacketState.workOrderId ?? "<work-order>";
+	const signals = featurePacketState.signals.length ? ` Signals: ${featurePacketState.signals.join(", ")}.` : "";
 	const base = `
-- Feature-flow active: treat ${packet}/ as the strategic/source-design source of truth. Suggestions should advance Frame → Model/Design → Decide → Slice → Execute → Report → Review, not jump to coding when strategy/design/proof/work-order approval is missing.${signals}
-- If the current feature state is unclear, suggest /feature status${slugSuffix} or /feature next${slugSuffix}.`;
+- Feature packet active: treat ${packet}/ as the strategic/source-design source of truth. Suggestions should advance Frame → Model/Design → Decide → Slice → Execute → Report → Review, not jump to coding when strategy/design/proof/work-order approval is missing.${signals}
+- If the current feature state is unclear, suggest reading ${packet}/ and identifying the next strategy/design/task/report update.`;
 
-	switch (featureFlowState.stage) {
+	switch (featurePacketState.stage) {
 		case "strategy":
 			return `${base}
-- Strategy/proof stage: prefer filling strategy.md and proof/decision gaps; when strategy is approved, suggest /feature design${slugSuffix} before implementation.`;
+- Strategy/proof stage: prefer filling strategy.md and proof/decision gaps; when strategy is approved, suggest updating system-model.md before implementation.`;
 		case "design":
 			return `${base}
-- Solution-design stage: suggest /feature design${slugSuffix} to co-design system-model.md, decisions.md, proof.md, and draft Work Orders without implementing.`;
+- Solution-design stage: suggest co-designing system-model.md, decisions.md, proof.md, and draft Work Orders without implementing.`;
 		case "work-order-review":
 			return `${base}
 - Work-order review stage: suggest reviewing draft/blocked work orders, resolving ambiguity, and marking exactly one approved work order status: ready.`;
 		case "execute":
 			return `${base}
-- Ready work-order stage: suggest executing the ready work order, preserving decisions, running proof, then creating /feature report ${workOrder}${slugSuffix ? ` --slug${slugSuffix}` : ""}.`;
+- Ready work-order stage: suggest executing the ready work order, preserving decisions, running proof, then creating the execution report for ${workOrder}.`;
 		case "report":
 			return `${base}
-- Execution-report stage: suggest creating/completing /feature report ${workOrder}${slugSuffix ? ` --slug${slugSuffix}` : ""}, recording repo-relative files, proof, deviations, and marking reports complete.`;
+- Execution-report stage: suggest creating/completing the execution report for ${workOrder}, recording repo-relative files, proof, deviations, and marking reports complete.`;
 		case "review":
 			return `${base}
-- Review stage: suggest /feature review${slugSuffix}, update review.md, and use /reown --remember only when searchable ownership memory is useful.`;
+- Review stage: suggest updating review.md and use /reown --remember only when searchable ownership memory is useful.`;
 		case "view":
 			return `${base}
-- Learning-view stage: suggest /feature view${slugSuffix} after source docs/reports/diagrams change.`;
+- Learning-view stage: suggest regenerating or opening the packet dashboard after source docs/reports/diagrams change.`;
 		default:
 			return base;
 	}
@@ -495,12 +494,12 @@ export function buildSuggestionPrompt(
 	baselineGuidelines?: string[],
 	unverifiedImplementation?: boolean,
 	ownershipState?: OwnershipSuggestionState,
-	featureFlowState?: FeatureFlowSuggestionState,
+	featurePacketState?: FeaturePacketSuggestionState,
 ): string {
 	const modeHint = workflowMode ? `\n- Current agent mode: ${workflowMode}` : "";
 	const modeGuidance = getWorkflowModeGuidance(workflowMode);
 	const ownershipGuidance = getOwnershipGuidance(ownershipState);
-	const featureFlowGuidance = getFeatureFlowGuidance(featureFlowState);
+	const featurePacketGuidance = getFeaturePacketGuidance(featurePacketState);
 
 	const fileContext =
 		filePaths && filePaths.length > 0
@@ -560,7 +559,7 @@ Keep it concise: 10-45 words. One or two sentences max. Never exceed 240 charact
 - When the user was told to do something manually, suggest that manual step
 - Assume baseline AGENTS/system guidelines are already enforced by the coding agent
 - Do NOT restate generic process defaults (e.g. "follow AGENTS", "run/feed the loop") unless it is the specific blocking action now
-- Prefer delta guidance: what concrete next action should happen now${modeHint}${modeGuidance}${ownershipGuidance}${featureFlowGuidance}
+- Prefer delta guidance: what concrete next action should happen now${modeHint}${modeGuidance}${ownershipGuidance}${featurePacketGuidance}
 - Return ONLY the prompt text. No quotes, no explanation, no markdown.
 - Hard limit: 240 characters maximum.${phaseGuidance}${unverifiedImplementation ? `
 
@@ -938,7 +937,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext, gener
 	const phase = detectPhase(conversationContext);
 	const baselineGuidelines = extractBaselineGuidelines(ctx.getSystemPrompt());
 	const unverifiedImplementation = detectUnverifiedImplementation(conversationContext);
-	const featureFlowState = extractFeatureFlowSuggestionState(conversationContext, filePaths);
+	const featurePacketState = extractFeaturePacketSuggestionState(conversationContext, filePaths);
 
 	const controller = new AbortController();
 	pendingController = controller;
@@ -953,7 +952,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext, gener
 			baselineGuidelines,
 			unverifiedImplementation,
 			ownershipState,
-			featureFlowState,
+			featurePacketState,
 		);
 		const prompt = revisionHint
 			? `${basePrompt}\n\n<revision_request>\n${revisionHint}\n</revision_request>`

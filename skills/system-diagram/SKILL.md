@@ -180,7 +180,7 @@ State the question the diagram should answer, for example:
 - “Which classes and methods run when a user submits this form?”
 - “How does this event move from controller → service → job → subscriber?”
 - “What domain concepts are introduced by this feature and how do they relate?”
-- “How do ownership-loop, feature-flow, work orders, and proof docs communicate?”
+- “How do ownership cards, feature packets, work orders, and proof docs communicate?”
 
 If the question is unclear, ask one focused clarifying question before drawing.
 

@@ -23,11 +23,9 @@ pi install ./extensions/bordered-editor
 pi install ./extensions/code-intel
 pi install ./extensions/branch-switcher
 pi install ./extensions/document-reviewer
-pi install ./extensions/feature-flow
 pi install ./extensions/file-opener
 pi install ./extensions/git-blame
 pi install ./extensions/lazygit
-pi install ./extensions/ownership-loop
 pi install ./extensions/prompt-queue
 pi install ./extensions/review-mode
 pi install ./extensions/semantic-search
@@ -48,11 +46,9 @@ pi install ./extensions/worktree-manager
 | [branch-switcher](branch-switcher/) | Interactive git branch switching with local + remote-only branch support |
 | [code-intel](code-intel/) | `code_find` orchestration plus symbol, dependency, git-history, and AST search tools |
 | [document-reviewer](document-reviewer/) | Markdown review sessions with browser UI |
-| [feature-flow](feature-flow/) | Lightweight-first feature orchestration with Git worktrees and docs on demand |
 | [file-opener](file-opener/) | Syntax-highlighted file viewer with diff support |
 | [git-blame](git-blame/) | Interactive git blame overlay |
 | [lazygit](lazygit/) | LazyGit launcher via tmux |
-| [ownership-loop](ownership-loop/) | Always-live story-driven ownership, `/own`, `/reown`, and ownership cards |
 | [prompt-queue](prompt-queue/) | Interactive queue palette for staging prompts, pasting them into the editor, or running them serially |
 | [review-mode](review-mode/) | Overlay review workbench for local/staged/unstaged/outgoing diffs with colorized preview, hunk/file/all scopes, same-session questions, and saved review notes |
 | [semantic-search](semantic-search/) | Local Ollama-backed hybrid code index, semantic search tool, and repo concept map |
@@ -64,9 +60,6 @@ pi install ./extensions/worktree-manager
 
 ## Notes
 
-- **ownership-loop** defaults to passive always-live mode: lightweight story guidance and silent edit/write tracking instead of automatic follow-ups or composer/status-bar text.
-- **ownership-loop** + **auto-prompt** work together via session entries — auto-prompt treats `/reown` as optional and points to `/reown --remember` only when searchable memory is explicitly useful.
 - **auto-prompt** + **bordered-editor** work together via `pi.events` — auto-prompt generates suggestions, bordered-editor renders the ghost text.
-- **feature-flow** and **worktree-manager** share the same worktree core but are independent extensions.
 - **agent-jobs** requires Pi to be running inside tmux; it uses detached windows and persists results under `.pi/agent-jobs/`.
 - Researcher, oracle, and deep-review prompt templates use **agent-jobs** for non-blocking background work.

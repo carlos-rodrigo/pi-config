@@ -16,7 +16,7 @@ import {
 	detectPhase,
 	detectUnverifiedImplementation,
 	extractOwnershipSuggestionState,
-	extractFeatureFlowSuggestionState,
+	extractFeaturePacketSuggestionState,
 	type ConversationPhase,
 } from "./index.ts";
 
@@ -193,8 +193,8 @@ test("extractOwnershipSuggestionState returns latest ownership-loop entry", () =
 	assert.equal(state?.changedSinceStory, true);
 });
 
-test("extractFeatureFlowSuggestionState detects feature packets, slug, and work-order stage", () => {
-	const state = extractFeatureFlowSuggestionState(
+test("extractFeaturePacketSuggestionState detects feature packets, slug, and work-order stage", () => {
+	const state = extractFeaturePacketSuggestionState(
 		"Assistant: Created docs/features/reown-strategy/work-orders/001-change-output.md with status: ready for WO-001.",
 	);
 
@@ -205,22 +205,22 @@ test("extractFeatureFlowSuggestionState detects feature packets, slug, and work-
 	assert.equal(state?.stage, "execute");
 });
 
-test("extractFeatureFlowSuggestionState detects solution-design stage", () => {
-	const state = extractFeatureFlowSuggestionState(
-		"Assistant: Next action: /feature design reown-strategy to update system-model.md with solution design and execution slices.",
+test("extractFeaturePacketSuggestionState detects solution-design stage", () => {
+	const state = extractFeaturePacketSuggestionState(
+		"Assistant: Next action: update docs/features/reown-strategy/system-model.md with solution design and execution slices.",
 	);
 
 	assert.equal(state?.slug, "reown-strategy");
 	assert.equal(state?.stage, "design");
 });
 
-test("extractFeatureFlowSuggestionState ignores unrelated conversations", () => {
-	const state = extractFeatureFlowSuggestionState("User: Fix the login bug.\n\nAssistant: I found auth.ts.");
+test("extractFeaturePacketSuggestionState ignores unrelated conversations", () => {
+	const state = extractFeaturePacketSuggestionState("User: Fix the login bug.\n\nAssistant: I found auth.ts.");
 
 	assert.equal(state, undefined);
 });
 
-test("buildSuggestionPrompt includes feature-flow next-action guidance", () => {
+test("buildSuggestionPrompt includes feature-packet next-action guidance", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Continue the feature.\n\nAssistant: docs/features/reown-strategy has a done work order missing an execution report.",
 		"deep",
@@ -230,18 +230,18 @@ test("buildSuggestionPrompt includes feature-flow next-action guidance", () => {
 		undefined,
 		false,
 		undefined,
-		extractFeatureFlowSuggestionState("Assistant: WO-001 is done but missing execution report in docs/features/reown-strategy."),
+		extractFeaturePacketSuggestionState("Assistant: WO-001 is done but missing execution report in docs/features/reown-strategy."),
 	);
 
-	assert.match(prompt, /Feature-flow active/i);
+	assert.match(prompt, /Feature packet active/i);
 	assert.match(prompt, /docs\/features\/reown-strategy/i);
-	assert.match(prompt, /\/feature status reown-strategy/i);
-	assert.match(prompt, /\/feature report WO-001 --slug reown-strategy/i);
+	assert.match(prompt, /reading docs\/features\/reown-strategy/i);
+	assert.match(prompt, /execution report for WO-001/i);
 	assert.match(prompt, /repo-relative files/i);
 });
 
 test("buildSuggestionPrompt can suggest the feature design bridge", () => {
-	const featureState = extractFeatureFlowSuggestionState(
+	const featureState = extractFeaturePacketSuggestionState(
 		"Assistant: strategy.md is approved. Next action is to model/design the solution before execution for docs/features/reown-strategy.",
 	);
 	const prompt = buildSuggestionPrompt(
@@ -257,7 +257,7 @@ test("buildSuggestionPrompt can suggest the feature design bridge", () => {
 	);
 
 	assert.match(prompt, /Model\/Design → Decide → Slice → Execute → Report → Review/i);
-	assert.match(prompt, /\/feature design reown-strategy/i);
+	assert.match(prompt, /co-designing system-model\.md/i);
 	assert.match(prompt, /without implementing/i);
 });
 
