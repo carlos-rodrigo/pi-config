@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -544,6 +544,94 @@ test("index command treats build as rebuild instead of an embedding model", asyn
 	}
 });
 
+test("index rebuild writes a local index before Ollama failures", async () => {
+	const commands = new Map<string, any>();
+	const messages: any[] = [];
+	semanticSearchExtension({
+		registerTool() {},
+		registerCommand(name: string, definition: any) {
+			commands.set(name, definition);
+		},
+		sendMessage(message: any) {
+			messages.push(message);
+		},
+	} as any);
+
+	const dir = makeProject({
+		"src/search/index.ts": "export function semanticSearch(query: string) { return vectorIndex.search(query); }\n",
+	});
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = (async () => new Response(JSON.stringify({ error: "model not found" }), {
+		status: 404,
+		statusText: "Not Found",
+		headers: { "content-type": "application/json" },
+	})) as typeof fetch;
+	try {
+		await commands.get("index").handler("rebuild", {
+			cwd: dir,
+			ui: { notify() {}, setStatus() {} },
+		} as any);
+
+		const indexPath = join(dir, ".pi", "semantic-search", "index.json");
+		assert.equal(existsSync(indexPath), true, "expected rebuild to persist the base index before failing Ollama work");
+		const index = parseSearchIndexJson(readFileSync(indexPath, "utf8"));
+		assert.equal(index.files.length, 1);
+		assert.equal(index.embedding, undefined);
+		const status = JSON.parse(readFileSync(join(dir, ".pi", "semantic-search", "rebuild-status.json"), "utf8"));
+		assert.equal(status.status, "failed");
+		assert.match(status.error, /model not found/i);
+		assert.match(messages[messages.length - 1]?.content ?? "", /Base lexical\/symbol index was written, but Ollama semantic rebuild failed/i);
+		assert.match(messages[messages.length - 1]?.content ?? "", /requires local Ollama summaries and embeddings/i);
+	} finally {
+		globalThis.fetch = originalFetch;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("background index rebuild sends a follow-up when it finishes", async () => {
+	const events = new Map<string, any>();
+	const messages: any[] = [];
+	semanticSearchExtension({
+		on(name: string, handler: any) {
+			events.set(name, handler);
+		},
+		registerTool() {},
+		registerCommand() {},
+		sendMessage(message: any) {
+			messages.push(message);
+		},
+	} as any);
+
+	const dir = makeProject({
+		"src/search/index.ts": "export function semanticSearch(query: string) { return vectorIndex.search(query); }\n",
+	});
+	try {
+		buildSearchIndex(dir, { writeToDisk: true });
+		const statusDir = join(dir, ".pi", "semantic-search");
+		const logPath = join(statusDir, "rebuild.log");
+		writeFileSync(logPath, "[2026-05-17T13:09:45.499Z] semantic-search background rebuild finished: 1 files / 1 chunks / 1 semantic cards\n", "utf8");
+		writeFileSync(join(statusDir, "rebuild-status.json"), JSON.stringify({
+			status: "succeeded",
+			cwd: dir,
+			logPath,
+			pid: process.pid,
+			startedAt: "2026-05-17T13:09:44.855Z",
+			finishedAt: "2026-05-17T13:09:45.499Z",
+			message: "semantic-search background rebuild finished: 1 files / 1 chunks / 1 semantic cards",
+		}), "utf8");
+
+		events.get("session_start")?.({}, { cwd: dir });
+		await new Promise((resolve) => setImmediate(resolve));
+
+		assert.match(messages[messages.length - 1]?.content ?? "", /Semantic index background rebuild finished/);
+		const status = JSON.parse(readFileSync(join(statusDir, "rebuild-status.json"), "utf8"));
+		assert.equal(status.notified, true);
+	} finally {
+		events.get("session_shutdown")?.();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("index rebuild status reports the last background rebuild state", async () => {
 	const commands = new Map<string, any>();
 	const messages: any[] = [];
@@ -606,6 +694,7 @@ test("extension registers semantic search tools and command entrypoints", async 
 	assert.ok(tools.has("semantic_search"));
 	assert.ok(tools.has("repo_map"));
 	assert.ok(tools.has("index_status"));
+	assert.ok(tools.has("index_rebuild_status"));
 	assert.ok(commands.has("index"));
 	assert.ok(commands.has("code-search"));
 

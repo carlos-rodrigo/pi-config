@@ -504,9 +504,11 @@ type BackgroundRebuildStatus = {
 	summariesDisabled?: boolean;
 	message?: string;
 	error?: string;
+	notified?: boolean;
 };
 
 const memoryIndexes = new Map<string, SearchIndex>();
+const watchedBackgroundRebuilds = new Map<string, NodeJS.Timeout>();
 
 function normalizeRelativePath(path: string): string {
 	return path.split(sep).join("/").replace(/^\.\//, "");
@@ -1674,6 +1676,9 @@ export async function buildSearchIndexWithEmbeddings(cwd: string, options: Embed
 	const summaryConfig = options.summary === false ? undefined : resolveOllamaSummaryConfig(options.summary);
 	if (summaryConfig) assertRequiredSummariesEnabled(summaryConfig);
 	const index = buildSearchIndex(cwd, { ...options, writeToDisk: false });
+	// Persist the lexical/symbol index before slower Ollama work so `/index rebuild`
+	// still leaves a usable local index if summary or embedding generation fails.
+	if (options.writeToDisk ?? true) saveSearchIndex(index);
 	if (index.chunks.length === 0) {
 		index.embedding = {
 			provider: "ollama",
@@ -2264,6 +2269,10 @@ function currentBackgroundRebuildStatus(cwd: string): BackgroundRebuildStatus | 
 	return status;
 }
 
+function markBackgroundRebuildNotified(status: BackgroundRebuildStatus): void {
+	writeBackgroundRebuildStatus({ ...status, notified: true });
+}
+
 function formatBackgroundRebuildStatus(cwd: string, indexStatus: IndexStatus): string {
 	const status = currentBackgroundRebuildStatus(cwd);
 	const logPath = status?.logPath ?? getIndexRebuildLogPath(resolve(cwd));
@@ -2289,6 +2298,46 @@ function formatBackgroundRebuildStatus(cwd: string, indexStatus: IndexStatus): s
 	const recent = lastLogLines(logPath, 6);
 	if (recent.length > 0) lines.push("", "Recent log:", ...recent.map((line) => `  ${line}`));
 	return lines.join("\n");
+}
+
+function formatBackgroundRebuildFinished(status: BackgroundRebuildStatus, indexStatus: IndexStatus): string {
+	const state = status.status === "succeeded" ? "finished" : status.status;
+	const lines = [`Semantic index background rebuild ${state}.`];
+	if (status.message) lines.push(status.message);
+	if (status.error) lines.push(`Error: ${status.error}`);
+	lines.push(`Current index: ${indexStatus.stale ? "stale" : "fresh"} (${indexStatus.reason})`);
+	lines.push(`Status: ${getIndexRebuildStatusPath(resolve(status.cwd))}`);
+	lines.push(`Log: ${status.logPath}`);
+	return lines.join("\n");
+}
+
+function watchBackgroundIndexBuild(pi: ExtensionAPI, cwd: string): void {
+	const absoluteCwd = resolve(cwd);
+	if (watchedBackgroundRebuilds.has(absoluteCwd)) return;
+	const initialStatus = currentBackgroundRebuildStatus(absoluteCwd);
+	if (!initialStatus || (initialStatus.status !== "running" && initialStatus.notified)) return;
+	const check = () => {
+		const status = currentBackgroundRebuildStatus(absoluteCwd);
+		if (!status) return;
+		if (status.status === "running") return;
+		const interval = watchedBackgroundRebuilds.get(absoluteCwd);
+		if (interval) {
+			clearInterval(interval);
+			watchedBackgroundRebuilds.delete(absoluteCwd);
+		}
+		if (status.notified) return;
+		const indexStatus = getIndexStatus(absoluteCwd);
+		pi.sendMessage?.({
+			customType: "semantic-search",
+			content: formatBackgroundRebuildFinished(status, indexStatus),
+			display: true,
+			details: { index: indexStatus, rebuild: status },
+		});
+		markBackgroundRebuildNotified(status);
+	};
+	const interval = setInterval(check, 5000);
+	watchedBackgroundRebuilds.set(absoluteCwd, interval);
+	void Promise.resolve().then(check);
 }
 
 function startBackgroundIndexBuild(cwd: string, options: { embeddingModel?: string; summaryModel?: string; summariesDisabled?: boolean } = {}): { pid?: number; logPath: string; statusPath: string } {
@@ -2361,6 +2410,14 @@ function flagValue(tokens: string[], flag: string): string | undefined {
 }
 
 export default function semanticSearchExtension(pi: ExtensionAPI) {
+	pi.on?.("session_start", (_event, ctx) => {
+		watchBackgroundIndexBuild(pi, ctx.cwd);
+	});
+	pi.on?.("session_shutdown", () => {
+		for (const interval of watchedBackgroundRebuilds.values()) clearInterval(interval);
+		watchedBackgroundRebuilds.clear();
+	});
+
 	pi.registerCommand("index", {
 		description: "Build, rebuild, or show status for the semantic code-search index. Default rebuild requires local Ollama summaries + embeddings. Usage: /index [status|rebuild|build|lexical] [ollama-model] [--summary-model model] [--background|--status]",
 		handler: async (args, ctx) => {
@@ -2390,11 +2447,13 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			const model = tokens.find((token, index) => !valueIndexesToSkip.has(index) && !["rebuild", "build", "embeddings", "--embeddings", "--ollama", "lexical", "--lexical", "--background", "background", "bg", "--no-summaries", "no-summaries", "--summary-model"].includes(token) && !token.startsWith("--summary-model="));
 			if (background && !lexicalOnly) {
 				const started = startBackgroundIndexBuild(ctx.cwd, { embeddingModel: model, summaryModel, summariesDisabled });
+				watchBackgroundIndexBuild(pi, ctx.cwd);
 				ctx.ui.notify(`Started semantic index rebuild in background${started.pid ? ` (pid ${started.pid})` : ""}. Log: ${started.logPath}`, "info");
-				pi.sendMessage?.({ customType: "semantic-search", content: `Semantic index rebuild started in background${started.pid ? ` (pid ${started.pid})` : ""}.\nLog: ${started.logPath}\nRun /index status to check freshness.`, display: true, details: started });
+				pi.sendMessage?.({ customType: "semantic-search", content: `Semantic index rebuild started in background${started.pid ? ` (pid ${started.pid})` : ""}.\nLog: ${started.logPath}\nStatus: ${started.statusPath}\nRun /index rebuild --status or use index_rebuild_status to monitor it. A follow-up message will appear when it finishes.`, display: true, details: started });
 				return;
 			}
 			ctx.ui.setStatus?.("semantic-search", lexicalOnly ? "indexing…" : summariesDisabled ? "embedding…" : "summarizing…");
+			const rebuildStartedAt = new Date().toISOString();
 			try {
 				const index = lexicalOnly
 					? buildSearchIndex(ctx.cwd, { writeToDisk: true })
@@ -2409,10 +2468,29 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 				pi.sendMessage?.({ customType: "semantic-search", content: formatStatus(status, true), display: true, details: status });
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
+				if (!lexicalOnly) {
+					const absoluteCwd = resolve(ctx.cwd);
+					const logPath = getIndexRebuildLogPath(absoluteCwd);
+					mkdirSync(dirname(logPath), { recursive: true });
+					writeBackgroundRebuildStatus({
+						status: "failed",
+						cwd: absoluteCwd,
+						logPath,
+						pid: process.pid,
+						startedAt: rebuildStartedAt,
+						finishedAt: new Date().toISOString(),
+						embeddingModel: model,
+						summaryModel,
+						summariesDisabled,
+						message: "foreground rebuild failed after writing the base index",
+						error: message,
+					});
+					writeFileSync(logPath, `[${new Date().toISOString()}] semantic-search foreground rebuild failed: ${message}\n`, { flag: "a" });
+				}
 				ctx.ui.notify(`Indexing failed: ${message}`, "error");
 				pi.sendMessage?.({
 					customType: "semantic-search",
-					content: lexicalOnly ? `Indexing failed: ${message}` : formatOllamaRequirementFailure(error, { embeddingModel: model, summaryModel }),
+					content: lexicalOnly ? `Indexing failed: ${message}` : `Base lexical/symbol index was written, but Ollama semantic rebuild failed.\n\n${formatOllamaRequirementFailure(error, { embeddingModel: model, summaryModel })}`,
 					display: true,
 					details: { error: true, requirement: lexicalOnly ? undefined : "ollama", message },
 				});
@@ -2574,6 +2652,22 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			return {
 				content: [{ type: "text" as const, text: formatStatus(status) }],
 				details: status,
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "index_rebuild_status",
+		label: "Index Rebuild Status",
+		description: "Monitor the last /index rebuild --background job, including running/finished/failed state, log path, and current index freshness.",
+		promptSnippet: "Check semantic-search background rebuild status",
+		parameters: Type.Object({}),
+		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+			const status = getIndexStatus(ctx.cwd);
+			const rebuild = currentBackgroundRebuildStatus(ctx.cwd);
+			return {
+				content: [{ type: "text" as const, text: formatBackgroundRebuildStatus(ctx.cwd, status) }],
+				details: { index: status, rebuild },
 			};
 		},
 	});
