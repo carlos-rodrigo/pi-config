@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 const oracleAgent = readFileSync(new URL("./oracle.md", import.meta.url), "utf8");
 const researcherAgent = readFileSync(new URL("./researcher.md", import.meta.url), "utf8");
+const librarianAgent = readFileSync(new URL("./librarian.md", import.meta.url), "utf8");
 const askOraclePrompt = readFileSync(new URL("../prompts/ask-oracle.md", import.meta.url), "utf8");
 const oraclePrompt = readFileSync(new URL("../prompts/oracle.md", import.meta.url), "utf8");
 const deepReviewPrompt = readFileSync(new URL("../prompts/deep-review.md", import.meta.url), "utf8");
@@ -45,6 +46,18 @@ test("researcher agent follows oracle-style model, tool, and context-budget disc
 	assert.match(researcherAgent, /at most 8 tool calls/);
 	assert.match(researcherAgent, /webfetch\.maxChars.*12,000/i);
 	assert.match(researcherAgent, /Maximum 900 words/);
+});
+
+test("librarian agent uses only bash and constrains gh CLI research", () => {
+	assert.match(librarianAgent, /model: openai-codex\/gpt-5\.5/);
+	assert.match(librarianAgent, /tools: bash/);
+	assert.match(librarianAgent, /GitHub CLI \(`gh`\)/);
+	assert.match(librarianAgent, /Use only the `bash` tool/);
+	assert.match(librarianAgent, /use `gh` for GitHub access/);
+	assert.match(librarianAgent, /Do not run mutating `gh` commands/);
+	assert.match(librarianAgent, /gh search code/);
+	assert.match(librarianAgent, /gh api repos\/OWNER\/REPO\/contents\/PATH/);
+	assert.match(librarianAgent, /Maximum 900 words/);
 });
 
 test("research prompt templates keep researcher output bounded", () => {

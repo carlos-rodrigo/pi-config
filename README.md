@@ -88,6 +88,7 @@ Agent definitions used by the agent-jobs extension:
 
 - **oracle** — Deep reasoning second opinion (gpt-5.5). For complex debugging, architecture decisions, and thorough code analysis. Read-only.
 - **researcher** — Concise research specialist (gpt-5.5). Investigates technologies, reads docs/source, compares approaches, and returns evidence-first briefs with bounded tool/output budgets. Uses `websearch`/`webfetch` instead of shelling out.
+- **librarian** — Remote GitHub code research specialist (gpt-5.5). Uses only `bash` with the authenticated `gh` CLI for public/private GitHub source search and upstream library inspection. Read-only.
 
 ### Feature packets
 
@@ -113,6 +114,7 @@ Workflow prompt templates:
 # Direct — the main agent starts background agent jobs
 Use the oracle to review the auth logic in src/auth/. I want to make sure there are no edge cases.
 Use the researcher agent to investigate how Next.js App Router handles parallel routes.
+Use the librarian agent to search GitHub for real examples of React useEffect cleanup patterns.
 
 # Via prompt templates
 /oracle Is there a better way to handle the state machine in src/parser.ts?
