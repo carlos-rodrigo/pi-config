@@ -1,6 +1,6 @@
 ---
 name: system-diagram
-description: "Create System Diagrams: Excalidraw-style HTML/SVG learning diagrams for application flows, classes/methods/call chains, component communication, architecture boundaries, domain concepts, and system mental models."
+description: "Create reviewable HTML/SVG system diagrams and diagram-led report pages for application flows, classes/methods/call chains, component communication, architecture boundaries, domain concepts, and system mental models."
 argument-hint: "[feature-or-doc-path]"
 allowed-tools:
   - Read
@@ -13,12 +13,12 @@ allowed-tools:
 
 # System Diagram
 
-Create a clean, hand-drawn/Excalidraw-style **System Diagram** that helps the user understand how part of a software system works.
+Create a clean, reviewable **System Diagram** that helps the user understand how part of a software system works. Use `html-report-designer` when the diagram is part of a durable PRD/design/report page.
 
 A System Diagram can explain either:
 
 1. **Code flow** — classes, methods, functions, calls, events, jobs, and data passed between components.
-2. **System model** — parts of the product/system, domain concepts, states, ownership boundaries, and how they relate.
+2. **System design** — parts of the product/system, domain concepts, states, ownership boundaries, and how they relate.
 
 The diagram is a **learning artifact**, not decoration. It should help the user explain:
 
@@ -27,7 +27,7 @@ The diagram is a **learning artifact**, not decoration. It should help the user 
 - where responsibilities and boundaries live,
 - which domain concepts are being introduced,
 - how data/state moves,
-- which strategic decisions or evidence points matter.
+- which strategic decisions or feedback-loop evidence matter.
 
 ## When to Use
 
@@ -42,7 +42,8 @@ Use this skill when the user asks for:
 - a current-flow / intended-flow comparison,
 - an architecture/data-flow/sequence diagram,
 - a feature mental model,
-- a learning-oriented HTML page with a diagram.
+- a learning-oriented HTML page with a diagram,
+- a polished reviewable diagram/report experience.
 
 ## Diagram Modes
 
@@ -180,7 +181,7 @@ State the question the diagram should answer, for example:
 - “Which classes and methods run when a user submits this form?”
 - “How does this event move from controller → service → job → subscriber?”
 - “What domain concepts are introduced by this feature and how do they relate?”
-- “How do ownership cards, feature packets, task briefs, and task results communicate?”
+- “How do PRDs, design.html, ADRs, task briefs, and task results communicate?”
 
 If the question is unclear, ask one focused clarifying question before drawing.
 
@@ -217,32 +218,39 @@ Unclear or strategic decisions:
 
 Use the table above. Prefer one clear diagram over a generic mega-diagram.
 
-For complex features, create a small set:
+For complex features, create a small set of diagram sections inside the main report by default:
 
 ```text
-current-flow.html
-intended-flow.html
-code-flow.html
-domain-model.html
-communication-map.html
+current-flow
+intended-flow
+code-flow
+domain-model
+communication-map
 ```
+
+Create sibling `diagrams/{name}.html` files only when a diagram needs its own focused review page.
 
 ### Step 4: Create the artifact
 
 Preferred outputs:
 
-- `docs/features/{feature}/diagrams/{name}.html` for feature-specific diagrams
+- `docs/features/{feature}/design.html` for the main feature design review artifact
+- `docs/features/{feature}/prd.html` only when the PRD itself needs a product behavior/scope diagram
+- `docs/features/{feature}/diagrams/{name}.html` for optional supporting diagrams when a single design page would be crowded
 - `docs/architecture/{name}.html` for cross-feature architecture diagrams
 - another durable docs folder if the project already has one
 
-Use a self-contained HTML file with inline SVG and CSS. Start from `resources/system-diagram-template.html` when helpful.
+Use a self-contained HTML file with inline SVG and CSS.
+
+- For durable report pages, start from `../html-report-designer/resources/report-template.html` and embed the SVG as a figure.
+- For diagram-only pages, start from `resources/system-diagram-template.html` when helpful.
 
 ### Step 5: Open or report the view
 
 If local UI/browser access is available, open the HTML file. Otherwise, report the path and how to open it.
 
 ```bash
-open docs/features/<feature>/diagrams/<name>.html
+open docs/features/<feature>/design.html
 ```
 
 ### Step 6: Iterate for ownership clarity
@@ -252,14 +260,36 @@ When the user says a layer, responsibility, domain relationship, or call arrow f
 ## HTML/SVG Drawing Rules
 
 - Use inline SVG inside self-contained HTML.
-- Use a warm paper background, rounded boxes, subtle roughening/filter, soft shadows, and handwritten/system-rounded fonts.
-- Keep text readable; do not shrink below 11px in SVG.
+- Treat the diagram as an informational figure with a title, caption, and “How to read this” note.
+- Use the `html-report-designer` shell for polished long-form pages: hero summary, sticky contents, review rail, semantic sections, and print styles.
+- Use a tokenized report/diagram design system: semantic surfaces, text ranks, borders, accents, spacing, radius, and focus rings before one-off styling.
+- Use a warm editorial technical-atlas aesthetic: paper background, high-contrast ink, one strong accent, semantic status colors, generous margins, and calm density.
+- Use subtle scroll appearance for diagram sections/nodes when it teaches reading order; keep content visible without JavaScript and honor `prefers-reduced-motion`.
+- Keep text readable; do not shrink below 12px effective size in SVG.
+- Prefer semantic HTML text around the SVG over packing every explanation into SVG labels.
 - Use `foreignObject` only when necessary, and give it extra height to avoid clipping.
 - Use numbered steps for the main story when order matters.
 - Keep side effects inside cards as chips/callouts instead of drawing every side-effect arrow.
 - Use red dashed arrows only for exceptional paths.
 - Add a legend that defines colors for this specific diagram.
-- Include a short “How to read this” note above or below the canvas.
+- Add stable `data-review-id` anchors to major sections and meaningful SVG groups/nodes.
+- Include accessible SVG `<title>` and `<desc>` or an equivalent surrounding figure caption.
+- Avoid decorative complexity that makes the system harder to understand.
+
+## Diagram quality gate
+
+Before handoff, check:
+
+- the diagram answers one explicit question, not a vague topic;
+- source evidence was inspected for real actors, calls, state, and boundaries;
+- every color has a responsibility meaning documented in the legend;
+- every meaningful arrow is labeled with call/event/protocol/payload;
+- key SVG groups/nodes have stable `data-review-id` anchors;
+- SVG has `<title>` and `<desc>` and a visible caption/how-to-read note;
+- text remains readable at the expected viewport and is at least 12px effective size;
+- uncertainty, removed paths, recovery, or decision-needed paths are visible instead of implied;
+- progressive motion is optional and respects `prefers-reduced-motion`;
+- diagram-only pages pass `node /Users/carlosrodrigo/agents/scripts/validate-html-report.mjs --allow-placeholders resources/system-diagram-template.html` when validating templates, and finished diagrams pass without `--allow-placeholders`.
 
 ## Output Format
 
