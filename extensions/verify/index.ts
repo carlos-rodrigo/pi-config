@@ -499,7 +499,7 @@ async function inferVerificationCommands(projectRoot: string, template: Detected
 
 function inferPreChangeChecks(task: string): string[] {
 	if (!/\b(fix|bug|regression|fail|failing|broken|error|crash|repro|reproduce)\b/i.test(task)) return [];
-	return ["Reproduce the failing behavior before editing, then keep the same command/input as the post-fix proof."];
+	return ["Reproduce the failing behavior before editing, then keep the same command/input as the post-fix verification evidence."];
 }
 
 function inferEdgeCases(task: string, paths: string[]): string[] {

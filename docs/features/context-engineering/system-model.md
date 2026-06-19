@@ -14,11 +14,7 @@ docs/
     │   ├── feature.json
     │   ├── strategy.md
     │   ├── system-model.md
-    │   ├── decisions.md
-    │   ├── proof.md
-    │   ├── work-orders/   # optional execution slices
-    │   ├── execution/     # proof reports after implementation
-    │   └── review.md      # final teach-back/alignment
+    │   └── diagrams/      # optional system diagrams
     └── archive/
 ```
 
@@ -30,7 +26,7 @@ docs/
 └── NNN-task.md
 ```
 
-Tasks are operational and ephemeral. Durable strategy, architecture, decisions, and proof live in `docs/features/`.
+Tasks are operational and ephemeral. Durable strategy and current architecture live in `docs/features/`; verification results stay in task-local `## Result` sections under ignored `.features/`.
 
 ### Feedback layer
 

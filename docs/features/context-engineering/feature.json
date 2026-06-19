@@ -4,10 +4,5 @@
   "title": "Context Engineering",
   "status": "complete",
   "source": "migrated from legacy PRD/design docs",
-  "nextAction": "Use docs/README.md and docs/features/README.md as the current source of truth; create new work orders only for future changes.",
-  "verification": [
-    "AGENTS.md stays concise and points to repo-local docs",
-    "scripts/verify.sh succeeds silently on success",
-    "feature packet docs use strategy/system-model/decisions/proof naming"
-  ]
+  "nextAction": "Use docs/README.md and docs/features/README.md as the current source of truth; create new work orders only for future changes."
 }

@@ -41,14 +41,14 @@ test("buildSuggestionPrompt includes directive prompting principle", () => {
 	assert.match(prompt, /Give direction, not questions/i);
 });
 
-test("buildSuggestionPrompt includes feedback-loop principle and action-proof contract", () => {
+test("buildSuggestionPrompt includes feedback-loop principle and action-verification contract", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Add the API endpoint.\n\nAssistant: Done, I created the endpoint.",
 	);
 
 	assert.match(prompt, /FEEDBACK-LOOPABLE/i);
 	assert.match(prompt, /verify/i);
-	assert.match(prompt, /Action \+ proof/i);
+	assert.match(prompt, /Action \+ verification/i);
 	assert.match(prompt, /verification_plan/i);
 });
 
@@ -81,7 +81,7 @@ test("buildSuggestionPrompt is mode-aware for fast GPT-5.5 work", () => {
 
 	assert.match(prompt, /Current agent mode: fast/i);
 	assert.match(prompt, /GPT-5\.5 no thinking/i);
-	assert.match(prompt, /cheap proof check/i);
+	assert.match(prompt, /cheap verification check/i);
 });
 
 test("buildSuggestionPrompt is mode-aware for deep work", () => {
@@ -127,9 +127,9 @@ test("buildSuggestionPrompt is mode-aware for smart work", () => {
 	assert.match(prompt, /focused check/i);
 });
 
-test("extractFeaturePacketSuggestionState detects feature packets, slug, and work-order stage", () => {
+test("extractFeaturePacketSuggestionState detects feature packets, slug, and ready task stage", () => {
 	const state = extractFeaturePacketSuggestionState(
-		"Assistant: Created docs/features/saved-search-filters/work-orders/001-change-output.md with status: ready for WO-001.",
+		"Assistant: Created .features/saved-search-filters/tasks/001-change-output.md with status: ready for WO-001.",
 	);
 
 	assert.equal(state?.active, true);
@@ -156,21 +156,21 @@ test("extractFeaturePacketSuggestionState ignores unrelated conversations", () =
 
 test("buildSuggestionPrompt includes feature-packet next-action guidance", () => {
 	const prompt = buildSuggestionPrompt(
-		"User: Continue the feature.\n\nAssistant: docs/features/saved-search-filters has a done work order missing an execution report.",
+		"User: Continue the feature.\n\nAssistant: docs/features/saved-search-filters has a done task missing a result section.",
 		"deep",
-		["docs/features/saved-search-filters/work-orders/001-change-output.md"],
+		[".features/saved-search-filters/tasks/001-change-output.md"],
 		[],
 		"shipping",
 		undefined,
 		false,
-		extractFeaturePacketSuggestionState("Assistant: WO-001 is done but missing execution report in docs/features/saved-search-filters."),
+		extractFeaturePacketSuggestionState("Assistant: WO-001 is done but missing result in .features/saved-search-filters/tasks/001-change-output.md."),
 	);
 
 	assert.match(prompt, /Feature packet active/i);
 	assert.match(prompt, /docs\/features\/saved-search-filters/i);
 	assert.match(prompt, /reading docs\/features\/saved-search-filters/i);
-	assert.match(prompt, /execution report for WO-001/i);
-	assert.match(prompt, /repo-relative files/i);
+	assert.match(prompt, /## Result section for WO-001/i);
+	assert.match(prompt, /changed files/i);
 });
 
 test("buildSuggestionPrompt can suggest the feature design bridge", () => {
@@ -188,7 +188,7 @@ test("buildSuggestionPrompt can suggest the feature design bridge", () => {
 		featureState,
 	);
 
-	assert.match(prompt, /Model\/Design → Decide → Slice → Execute → Report → Review/i);
+	assert.match(prompt, /Model\/Design → Slice → Execute → Result/i);
 	assert.match(prompt, /co-designing system-model\.md/i);
 	assert.match(prompt, /without implementing/i);
 });

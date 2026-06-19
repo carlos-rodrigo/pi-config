@@ -1,6 +1,6 @@
 # document-reviewer
 
-Markdown review sessions backed by a localhost service and browser UI.
+Markdown and HTML review sessions backed by a localhost service and browser UI.
 
 ## Install
 
@@ -12,10 +12,11 @@ pi install ./extensions/document-reviewer
 
 | Feature | Description |
 |---------|-------------|
-| `/review <path>` command | Validates a markdown path, creates a local review session, and opens the review URL |
+| `/review <path>` command | Validates a markdown or HTML path, creates a local review session, and opens the review URL |
+| `/review-html <path>` command | Starts an HTML-only review and exports comments to `<name>.review.md` |
 | Local review service (`127.0.0.1`) | Session/document APIs bound to loopback only |
 | Ephemeral session token guard | Frontend API calls require `x-review-session-token`; missing/invalid tokens are rejected |
-| Keyboard-first visualizer UI | Vim-style navigation with visual selection for focused markdown review |
+| Keyboard-first visualizer UI | Vim-style navigation with visual selection for focused markdown/HTML review |
 | Background review wait | `/review` returns immediately so you can keep using the agent while the browser session is open |
 | Cross-platform launcher | Opens target URL via `open` (macOS), `xdg-open` (Linux), or `start` (Windows) with manual fallback instructions |
 
@@ -23,15 +24,19 @@ pi install ./extensions/document-reviewer
 
 ```text
 /review docs/features/README.md
+/review docs/features/my-feature/design.html
+/review-html docs/features/my-feature/design.html
 /review "docs/Design Notes.md"
 /review help
 ```
 
 ## After finishing review
 
-1. Press `Ctrl+Shift+F` in the browser to finalize and write annotations.
-2. The tab will attempt to close automatically; if your browser blocks it, close it manually.
-3. Return to Pi and prompt: `Apply comments in <file>`.
+1. Press `Ctrl+Shift+F` in the browser to finalize.
+2. Markdown reviews write `<!-- REVIEW: ... -->` annotations into the source file.
+3. HTML reviews write comments to `<name>.review.md` and leave the source HTML unchanged.
+4. The tab will attempt to close automatically; if your browser blocks it, close it manually.
+5. Return to Pi and prompt: `Apply comments in <file>` or `Apply comments in <name>.review.md`.
 
 ## Keybindings inside reviewer UI
 
@@ -52,7 +57,9 @@ pi install ./extensions/document-reviewer
 - Non-existent path returns actionable file-not-found guidance.
 - Directories are rejected (must be a file).
 - Symlinks are rejected for workspace safety.
-- Non-markdown files are rejected (`.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx`).
+- `/review` accepts markdown (`.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx`) and HTML (`.html`, `.htm`).
+- `/review-html` accepts only HTML (`.html`, `.htm`).
+- HTML files are rendered as the top-level review page with a CSP-nonced review overlay; source scripts/base tags are stripped for safety, hash links work normally, and comments export to a sidecar `.review.md` file.
 
 ## Troubleshooting
 

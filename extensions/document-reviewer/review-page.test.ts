@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
 	buildCommentDraftPayload,
 	buildFinishDescription,
+	buildHtmlVisualReviewPage,
 	buildReviewPage,
 	computeSelectionMetadata,
 	findFlexibleMatch,
@@ -61,13 +62,13 @@ test("computeSelectionMetadata expands link-only selections to the full markdown
 
 test("computeSelectionMetadata matches selections that span inline code, headings, and linked list items", () => {
 	const md = [
-		"Improve how agents build, transfer, and retain context across sessions. Replaces ad-hoc notes with auto-maintained `docs/`, adds research phase and backpressure to `implement-task`, rewrites handoff for structured context packets, adds deterministic hooks, and restructures feature packets around `docs/features/` proof files.",
+		"Improve how agents build, transfer, and retain context across sessions. Replaces ad-hoc notes with auto-maintained `docs/`, adds research phase and backpressure to `implement-task`, rewrites handoff for structured context packets, adds deterministic hooks, and keeps feature packets focused on strategy and system models.",
 		"",
 		"Informed by:",
 		"- [Advanced Context Engineering](https://www.humanlayer.dev/blog/advanced-context-engineering)",
 	].join("\n");
 	const selection = [
-		"Improve how agents build, transfer, and retain context across sessions. Replaces ad-hoc notes with auto-maintained docs/, adds research phase and backpressure to implement-task, rewrites handoff for structured context packets, adds deterministic hooks, and restructures feature packets around docs/features/ proof files.",
+		"Improve how agents build, transfer, and retain context across sessions. Replaces ad-hoc notes with auto-maintained docs/, adds research phase and backpressure to implement-task, rewrites handoff for structured context packets, adds deterministic hooks, and keeps feature packets focused on strategy and system models.",
 		"",
 		"Informed by:",
 		"Advanced Context Engineering",
@@ -132,6 +133,31 @@ test("buildCommentDraftPayload sends PR line metadata only in pull request mode"
 	});
 });
 
+test("buildCommentDraftPayload preserves HTML review anchors", () => {
+	assert.deepEqual(
+		buildCommentDraftPayload(
+			"document",
+			{
+				selectedText: "Review this section",
+				offsetStart: 0,
+				offsetEnd: 0,
+				reviewId: "summary",
+				selector: { exact: "Review this section" },
+			},
+			"Looks good",
+			"html",
+		),
+		{
+			selectedText: "Review this section",
+			comment: "Looks good",
+			offsetStart: 0,
+			offsetEnd: 0,
+			reviewId: "summary",
+			selector: { exact: "Review this section" },
+		},
+	);
+});
+
 test("PR-mode helpers format session context and finish copy", () => {
 	assert.equal(
 		formatPullRequestSessionContext({ owner: "acme", repo: "widgets", number: 42, filePath: "docs/README.md" }, "README.md"),
@@ -139,6 +165,7 @@ test("PR-mode helpers format session context and finish copy", () => {
 	);
 	assert.match(buildFinishDescription("pull_request", 2), /Fallback comments/);
 	assert.match(buildFinishDescription("document", 2), /REVIEW: \.\.\./);
+	assert.match(buildFinishDescription("document", 2, "html"), /sidecar/);
 });
 
 test("buildReviewPage includes PR-mode context and line metadata hooks", () => {
@@ -149,4 +176,24 @@ test("buildReviewPage includes PR-mode context and line metadata hooks", () => {
 	assert.match(html, /buildFinishDescription/);
 	assert.match(html, /Fallback only/);
 	assert.match(html, /pull_request/);
+});
+
+test("buildHtmlVisualReviewPage injects top-level review overlay without an iframe", () => {
+	const html = buildHtmlVisualReviewPage(
+		"session-123",
+		"design.html",
+		'<!doctype html><html><head><base href="/"><meta http-equiv="Content-Security-Policy" content="default-src none"><title>Design</title></head><body><nav><a href="#summary">Summary</a></nav><section id="summary" data-review-id="summary">Hello</section><script>window.bad = true;</script></body></html>',
+		{ nonce: "nonce-123" },
+	);
+
+	assert.match(html, /pi-html-review-root/);
+	assert.match(html, /Comment selection/);
+	assert.match(html, /data-review-id="summary"/);
+	assert.match(html, /href="#summary"/);
+	assert.match(html, /script nonce="nonce-123"/);
+	assert.doesNotMatch(html, /html-review-frame/);
+	assert.doesNotMatch(html, /<iframe/);
+	assert.doesNotMatch(html, /<base href/);
+	assert.doesNotMatch(html, /http-equiv="Content-Security-Policy"/i);
+	assert.doesNotMatch(html, /window\.bad/);
 });

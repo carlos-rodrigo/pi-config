@@ -73,7 +73,7 @@ ${getStyles()}
     <div class="modal-backdrop"></div>
     <div class="modal-content">
       <h3>Finish Review?</h3>
-      <p id="finish-description">This will insert <strong id="finish-count">0</strong> comment(s) as <code>&lt;!-- REVIEW: ... --&gt;</code> annotations into the original markdown file.</p>
+      <p id="finish-description">This will finalize <strong id="finish-count">0</strong> review comment(s).</p>
       <div class="modal-actions">
         <button id="finish-cancel" class="btn btn-ghost">Cancel</button>
         <button id="finish-confirm" class="btn btn-finish">Finish &amp; Save</button>
@@ -125,6 +125,691 @@ ${getScript(sessionId)}
 </html>`;
 }
 
+export function buildHtmlVisualReviewPage(
+	sessionId: string,
+	title: string,
+	sourceHtml: string,
+	options: { nonce: string },
+): string {
+	const nonce = options.nonce;
+	const headInjection = [
+		`<meta name="viewport" content="width=device-width, initial-scale=1.0">`,
+		`<style id="pi-html-review-highlight-style" nonce="${escapeHtml(nonce)}">${getHtmlVisualReviewPageStyles()}</style>`,
+	].join("\n");
+	const bodyInjection = `<script nonce="${escapeHtml(nonce)}">${getHtmlVisualReviewScript(sessionId, title)}</script>`;
+	return injectHtmlReviewAssets(sourceHtml, headInjection, bodyInjection);
+}
+
+function stripHtmlReviewConflicts(sourceHtml: string): string {
+	return sourceHtml
+		.replace(/<meta\s+[^>]*http-equiv=["']?content-security-policy["']?[^>]*>/gi, "")
+		.replace(/<base\b[^>]*>/gi, "")
+		.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+		.replace(/\son[a-z]+=("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+}
+
+function injectHtmlReviewAssets(sourceHtml: string, headInjection: string, bodyInjection: string): string {
+	let html = stripHtmlReviewConflicts(sourceHtml || "");
+
+	if (!/<html[\s>]/i.test(html)) {
+		const body = /<body[\s>]/i.test(html) ? html : `<body>${html}</body>`;
+		html = `<!doctype html><html lang="en"><head><meta charset="utf-8">${headInjection}</head>${body}</html>`;
+	} else if (/<head[\s>]/i.test(html)) {
+		html = html.replace(/<head(\s[^>]*)?>/i, (match) => `${match}\n${headInjection}`);
+	} else {
+		html = html.replace(/<html(\s[^>]*)?>/i, (match) => `${match}\n<head><meta charset="utf-8">${headInjection}</head>`);
+	}
+
+	if (/<\/body>/i.test(html)) {
+		return html.replace(/<\/body>/i, `${bodyInjection}\n</body>`);
+	}
+	return `${html}\n${bodyInjection}`;
+}
+
+function getHtmlVisualReviewPageStyles(): string {
+	return `
+[data-review-id].pi-html-review-anchor-has-comment {
+  outline: 2px solid color-mix(in srgb, #2f81f7 78%, transparent) !important;
+  outline-offset: 6px !important;
+  border-radius: 12px !important;
+}
+
+[data-review-id].pi-html-review-anchor-active {
+  outline: 3px solid color-mix(in srgb, #f59e0b 88%, transparent) !important;
+  outline-offset: 8px !important;
+}
+`;
+}
+
+function getHtmlVisualReviewOverlayStyles(): string {
+	return `
+:host { all: initial; }
+* { box-sizing: border-box; }
+.dock, .drawer, .popover, .toast {
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #f5f7fb;
+}
+.dock {
+  position: fixed;
+  z-index: 2147483647;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(calc(100vw - 32px), 980px);
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, .28);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(15, 23, 42, .88), rgba(2, 6, 23, .82));
+  box-shadow: 0 24px 80px rgba(2, 6, 23, .34), inset 0 1px 0 rgba(255,255,255,.08);
+  backdrop-filter: blur(18px) saturate(1.18);
+}
+.brand {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+.mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, .16);
+  color: #bfdbfe;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.mark::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, .16);
+}
+.title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 760;
+  letter-spacing: -.01em;
+}
+.count {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border: 1px solid rgba(148, 163, 184, .28);
+  border-radius: 999px;
+  color: #cbd5e1;
+  background: rgba(15, 23, 42, .62);
+  font-size: 12px;
+  font-weight: 720;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+button {
+  appearance: none;
+  border: 1px solid rgba(148, 163, 184, .28);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, .74);
+  color: #e2e8f0;
+  min-height: 36px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 760;
+  cursor: pointer;
+  transition: transform .16s ease, background .16s ease, border-color .16s ease, opacity .16s ease;
+}
+button:hover:not(:disabled) { transform: translateY(-1px); background: rgba(30, 41, 59, .92); border-color: rgba(203, 213, 225, .42); }
+button:focus-visible, textarea:focus-visible { outline: 3px solid rgba(96, 165, 250, .72); outline-offset: 2px; }
+button:disabled { cursor: not-allowed; opacity: .48; }
+.primary { background: linear-gradient(135deg, #86efac, #22c55e); color: #04130a; border-color: rgba(134, 239, 172, .72); }
+.accent { background: linear-gradient(135deg, #bfdbfe, #60a5fa); color: #061529; border-color: rgba(147, 197, 253, .75); }
+.drawer {
+  position: fixed;
+  z-index: 2147483646;
+  top: 78px;
+  right: 18px;
+  bottom: 18px;
+  width: min(420px, calc(100vw - 36px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(148, 163, 184, .28);
+  border-radius: 28px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, .94), rgba(2, 6, 23, .92));
+  box-shadow: 0 24px 80px rgba(2, 6, 23, .42), inset 0 1px 0 rgba(255,255,255,.08);
+  backdrop-filter: blur(18px) saturate(1.14);
+  transform: translateX(calc(100% + 28px));
+  opacity: .2;
+  pointer-events: none;
+  transition: transform .22s cubic-bezier(.2,.8,.2,1), opacity .18s ease;
+}
+.drawer[data-open="true"] { transform: translateX(0); opacity: 1; pointer-events: auto; }
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, .18);
+}
+.drawer-header h2 { margin: 0; font-size: 13px; letter-spacing: .11em; text-transform: uppercase; color: #93c5fd; }
+.comments {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  overflow: auto;
+}
+.empty {
+  padding: 28px 18px;
+  border: 1px dashed rgba(148, 163, 184, .28);
+  border-radius: 20px;
+  color: #cbd5e1;
+  line-height: 1.5;
+}
+.comment-card {
+  display: grid;
+  gap: 9px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, .22);
+  border-radius: 20px;
+  background: rgba(15, 23, 42, .68);
+}
+.snippet {
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.45;
+  max-height: 82px;
+  overflow: hidden;
+}
+.anchor {
+  width: max-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, .14);
+  color: #fde68a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+}
+.note { color: #f8fafc; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.comment-footer { display: flex; justify-content: flex-end; }
+.danger { color: #fca5a5; }
+.popover {
+  position: fixed;
+  z-index: 2147483647;
+  width: min(390px, calc(100vw - 24px));
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, .3);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, .97), rgba(2, 6, 23, .96));
+  box-shadow: 0 22px 70px rgba(2, 6, 23, .42), inset 0 1px 0 rgba(255,255,255,.08);
+  backdrop-filter: blur(18px) saturate(1.14);
+}
+.popover[hidden] { display: none; }
+.popover h2 { margin: 0 0 8px; color: #bfdbfe; font-size: 13px; letter-spacing: .09em; text-transform: uppercase; }
+.selection-preview {
+  max-height: 84px;
+  overflow: auto;
+  margin-bottom: 10px;
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(148, 163, 184, .12);
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.45;
+}
+textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  border: 1px solid rgba(148, 163, 184, .26);
+  border-radius: 18px;
+  padding: 12px;
+  background: rgba(2, 6, 23, .62);
+  color: #f8fafc;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.popover-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.toast {
+  position: fixed;
+  z-index: 2147483647;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 12px 16px;
+  border: 1px solid rgba(148, 163, 184, .28);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, .94);
+  color: #e2e8f0;
+  box-shadow: 0 18px 60px rgba(2, 6, 23, .38);
+  font-size: 13px;
+}
+.hint {
+  color: #94a3b8;
+  font-size: 12px;
+  white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .dock { top: 10px; width: calc(100vw - 20px); border-radius: 24px; align-items: stretch; flex-direction: column; }
+  .brand, .actions { width: 100%; }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .hint { display: none; }
+  button { width: 100%; }
+  .drawer { top: 132px; right: 10px; bottom: 10px; width: calc(100vw - 20px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: .001ms !important; animation-duration: .001ms !important; }
+}
+`;
+}
+
+function getHtmlVisualReviewScript(sessionId: string, title: string): string {
+	return `
+(function() {
+  'use strict';
+
+  const SESSION_ID = ${JSON.stringify(sessionId)};
+  const REVIEW_TITLE = ${JSON.stringify(title)};
+  const API_BASE = window.location.origin + '/api/' + SESSION_ID;
+  const OVERLAY_CSS = ${JSON.stringify(getHtmlVisualReviewOverlayStyles())};
+
+  let comments = [];
+  let currentSelection = null;
+  let pendingSelection = null;
+  let drawerOpen = false;
+  let reviewCompleted = false;
+
+  const host = document.createElement('div');
+  host.id = 'pi-html-review-root';
+  host.setAttribute('style', 'all: initial; position: fixed; inset: 0; pointer-events: none; z-index: 2147483647;');
+  document.documentElement.appendChild(host);
+  const shadow = host.attachShadow({ mode: 'open' });
+
+  const style = document.createElement('style');
+  style.textContent = OVERLAY_CSS;
+  shadow.appendChild(style);
+
+  const root = document.createElement('div');
+  root.innerHTML =
+    '<section class="dock" role="region" aria-label="HTML review controls">' +
+      '<div class="brand"><span class="mark">Review</span><span class="title" id="review-title"></span><span class="count" id="comment-count">0 comments</span></div>' +
+      '<div class="actions">' +
+        '<button id="comment-selection" class="accent" type="button" disabled>Comment selection</button>' +
+        '<button id="toggle-drawer" type="button">Comments</button>' +
+        '<button id="finish-review" class="primary" type="button">Finish Review</button>' +
+      '</div>' +
+      '<span class="hint">Select text, press c</span>' +
+    '</section>' +
+    '<aside class="drawer" id="drawer" data-open="false" aria-label="Review comments">' +
+      '<div class="drawer-header"><h2>Comments</h2><button id="close-drawer" type="button">Close</button></div>' +
+      '<div class="comments" id="comments"></div>' +
+    '</aside>' +
+    '<section class="popover" id="popover" hidden aria-label="Add review comment">' +
+      '<h2>Add Comment</h2>' +
+      '<div class="selection-preview" id="selection-preview"></div>' +
+      '<textarea id="comment-input" placeholder="What should change?" rows="4"></textarea>' +
+      '<div class="popover-actions"><button id="cancel-comment" type="button">Cancel</button><button id="submit-comment" class="primary" type="button">Submit</button></div>' +
+    '</section>' +
+    '<div class="toast" id="toast" hidden></div>';
+  shadow.appendChild(root);
+
+  const titleEl = shadow.getElementById('review-title');
+  const countEl = shadow.getElementById('comment-count');
+  const commentButton = shadow.getElementById('comment-selection');
+  const toggleDrawerButton = shadow.getElementById('toggle-drawer');
+  const closeDrawerButton = shadow.getElementById('close-drawer');
+  const finishButton = shadow.getElementById('finish-review');
+  const drawer = shadow.getElementById('drawer');
+  const commentsEl = shadow.getElementById('comments');
+  const popover = shadow.getElementById('popover');
+  const selectionPreview = shadow.getElementById('selection-preview');
+  const commentInput = shadow.getElementById('comment-input');
+  const cancelCommentButton = shadow.getElementById('cancel-comment');
+  const submitCommentButton = shadow.getElementById('submit-comment');
+  const toastEl = shadow.getElementById('toast');
+
+  titleEl.textContent = REVIEW_TITLE;
+
+  function setOverlayPointerMode() {
+    host.style.pointerEvents = drawerOpen || !popover.hidden ? 'auto' : 'none';
+    const dock = shadow.querySelector('.dock');
+    if (dock) dock.style.pointerEvents = 'auto';
+    drawer.style.pointerEvents = drawerOpen ? 'auto' : 'none';
+    popover.style.pointerEvents = popover.hidden ? 'none' : 'auto';
+  }
+
+  function showToast(message) {
+    toastEl.textContent = message;
+    toastEl.hidden = false;
+    window.clearTimeout(showToast.timer);
+    showToast.timer = window.setTimeout(() => {
+      toastEl.hidden = true;
+    }, 2600);
+  }
+
+  function isTypingTarget(target) {
+    if (!target) return false;
+    const tag = target.tagName ? target.tagName.toLowerCase() : '';
+    return tag === 'textarea' || tag === 'input' || tag === 'select' || target.isContentEditable;
+  }
+
+  function findReviewId(node) {
+    let current = node && node.nodeType === Node.ELEMENT_NODE ? node : node && node.parentElement;
+    while (current && current !== document.documentElement) {
+      if (current.getAttribute && current.getAttribute('data-review-id')) {
+        return current.getAttribute('data-review-id');
+      }
+      current = current.parentElement;
+    }
+    return undefined;
+  }
+
+  function findContextElement(node) {
+    let current = node && node.nodeType === Node.ELEMENT_NODE ? node : node && node.parentElement;
+    while (current && current !== document.documentElement) {
+      if (current.getAttribute && current.getAttribute('data-review-id')) return current;
+      if (/^(section|article|main|aside|header|footer|figure|table|tr|li|p|div)$/i.test(current.tagName || '')) return current;
+      current = current.parentElement;
+    }
+    return document.body;
+  }
+
+  function getSelectionRect(range) {
+    const rects = Array.from(range.getClientRects());
+    const usable = rects.find((rect) => rect.width > 0 || rect.height > 0);
+    return usable || range.getBoundingClientRect();
+  }
+
+  function buildSelector(range, selectedText) {
+    const container = findContextElement(range.commonAncestorContainer);
+    const text = (container && (container.innerText || container.textContent)) || '';
+    const index = text.indexOf(selectedText);
+    if (index === -1) return { exact: selectedText };
+    return {
+      exact: selectedText,
+      prefix: text.slice(Math.max(0, index - 80), index).trim(),
+      suffix: text.slice(index + selectedText.length, index + selectedText.length + 80).trim(),
+    };
+  }
+
+  function readSelection() {
+    const activeInShadow = shadow.activeElement;
+    if (isTypingTarget(document.activeElement) || isTypingTarget(activeInShadow)) return null;
+
+    const selection = window.getSelection();
+    const selectedText = selection ? selection.toString().trim() : '';
+    if (!selection || !selectedText || selection.rangeCount === 0) return null;
+
+    const range = selection.getRangeAt(0);
+    if (host.contains(range.commonAncestorContainer)) return null;
+    const rect = getSelectionRect(range);
+    const reviewId = findReviewId(range.commonAncestorContainer || selection.anchorNode);
+    return {
+      selectedText,
+      offsetStart: 0,
+      offsetEnd: 0,
+      reviewId,
+      selector: buildSelector(range, selectedText),
+      rect: {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+      },
+    };
+  }
+
+  function updateSelectionState() {
+    currentSelection = readSelection();
+    commentButton.disabled = !currentSelection;
+    document.querySelectorAll('.pi-html-review-anchor-active').forEach((node) => node.classList.remove('pi-html-review-anchor-active'));
+    if (currentSelection && currentSelection.reviewId) {
+      document.querySelectorAll('[data-review-id]').forEach((node) => {
+        if (node.getAttribute('data-review-id') === currentSelection.reviewId) {
+          node.classList.add('pi-html-review-anchor-active');
+        }
+      });
+    }
+  }
+
+  function setDrawerOpen(open) {
+    drawerOpen = open;
+    drawer.setAttribute('data-open', open ? 'true' : 'false');
+    setOverlayPointerMode();
+  }
+
+  function positionPopover(selection) {
+    const width = 390;
+    const left = Math.max(12, Math.min(selection.rect.left, window.innerWidth - width - 12));
+    let top = selection.rect.bottom + 12;
+    if (top + 280 > window.innerHeight) top = Math.max(12, selection.rect.top - 280);
+    popover.style.left = left + 'px';
+    popover.style.top = top + 'px';
+  }
+
+  function openCommentPopover(selection) {
+    if (!selection) {
+      showToast('Select text in the document first, then press c.');
+      return;
+    }
+    pendingSelection = selection;
+    selectionPreview.textContent = selection.selectedText.slice(0, 500) + (selection.selectedText.length > 500 ? '…' : '');
+    commentInput.value = '';
+    positionPopover(selection);
+    popover.hidden = false;
+    setOverlayPointerMode();
+    commentInput.focus();
+  }
+
+  function closeCommentPopover() {
+    pendingSelection = null;
+    popover.hidden = true;
+    setOverlayPointerMode();
+  }
+
+  async function fetchJson(path, options) {
+    const response = await fetch(API_BASE + path, options);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'Request failed.');
+    return payload;
+  }
+
+  async function submitComment() {
+    const text = commentInput.value.trim();
+    if (!pendingSelection || !text) return;
+    const payload = {
+      selectedText: pendingSelection.selectedText,
+      comment: text,
+      offsetStart: 0,
+      offsetEnd: 0,
+      reviewId: pendingSelection.reviewId,
+      selector: pendingSelection.selector || { exact: pendingSelection.selectedText },
+    };
+    try {
+      const data = await fetchJson('/comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      comments.push(data.comment);
+      closeCommentPopover();
+      renderComments();
+      markCommentAnchors();
+      setDrawerOpen(true);
+      showToast('Comment added.');
+    } catch (error) {
+      showToast('Error creating comment: ' + error.message);
+    }
+  }
+
+  async function deleteComment(commentId) {
+    try {
+      await fetchJson('/comments/' + commentId, { method: 'DELETE' });
+      comments = comments.filter((comment) => comment.id !== commentId);
+      renderComments();
+      markCommentAnchors();
+      showToast('Comment deleted.');
+    } catch (error) {
+      showToast('Error deleting comment: ' + error.message);
+    }
+  }
+
+  function markCommentAnchors() {
+    document.querySelectorAll('.pi-html-review-anchor-has-comment').forEach((node) => node.classList.remove('pi-html-review-anchor-has-comment'));
+    const ids = new Set(comments.map((comment) => comment.reviewId).filter(Boolean));
+    if (ids.size === 0) return;
+    document.querySelectorAll('[data-review-id]').forEach((node) => {
+      if (ids.has(node.getAttribute('data-review-id'))) node.classList.add('pi-html-review-anchor-has-comment');
+    });
+  }
+
+  function makeText(className, text) {
+    const element = document.createElement('div');
+    element.className = className;
+    element.textContent = text;
+    return element;
+  }
+
+  function renderComments() {
+    countEl.textContent = comments.length + ' comment' + (comments.length === 1 ? '' : 's');
+    commentsEl.textContent = '';
+    if (comments.length === 0) {
+      const empty = makeText('empty', 'No comments yet. Select text in the document and press c, or use Comment selection.');
+      commentsEl.appendChild(empty);
+      return;
+    }
+
+    comments.forEach((comment) => {
+      const card = document.createElement('article');
+      card.className = 'comment-card';
+      card.appendChild(makeText('snippet', comment.selectedText || '(empty selection)'));
+      if (comment.reviewId) card.appendChild(makeText('anchor', comment.reviewId));
+      card.appendChild(makeText('note', comment.comment || '(empty note)'));
+      const footer = document.createElement('div');
+      footer.className = 'comment-footer';
+      const button = document.createElement('button');
+      button.className = 'danger';
+      button.type = 'button';
+      button.textContent = 'Delete';
+      button.addEventListener('click', () => deleteComment(comment.id));
+      footer.appendChild(button);
+      card.appendChild(footer);
+      commentsEl.appendChild(card);
+    });
+  }
+
+  async function finishReview() {
+    if (reviewCompleted) return;
+    try {
+      const data = await fetchJson('/finish', { method: 'POST' });
+      reviewCompleted = true;
+      finishButton.textContent = 'Done';
+      finishButton.disabled = true;
+      showToast('Review complete: ' + data.commentsWritten + ' comment(s) written to sidecar.');
+      window.setTimeout(() => {
+        try { window.close(); } catch (_error) { /* no-op */ }
+      }, 120);
+    } catch (error) {
+      showToast('Error finishing review: ' + error.message);
+    }
+  }
+
+  function openExternalLinksInNewTab(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+    const anchor = target.closest('a[href]');
+    if (!anchor) return;
+    const href = anchor.getAttribute('href') || '';
+    if (!href || href.startsWith('#')) return;
+    if (/^(mailto|tel):/i.test(href)) return;
+    const url = new URL(href, window.location.href);
+    if (url.origin === window.location.origin) return;
+    event.preventDefault();
+    window.open(url.href, '_blank', 'noopener,noreferrer');
+    showToast('Opened external link in a new tab.');
+  }
+
+  document.addEventListener('click', openExternalLinksInNewTab, true);
+  document.addEventListener('selectionchange', () => window.setTimeout(updateSelectionState, 30));
+  document.addEventListener('mouseup', () => window.setTimeout(updateSelectionState, 0));
+  document.addEventListener('keyup', () => window.setTimeout(updateSelectionState, 0));
+  document.addEventListener('keydown', (event) => {
+    const activeInShadow = shadow.activeElement;
+    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'f') {
+      event.preventDefault();
+      finishReview();
+      return;
+    }
+    if (event.key === 'Escape' && !popover.hidden) {
+      event.preventDefault();
+      closeCommentPopover();
+      return;
+    }
+    if (isTypingTarget(event.target) || isTypingTarget(activeInShadow)) return;
+    if (event.key === '\\\\') {
+      event.preventDefault();
+      setDrawerOpen(!drawerOpen);
+      return;
+    }
+    if (event.key && event.key.toLowerCase() === 'c' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      updateSelectionState();
+      if (currentSelection) {
+        event.preventDefault();
+        openCommentPopover(currentSelection);
+      }
+    }
+  });
+
+  commentInput.addEventListener('keydown', (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault();
+      submitComment();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeCommentPopover();
+    }
+  });
+  commentButton.addEventListener('click', () => {
+    updateSelectionState();
+    openCommentPopover(currentSelection);
+  });
+  toggleDrawerButton.addEventListener('click', () => setDrawerOpen(!drawerOpen));
+  closeDrawerButton.addEventListener('click', () => setDrawerOpen(false));
+  finishButton.addEventListener('click', finishReview);
+  cancelCommentButton.addEventListener('click', closeCommentPopover);
+  submitCommentButton.addEventListener('click', submitComment);
+
+  fetchJson('/comments')
+    .then((data) => {
+      comments = data.comments || [];
+      renderComments();
+      markCommentAnchors();
+      setOverlayPointerMode();
+    })
+    .catch((error) => showToast('Failed to load review comments: ' + error.message));
+})();
+`;
+}
+
 export interface ReviewSelectionMetadata {
 	offsetStart: number;
 	offsetEnd: number;
@@ -136,8 +821,16 @@ export interface ReviewSelectionMetadata {
 	fallbackReason?: string;
 }
 
+export type ReviewSourceKind = "markdown" | "html";
+
 export interface ReviewSelectionDraft extends ReviewSelectionMetadata {
 	selectedText: string;
+	reviewId?: string;
+	selector?: {
+		exact: string;
+		prefix?: string;
+		suffix?: string;
+	};
 }
 
 export interface PullRequestSessionDisplayContext {
@@ -490,13 +1183,24 @@ function buildSelectionResult(
 	};
 }
 
-export function buildCommentDraftPayload(sessionMode: "document" | "pull_request", selection: ReviewSelectionDraft, comment: string) {
+export function buildCommentDraftPayload(
+	sessionMode: "document" | "pull_request",
+	selection: ReviewSelectionDraft,
+	comment: string,
+	sourceKind: ReviewSourceKind = "markdown",
+) {
 	const payload: Record<string, unknown> = {
 		selectedText: selection.selectedText,
 		comment,
 		offsetStart: selection.offsetStart,
 		offsetEnd: selection.offsetEnd,
 	};
+
+	if (sourceKind === "html") {
+		if (selection.reviewId) payload.reviewId = selection.reviewId;
+		if (selection.selector) payload.selector = selection.selector;
+		return payload;
+	}
 
 	if (sessionMode === "pull_request" && selection.lineStart !== undefined && selection.lineEnd !== undefined) {
 		payload.lineStart = selection.lineStart;
@@ -516,9 +1220,17 @@ export function formatPullRequestSessionContext(
 	return prLabel + (fileLabel ? ` · ${fileLabel}` : "");
 }
 
-export function buildFinishDescription(sessionMode: "document" | "pull_request", commentCount: number): string {
+export function buildFinishDescription(
+	sessionMode: "document" | "pull_request",
+	commentCount: number,
+	sourceKind: ReviewSourceKind = "markdown",
+): string {
 	if (sessionMode === "pull_request") {
 		return `This will submit <strong id="finish-count">${commentCount}</strong> comment(s) to the GitHub pull request review. Single-line selections stay inline when possible; multi-line selections are grouped under <code>Fallback comments</code>.`;
+	}
+
+	if (sourceKind === "html") {
+		return `This will write <strong id="finish-count">${commentCount}</strong> comment(s) to a sidecar <code>.review.md</code> file. The source HTML will not be modified.`;
 	}
 
 	return `This will insert <strong id="finish-count">${commentCount}</strong> comment(s) as <code>&lt;!-- REVIEW: ... --&gt;</code> annotations into the original markdown file.`;
@@ -693,6 +1405,10 @@ kbd {
   scroll-behavior: auto;
 }
 
+#content.html-review-content {
+  padding: 12px;
+}
+
 #content.visual-mode {
   cursor: text;
 }
@@ -830,6 +1546,21 @@ kbd {
 
 .markdown-body:focus {
   outline: none;
+}
+
+.markdown-body.html-review-shell {
+  max-width: none;
+  width: 100%;
+  height: calc(100vh - var(--header-height) - 24px);
+}
+
+#html-review-frame {
+  width: 100%;
+  min-height: 100%;
+  height: calc(100vh - var(--header-height) - 24px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
 }
 
 #content.visual-mode .markdown-body ::selection,
@@ -1196,10 +1927,13 @@ function getScript(sessionId: string): string {
   let lastKeyTime = 0;
   let lastKey = '';
   let originalMarkdown = '';
+  let sourceKind = 'markdown';
   let lastCaretRange = null;
   let sessionMode = 'document';
   let sessionFilePath = '';
   let pullRequestContext = null;
+  let htmlReviewFrame = null;
+  let htmlFrameSelection = null;
 
   // ─── Elements ───
   const contentEl = document.getElementById('content');
@@ -1223,13 +1957,24 @@ function getScript(sessionId: string): string {
   async function init() {
     const res = await fetch(API_BASE + '/document');
     const data = await res.json();
-    originalMarkdown = data.markdown;
+    sourceKind = data.sourceKind || (data.html ? 'html' : 'markdown');
+    originalMarkdown = data.source || data.markdown || data.html || '';
     sessionMode = data.mode || 'document';
     sessionFilePath = data.filePath || '';
     pullRequestContext = data.pullRequest || null;
 
     renderSessionContext();
     renderFinishCopy();
+
+    if (sourceKind === 'html') {
+      renderHtmlDocument(originalMarkdown);
+      focusEditor();
+      const commentsRes = await fetch(API_BASE + '/comments');
+      const commentsData = await commentsRes.json();
+      comments = commentsData.comments || [];
+      renderComments();
+      return;
+    }
 
     // Configure marked with mermaid support and syntax highlighting
     // (highlighting is handled in the custom code renderer below)
@@ -1325,6 +2070,133 @@ function getScript(sessionId: string): string {
     return div.innerHTML;
   }
 
+  function htmlReviewBridge() {
+    function findReviewId(node) {
+      let current = node && node.nodeType === Node.ELEMENT_NODE ? node : node && node.parentElement;
+      while (current && current !== document.documentElement) {
+        if (current.getAttribute && current.getAttribute('data-review-id')) {
+          return current.getAttribute('data-review-id');
+        }
+        current = current.parentElement;
+      }
+      return undefined;
+    }
+
+    function selectionPayload() {
+      const sel = window.getSelection();
+      const selectedText = sel ? sel.toString().trim() : '';
+      if (!sel || !selectedText || sel.rangeCount === 0) return null;
+      const range = sel.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      const reviewId = findReviewId(range.commonAncestorContainer || sel.anchorNode);
+      return {
+        selectedText,
+        offsetStart: 0,
+        offsetEnd: 0,
+        reviewId,
+        selector: { exact: selectedText },
+        rect: { left: rect.left, top: rect.top, bottom: rect.bottom, right: rect.right },
+      };
+    }
+
+    function postSelection(kind) {
+      const selection = selectionPayload();
+      if (!selection) return;
+      parent.postMessage({ type: kind, selection }, '*');
+    }
+
+    function decodeHashTarget(href) {
+      try {
+        return decodeURIComponent(href.slice(1));
+      } catch (_error) {
+        return href.slice(1);
+      }
+    }
+
+    document.addEventListener('click', (event) => {
+      if (!(event.target instanceof Element)) return;
+      const anchor = event.target.closest('a[href]');
+      if (!anchor) return;
+      const href = anchor.getAttribute('href') || '';
+      if (!href.startsWith('#')) return;
+
+      event.preventDefault();
+      const targetId = decodeHashTarget(href);
+      if (!targetId) return;
+      const destination = document.getElementById(targetId);
+      if (!destination) return;
+
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      destination.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+      try {
+        history.replaceState(null, '', '#' + encodeURIComponent(targetId));
+      } catch (_error) {
+        // Sandboxed srcdoc frames may reject history updates; scrolling already succeeded.
+      }
+    });
+
+    document.addEventListener('selectionchange', () => {
+      window.clearTimeout(window.__reviewSelectionTimer);
+      window.__reviewSelectionTimer = window.setTimeout(() => postSelection('document-reviewer:html-selection'), 40);
+    });
+    document.addEventListener('mouseup', () => postSelection('document-reviewer:html-selection'));
+    document.addEventListener('keydown', (event) => {
+      if (event.key && event.key.toLowerCase() === 'c' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        const selection = selectionPayload();
+        if (!selection) return;
+        event.preventDefault();
+        parent.postMessage({ type: 'document-reviewer:html-comment-request', selection }, '*');
+      }
+    });
+  }
+
+  function buildSandboxedHtml(source) {
+    const csp = "<meta http-equiv=\\\"Content-Security-Policy\\\" content=\\\"default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\\\">";
+    const bridge = '<script>(' + htmlReviewBridge.toString() + ')();<' + '/script>';
+    let html = source || '';
+    if (/<head[\s>]/i.test(html)) {
+      html = html.replace(/<head(\s[^>]*)?>/i, (match) => match + csp);
+    } else {
+      html = csp + html;
+    }
+    if (/<\\/body>/i.test(html)) {
+      return html.replace(/<\\/body>/i, bridge + '</body>');
+    }
+    return html + bridge;
+  }
+
+  function renderHtmlDocument(source) {
+    contentEl.classList.add('html-review-content');
+    markdownBody.classList.add('html-review-shell');
+    markdownBody.setAttribute('contenteditable', 'false');
+    markdownBody.innerHTML = '';
+
+    htmlReviewFrame = document.createElement('iframe');
+    htmlReviewFrame.id = 'html-review-frame';
+    htmlReviewFrame.setAttribute('sandbox', 'allow-scripts');
+    htmlReviewFrame.setAttribute('referrerpolicy', 'no-referrer');
+    htmlReviewFrame.srcdoc = buildSandboxedHtml(source);
+    markdownBody.appendChild(htmlReviewFrame);
+  }
+
+  window.addEventListener('message', (event) => {
+    if (!htmlReviewFrame || event.source !== htmlReviewFrame.contentWindow) return;
+    const data = event.data || {};
+    if (data.type !== 'document-reviewer:html-selection' && data.type !== 'document-reviewer:html-comment-request') return;
+    if (!data.selection || typeof data.selection.selectedText !== 'string') return;
+
+    htmlFrameSelection = data.selection;
+    if (data.type === 'document-reviewer:html-comment-request') {
+      const frameRect = htmlReviewFrame.getBoundingClientRect();
+      const selectionRect = data.selection.rect || { left: 24, bottom: 48 };
+      showCommentPopup(
+        buildPendingSelection(data.selection.selectedText, data.selection),
+        frameRect.left + selectionRect.left,
+        frameRect.top + selectionRect.bottom,
+      );
+    }
+  });
+
   function isPullRequestMode() {
     return sessionMode === 'pull_request' && !!pullRequestContext;
   }
@@ -1347,9 +2219,13 @@ function getScript(sessionId: string): string {
   }
 
   function renderFinishCopy() {
-    finishDescriptionEl.innerHTML = buildFinishDescription(isPullRequestMode() ? 'pull_request' : 'document', comments.length);
-    finishConfirmButton.textContent = isPullRequestMode() ? 'Finish & Submit' : 'Finish & Save';
-    finishButton.title = isPullRequestMode() ? 'Finish review and submit PR comments' : 'Finish review and write comments to file';
+    finishDescriptionEl.innerHTML = buildFinishDescription(isPullRequestMode() ? 'pull_request' : 'document', comments.length, sourceKind);
+    finishConfirmButton.textContent = isPullRequestMode() ? 'Finish & Submit' : sourceKind === 'html' ? 'Finish & Export' : 'Finish & Save';
+    finishButton.title = isPullRequestMode()
+      ? 'Finish review and submit PR comments'
+      : sourceKind === 'html'
+        ? 'Finish review and write comments to a sidecar .review.md file'
+        : 'Finish review and write comments to file';
   }
 
   function getLineLabel(lineStart, lineEnd) {
@@ -1358,6 +2234,12 @@ function getScript(sessionId: string): string {
   }
 
   function buildCommentMetaHtml(comment) {
+    if (sourceKind === 'html') {
+      return comment.reviewId
+        ? '<div class="comment-meta-row"><span class="comment-badge">Anchor ' + escapeHtml(comment.reviewId) + '</span></div>'
+        : '';
+    }
+
     if (!isPullRequestMode()) return '';
 
     const badges = [];
@@ -1383,7 +2265,17 @@ function getScript(sessionId: string): string {
     markdownBody.dataset.originalMarkdown = originalMarkdown;
   }
 
-  function buildPendingSelection(selectedText) {
+  function buildPendingSelection(selectedText, htmlSelection) {
+    if (sourceKind === 'html') {
+      return {
+        selectedText,
+        offsetStart: 0,
+        offsetEnd: 0,
+        reviewId: htmlSelection && htmlSelection.reviewId ? htmlSelection.reviewId : undefined,
+        selector: htmlSelection && htmlSelection.selector ? htmlSelection.selector : { exact: selectedText },
+      };
+    }
+
     const metadata = computeSelectionMetadata(originalMarkdown, selectedText);
     if (metadata.offsetStart === -1) {
       return null;
@@ -1429,6 +2321,10 @@ function getScript(sessionId: string): string {
   }
 
   function focusEditor() {
+    if (sourceKind === 'html' && htmlReviewFrame) {
+      htmlReviewFrame.focus({ preventScroll: true });
+      return;
+    }
     markdownBody.focus({ preventScroll: true });
   }
 
@@ -1534,6 +2430,8 @@ function getScript(sessionId: string): string {
   }
 
   function ensureSelectionAnchor(preferViewport) {
+    if (sourceKind === 'html') return window.getSelection();
+
     const sel = window.getSelection();
     if (!sel) return null;
 
@@ -1645,7 +2543,7 @@ function getScript(sessionId: string): string {
 
   // ─── Comments ───
   async function addComment(selection, commentText) {
-    const body = buildCommentDraftPayload(isPullRequestMode() ? 'pull_request' : 'document', selection, commentText);
+    const body = buildCommentDraftPayload(isPullRequestMode() ? 'pull_request' : 'document', selection, commentText, sourceKind);
 
     const res = await fetch(API_BASE + '/comments', {
       method: 'POST',
@@ -1699,6 +2597,8 @@ function getScript(sessionId: string): string {
   };
 
   function highlightCommentInDocument(comment) {
+    if (sourceKind === 'html') return;
+
     // Try to find and highlight the selected text in the rendered document
     if (!comment.selectedText) return;
 
@@ -1724,6 +2624,8 @@ function getScript(sessionId: string): string {
   }
 
   function removeHighlight(commentId) {
+    if (sourceKind === 'html') return;
+
     const el = markdownBody.querySelector('[data-comment-id="' + commentId + '"]');
     if (el) {
       const parent = el.parentNode;
@@ -1837,6 +2739,8 @@ function getScript(sessionId: string): string {
           'Review complete! ' + data.inlineComments + ' inline and ' + data.fallbackComments + ' fallback comment(s) submitted to ' + prLabel + '.',
           'success'
         );
+      } else if (data.sourceKind === 'html') {
+        showToast('Review complete! ' + data.commentsWritten + ' comment(s) written to sidecar.', 'success');
       } else {
         showToast('Review complete! ' + data.commentsWritten + ' comment(s) written to file.', 'success');
       }
@@ -2009,6 +2913,24 @@ function getScript(sessionId: string): string {
 
     if (keyLower === 'c') {
       // Comment on current selection
+      if (sourceKind === 'html') {
+        if (htmlFrameSelection && htmlFrameSelection.selectedText) {
+          e.preventDefault();
+          const frameRect = htmlReviewFrame ? htmlReviewFrame.getBoundingClientRect() : { left: 0, top: 0 };
+          const selectionRect = htmlFrameSelection.rect || { left: 24, bottom: 48 };
+          showCommentPopup(
+            buildPendingSelection(htmlFrameSelection.selectedText, htmlFrameSelection),
+            frameRect.left + selectionRect.left,
+            frameRect.top + selectionRect.bottom,
+          );
+        } else {
+          showToast('Select text inside the HTML preview first, then press c.', 'error');
+        }
+        lastKey = keyLower;
+        lastKeyTime = now;
+        return;
+      }
+
       const sel = window.getSelection();
       const selectedText = sel ? sel.toString().trim() : '';
       if (selectedText) {

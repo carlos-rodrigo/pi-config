@@ -23,7 +23,7 @@ Agents lose context across sessions, guess without focused research, and create 
 - `AGENTS.md` stays concise and points agents to the right docs/tools.
 - `docs/README.md` explains the current docs layout.
 - `scripts/verify.sh` provides the project regression gate and is silent on success.
-- Feature packets use `strategy.md`, `system-model.md`, `decisions.md`, `proof.md`, and optional execution/review artifacts.
+- Feature packets use `strategy.md` and `system-model.md`; verification results stay in task feedback loops and task `## Result` sections.
 
 ## References
 

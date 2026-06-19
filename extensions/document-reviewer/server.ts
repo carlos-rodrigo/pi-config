@@ -4,9 +4,10 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 import type { SubmitPullRequestReviewInput } from "./github-pr.js";
 import { buildPullRequestDiffMap, getRightSideInlineCommentTarget } from "./pr-diff-map.js";
-import { buildReviewPage } from "./review-page.js";
+import { buildHtmlVisualReviewPage, buildReviewPage } from "./review-page.js";
 
 export type ReviewSessionMode = "document" | "pull_request";
+export type ReviewSourceKind = "markdown" | "html";
 
 export interface ReviewSession {
 	sessionId: string;
@@ -21,10 +22,17 @@ export interface ReviewComment {
 	id: string;
 	selectedText: string;
 	comment: string;
-	/** Character offset in the original markdown where the selected text starts */
+	/** Character offset in the original source where the selected text starts, when source-offset anchoring is available. */
 	offsetStart: number;
-	/** Character offset in the original markdown where the selected text ends */
+	/** Character offset in the original source where the selected text ends, when source-offset anchoring is available. */
 	offsetEnd: number;
+	/** Stable HTML review anchor, usually from data-review-id, when available. */
+	reviewId?: string;
+	selector?: {
+		exact: string;
+		prefix?: string;
+		suffix?: string;
+	};
 	lineStart?: number;
 	lineEnd?: number;
 	inlineEligible?: boolean;
@@ -84,6 +92,7 @@ interface BaseActiveSession {
 	filePath: string;
 	title: string;
 	markdown: string;
+	sourceKind: ReviewSourceKind;
 	comments: ReviewComment[];
 	onFinish?: (comments: ReviewComment[]) => void;
 	mode: ReviewSessionMode;
@@ -91,6 +100,7 @@ interface BaseActiveSession {
 
 interface DocumentActiveSession extends BaseActiveSession {
 	mode: "document";
+	sidecarPath?: string;
 }
 
 interface PullRequestActiveSession extends BaseActiveSession {
@@ -122,6 +132,11 @@ export async function getDocumentReviewService(): Promise<DocumentReviewService>
 }
 
 const FALLBACK_SNIPPET_LIMIT = 180;
+
+function getReviewSidecarPath(filePath: string): string {
+	const parsed = path.parse(filePath);
+	return path.join(parsed.dir, `${parsed.name}.review.md`);
+}
 
 function normalizeFallbackText(text: string): string {
 	return text.replace(/\r\n?/g, "\n").trim();
@@ -156,6 +171,39 @@ export function buildFallbackReviewBody(filePath: string, comments: readonly Rev
 	});
 
 	return ["### Fallback comments", "", ...entries].join("\n\n");
+}
+
+export function buildHtmlReviewSidecar(filePath: string, comments: readonly ReviewComment[], generatedAt = new Date()): string {
+	const title = path.basename(filePath);
+	const lines: string[] = [
+		`# Review comments for ${escapeFallbackMarkdown(title)}`,
+		"",
+		`Source: \`${escapeFallbackMarkdown(filePath)}\``,
+		`Generated: ${generatedAt.toISOString()}`,
+		"",
+	];
+
+	if (comments.length === 0) {
+		lines.push("No comments.", "");
+		return lines.join("\n");
+	}
+
+	comments.forEach((comment, index) => {
+		const snippet = truncateFallbackSnippet(normalizeFallbackText(comment.selectedText).replace(/\s+/g, " "));
+		lines.push(`## REVIEW-${String(index + 1).padStart(3, "0")}`);
+		lines.push("");
+		if (comment.reviewId) {
+			lines.push(`- Anchor: \`${escapeFallbackMarkdown(comment.reviewId)}\``);
+		}
+		lines.push(`- Selection: ${escapeFallbackMarkdown(snippet || "(empty selection)")}`);
+		lines.push(`- Comment: ${escapeFallbackMarkdown(normalizeFallbackText(comment.comment) || "(empty note)")}`);
+		if (comment.selector?.prefix || comment.selector?.suffix) {
+			lines.push(`- Context: ${escapeFallbackMarkdown([comment.selector.prefix, comment.selector.suffix].filter(Boolean).join(" … "))}`);
+		}
+		lines.push("");
+	});
+
+	return lines.join("\n");
 }
 
 export async function publishPullRequestReview(
@@ -288,8 +336,12 @@ export class DocumentReviewService {
 		});
 	}
 
-	async createSession(filePath: string): Promise<ReviewSession> {
-		return this.createStoredSession({ mode: "document", filePath });
+	async createSession(filePath: string, options: { sourceKind?: ReviewSourceKind } = {}): Promise<ReviewSession> {
+		return this.createStoredSession({ mode: "document", filePath, sourceKind: options.sourceKind ?? "markdown" });
+	}
+
+	async createHtmlSession(filePath: string): Promise<ReviewSession> {
+		return this.createSession(filePath, { sourceKind: "html" });
 	}
 
 	async createPullRequestSession(options: CreatePullRequestSessionOptions): Promise<ReviewSession> {
@@ -314,7 +366,7 @@ export class DocumentReviewService {
 
 	private async createStoredSession(
 		options:
-			| { mode: "document"; filePath: string }
+			| { mode: "document"; filePath: string; sourceKind?: ReviewSourceKind }
 			| { mode: "pull_request"; filePath: string; pullRequest: PullRequestReviewContext; onPublishReview?: CreatePullRequestSessionOptions["onPublishReview"] },
 	): Promise<ReviewSession> {
 		const markdown = await fs.promises.readFile(options.filePath, "utf-8");
@@ -328,6 +380,7 @@ export class DocumentReviewService {
 					filePath: options.filePath,
 					title,
 					markdown,
+					sourceKind: "markdown",
 					comments: [],
 					mode: "pull_request",
 					pullRequest: options.pullRequest,
@@ -338,6 +391,7 @@ export class DocumentReviewService {
 					filePath: options.filePath,
 					title,
 					markdown,
+					sourceKind: options.sourceKind ?? "markdown",
 					comments: [],
 					mode: "document",
 				};
@@ -387,13 +441,31 @@ export class DocumentReviewService {
 					this.sendJson(res, 404, { error: "Session not found" });
 					return;
 				}
-				const html = buildReviewPage(session.sessionId, session.title);
-				res.writeHead(200, {
+				const nonce = crypto.randomBytes(16).toString("base64");
+				const html = session.sourceKind === "html"
+					? buildHtmlVisualReviewPage(session.sessionId, session.title, session.markdown, { nonce })
+					: buildReviewPage(session.sessionId, session.title);
+				const headers: http.OutgoingHttpHeaders = {
 					"Content-Type": "text/html; charset=utf-8",
 					"Cache-Control": "no-store, no-cache, must-revalidate",
 					Pragma: "no-cache",
 					Expires: "0",
-				});
+				};
+				if (session.sourceKind === "html") {
+					headers["Content-Security-Policy"] = [
+						"default-src 'none'",
+						`script-src 'nonce-${nonce}'`,
+						"style-src 'self' 'unsafe-inline'",
+						"img-src 'self' data: blob:",
+						"font-src data:",
+						"connect-src 'self'",
+						"object-src 'none'",
+						"base-uri 'none'",
+						"form-action 'none'",
+						"frame-ancestors 'none'",
+					].join("; ");
+				}
+				res.writeHead(200, headers);
 				res.end(html);
 				return;
 			}
@@ -408,8 +480,11 @@ export class DocumentReviewService {
 				}
 				this.sendJson(res, 200, {
 					mode: session.mode,
+					sourceKind: session.sourceKind,
 					title: session.title,
-					markdown: session.markdown,
+					source: session.markdown,
+					markdown: session.sourceKind === "markdown" ? session.markdown : undefined,
+					html: session.sourceKind === "html" ? session.markdown : undefined,
 					filePath: session.filePath,
 					pullRequest: session.mode === "pull_request" ? session.pullRequest : null,
 				});
@@ -494,11 +569,25 @@ export class DocumentReviewService {
 	}
 
 	private async finishDocumentSession(session: DocumentActiveSession, comments: ReviewComment[]) {
+		if (session.sourceKind === "html") {
+			const sidecarPath = session.sidecarPath ?? getReviewSidecarPath(session.filePath);
+			await fs.promises.writeFile(sidecarPath, buildHtmlReviewSidecar(session.filePath, comments), "utf-8");
+			return {
+				status: "finished",
+				mode: session.mode,
+				sourceKind: session.sourceKind,
+				commentsWritten: comments.length,
+				filePath: session.filePath,
+				sidecarPath,
+			};
+		}
+
 		const annotated = this.insertCommentsIntoMarkdown(session.markdown, comments);
 		await fs.promises.writeFile(session.filePath, annotated, "utf-8");
 		return {
 			status: "finished",
 			mode: session.mode,
+			sourceKind: session.sourceKind,
 			commentsWritten: comments.length,
 			filePath: session.filePath,
 		};
@@ -565,6 +654,29 @@ export class DocumentReviewService {
 		if (!commentText.trim()) {
 			throw new RequestError("Comment text is required to create a review comment.", 400);
 		}
+
+		if (session.sourceKind === "html") {
+			const reviewId = typeof data.reviewId === "string" && data.reviewId.trim() ? data.reviewId.trim() : undefined;
+			const selectorInput = data.selector && typeof data.selector === "object" ? (data.selector as Record<string, unknown>) : undefined;
+			const selector = selectorInput
+				? {
+					exact: typeof selectorInput.exact === "string" ? selectorInput.exact : selectedText,
+					prefix: typeof selectorInput.prefix === "string" ? selectorInput.prefix : undefined,
+					suffix: typeof selectorInput.suffix === "string" ? selectorInput.suffix : undefined,
+				}
+				: { exact: selectedText };
+
+			return {
+				id: crypto.randomBytes(4).toString("hex"),
+				selectedText,
+				comment: commentText,
+				offsetStart: 0,
+				offsetEnd: 0,
+				reviewId,
+				selector,
+			};
+		}
+
 		if (
 			typeof rawOffsetStart !== "number" ||
 			!Number.isInteger(rawOffsetStart) ||

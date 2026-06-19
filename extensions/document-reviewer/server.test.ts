@@ -24,6 +24,20 @@ function makeTempMarkdown(content: string) {
 	};
 }
 
+function makeTempHtml(content: string) {
+	const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "document-review-html-"));
+	const filePath = path.join(tempRoot, "design.html");
+	fs.writeFileSync(filePath, content, "utf-8");
+	return {
+		tempRoot,
+		filePath,
+		sidecarPath: path.join(tempRoot, "design.review.md"),
+		cleanup() {
+			fs.rmSync(tempRoot, { recursive: true, force: true });
+		},
+	};
+}
+
 async function postJson(url: string, body: Record<string, unknown>) {
 	return fetch(url, {
 		method: "POST",
@@ -48,7 +62,9 @@ test("document sessions still expose markdown and finish by writing inline comme
 	assert.equal(documentResponse.status, 200);
 	assert.deepEqual(await documentResponse.json(), {
 		mode: "document",
+		sourceKind: "markdown",
 		title: "README.md",
+		source: "# Title\n\nHello world\n",
 		markdown: "# Title\n\nHello world\n",
 		filePath: fixture.filePath,
 		pullRequest: null,
@@ -67,6 +83,7 @@ test("document sessions still expose markdown and finish by writing inline comme
 	assert.deepEqual(await finishResponse.json(), {
 		status: "finished",
 		mode: "document",
+		sourceKind: "markdown",
 		commentsWritten: 1,
 		filePath: fixture.filePath,
 	});
@@ -74,6 +91,73 @@ test("document sessions still expose markdown and finish by writing inline comme
 	const finishedComments = await finishPromise;
 	assert.equal(finishedComments.length, 1);
 	assert.match(fs.readFileSync(fixture.filePath, "utf-8"), /Hello <!-- REVIEW: Clarify greeting --> world/);
+});
+
+test("html document sessions expose source and finish by writing a review sidecar", async (t) => {
+	const html = '<!doctype html><section data-review-id="summary"><h1>Design</h1><p>Hello browser review</p></section>';
+	const fixture = makeTempHtml(html);
+	const service = new DocumentReviewService();
+	await service.start();
+	t.after(async () => {
+		await service.stop();
+		fixture.cleanup();
+	});
+
+	const session = await service.createHtmlSession(fixture.filePath);
+	const finishPromise = service.waitForFinish(session.sessionId);
+	const apiBase = `${new URL(session.documentUrl).origin}/api/${session.sessionId}`;
+
+	const documentResponse = await fetch(session.documentUrl);
+	assert.equal(documentResponse.status, 200);
+	assert.deepEqual(await documentResponse.json(), {
+		mode: "document",
+		sourceKind: "html",
+		title: "design.html",
+		source: html,
+		html,
+		filePath: fixture.filePath,
+		pullRequest: null,
+	});
+
+	const reviewPageResponse = await fetch(session.reviewUrl);
+	assert.equal(reviewPageResponse.status, 200);
+	assert.match(reviewPageResponse.headers.get("content-security-policy") ?? "", /script-src 'nonce-/);
+	assert.match(reviewPageResponse.headers.get("content-security-policy") ?? "", /connect-src 'self'/);
+	const reviewPage = await reviewPageResponse.text();
+	assert.match(reviewPage, /pi-html-review-root/);
+	assert.match(reviewPage, /Comment selection/);
+	assert.match(reviewPage, /data-review-id="summary"/);
+	assert.doesNotMatch(reviewPage, /<iframe/);
+	assert.doesNotMatch(reviewPage, /html-review-frame/);
+
+	const createCommentResponse = await postJson(`${apiBase}/comments`, {
+		selectedText: "Hello browser review",
+		comment: "Tighten this copy",
+		reviewId: "summary",
+		selector: { exact: "Hello browser review" },
+	});
+	assert.equal(createCommentResponse.status, 201);
+	const createPayload = (await createCommentResponse.json()) as { comment: Record<string, unknown> };
+	assert.equal(createPayload.comment.reviewId, "summary");
+	assert.deepEqual(createPayload.comment.selector, { exact: "Hello browser review" });
+
+	const finishResponse = await fetch(`${apiBase}/finish`, { method: "POST" });
+	assert.equal(finishResponse.status, 200);
+	assert.deepEqual(await finishResponse.json(), {
+		status: "finished",
+		mode: "document",
+		sourceKind: "html",
+		commentsWritten: 1,
+		filePath: fixture.filePath,
+		sidecarPath: fixture.sidecarPath,
+	});
+
+	assert.equal(fs.readFileSync(fixture.filePath, "utf-8"), html);
+	const sidecar = fs.readFileSync(fixture.sidecarPath, "utf-8");
+	assert.match(sidecar, /Review comments for design\.html/);
+	assert.match(sidecar, /Anchor: `summary`/);
+	assert.match(sidecar, /Tighten this copy/);
+	assert.equal((await finishPromise).length, 1);
 });
 
 test("rejects invalid comment metadata without storing the draft", async (t) => {
@@ -163,7 +247,9 @@ test("pull request sessions expose PR metadata, store line hints, and finish via
 	assert.equal(documentResponse.status, 200);
 	assert.deepEqual(await documentResponse.json(), {
 		mode: "pull_request",
+		sourceKind: "markdown",
 		title: "README.md",
+		source: "# Title\n\nHello world\n",
 		markdown: "# Title\n\nHello world\n",
 		filePath: fixture.filePath,
 		pullRequest,

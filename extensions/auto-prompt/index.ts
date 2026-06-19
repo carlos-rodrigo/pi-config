@@ -72,7 +72,7 @@ export type FeaturePacketSuggestionState = {
 	slug?: string;
 	packetDir?: string;
 	workOrderId?: string;
-	stage?: "status" | "strategy" | "design" | "work-order-review" | "execute" | "report" | "review" | "view";
+	stage?: "status" | "strategy" | "design" | "work-order-review" | "execute" | "result" | "view";
 	signals: string[];
 };
 
@@ -344,30 +344,30 @@ export function extractFeaturePacketSuggestionState(conversationContext: string,
 
 	if (/docs\/features\//i.test(combined)) pushUniqueSignal(signals, "docs/features packet");
 	if (/\bfeature packet\b/i.test(combined)) pushUniqueSignal(signals, "feature packet workflow");
+	if (/\.features\/[a-z0-9][a-z0-9-]*\/tasks\//i.test(combined)) pushUniqueSignal(signals, "task briefs");
 	if (/\bwork orders?\b|\bWO-\d{3,}\b/i.test(combined)) pushUniqueSignal(signals, "work orders");
-	if (/\bexecution reports?\b|\bER-\d{3,}\b/i.test(combined)) pushUniqueSignal(signals, "execution reports");
+	if (/##\s*result\b|\btask results?\b|\bER-\d{3,}\b/i.test(combined)) pushUniqueSignal(signals, "task results");
 
 	if (signals.length === 0) return undefined;
 
 	const slug =
 		combined.match(/docs\/features\/([a-z0-9][a-z0-9-]*)\b/i)?.[1] ??
+		combined.match(/\.features\/([a-z0-9][a-z0-9-]*)\b/i)?.[1] ??
 		combined.match(/--slug\s+([a-z0-9][a-z0-9-]*)\b/i)?.[1];
 	const workOrderId = combined.match(/\bWO-\d{3,}\b/i)?.[0]?.toUpperCase();
 	const packetDir = slug ? `docs/features/${slug}` : undefined;
 
 	let stage: FeaturePacketSuggestionState["stage"] = "status";
-	if (/missing execution report|done work order|status:\s*done|draft execution report|execution reports?/.test(lower)) {
-		stage = "report";
-	} else if (/ready work order|status:\s*ready|implement the ready work order/.test(lower)) {
+	if (/missing result|done task|done work order|status:\s*done|draft result|task results?|##\s*result/.test(lower)) {
+		stage = "result";
+	} else if (/ready task|ready work order|status:\s*ready|implement the ready task|implement the ready work order/.test(lower)) {
 		stage = "execute";
-	} else if (/draft work order|blocked work order|status:\s*(draft|blocked)|mark one ready|work-orders\//.test(lower)) {
+	} else if (/draft work order|blocked work order|status:\s*(draft|blocked)|mark one ready|work-orders\/|\.features\/[a-z0-9][a-z0-9-]*\/tasks\//.test(lower)) {
 		stage = "work-order-review";
 	} else if (/system-model\.md|solution design|execution slices|design-to-execution|model\/design/.test(lower)) {
 		stage = "design";
-	} else if (/strategy\.md|decisions\.md|proof\.md|open decisions?|incomplete proof|define proof|frame the strategy/.test(lower)) {
+	} else if (/strategy\.md|open questions?|frame the strategy|scope|success signal/.test(lower)) {
 		stage = "strategy";
-	} else if (/review\.md|strategy review|teach-back/.test(lower)) {
-		stage = "review";
 	} else if (/index\.html|learning view/.test(lower)) {
 		stage = "view";
 	}
@@ -385,34 +385,31 @@ export function extractFeaturePacketSuggestionState(conversationContext: string,
 function getFeaturePacketGuidance(featurePacketState?: FeaturePacketSuggestionState): string {
 	if (!featurePacketState?.active) return "";
 	const packet = featurePacketState.packetDir ?? "docs/features/<slug>";
-	const workOrder = featurePacketState.workOrderId ?? "<work-order>";
+	const taskRef = featurePacketState.workOrderId ?? "<task>";
 	const signals = featurePacketState.signals.length ? ` Signals: ${featurePacketState.signals.join(", ")}.` : "";
 	const base = `
-- Feature packet active: treat ${packet}/ as the strategic/source-design source of truth. Suggestions should advance Frame → Model/Design → Decide → Slice → Execute → Report → Review, not jump to coding when strategy/design/proof/work-order approval is missing.${signals}
-- If the current feature state is unclear, suggest reading ${packet}/ and identifying the next strategy/design/task/report update.`;
+- Feature packet active: treat ${packet}/ as the durable strategy/system-model source of truth. Suggestions should advance Frame → Model/Design → Slice → Execute → Result, not jump to coding when strategy, system model, or task approval is missing.${signals}
+- If the current feature state is unclear, suggest reading ${packet}/ and identifying the next strategy/design/task/result update.`;
 
 	switch (featurePacketState.stage) {
 		case "strategy":
 			return `${base}
-- Strategy/proof stage: prefer filling strategy.md and proof/decision gaps; when strategy is approved, suggest updating system-model.md before implementation.`;
+- Strategy stage: prefer filling strategy.md scope, success signal, constraints, and open questions; when strategy is approved, suggest updating system-model.md before implementation.`;
 		case "design":
 			return `${base}
-- Solution-design stage: suggest co-designing system-model.md, decisions.md, proof.md, and draft Work Orders without implementing.`;
+- Solution-design stage: suggest co-designing system-model.md and draft task briefs without implementing.`;
 		case "work-order-review":
 			return `${base}
-- Work-order review stage: suggest reviewing draft/blocked work orders, resolving ambiguity, and marking exactly one approved work order status: ready.`;
+- Task review stage: suggest reviewing draft/blocked task briefs, resolving ambiguity, and marking exactly one approved task status: ready.`;
 		case "execute":
 			return `${base}
-- Ready work-order stage: suggest executing the ready work order, preserving decisions, running proof, then creating the execution report for ${workOrder}.`;
-		case "report":
+- Ready task stage: suggest executing the ready task, running the task feedback loop, then updating the task's ## Result section for ${taskRef}.`;
+		case "result":
 			return `${base}
-- Execution-report stage: suggest creating/completing the execution report for ${workOrder}, recording repo-relative files, proof, deviations, and marking reports complete.`;
-		case "review":
-			return `${base}
-- Review stage: suggest updating review.md with final alignment, proof evidence, and follow-up decisions.`;
+- Task-result stage: suggest updating the task's ## Result section for ${taskRef}, recording changed files, feedback-loop results, deviations, and any context the next task needs.`;
 		case "view":
 			return `${base}
-- Learning-view stage: suggest regenerating or opening the packet dashboard after source docs/reports/diagrams change.`;
+- Learning-view stage: suggest regenerating or opening the packet dashboard after source docs/task results/diagrams change.`;
 		default:
 			return base;
 	}
@@ -432,7 +429,7 @@ function getWorkflowModeGuidance(workflowMode?: string): string {
 - In Deep³ mode, prefer maximum-quality prompts: reproduce or diagnose first, state tradeoffs, patch only if localized, and verify with focused + regression checks`;
 		case "fast":
 			return `
-- In Fast mode (GPT-5.5 no thinking), prefer tiny concrete actions with a cheap proof check`;
+- In Fast mode (GPT-5.5 no thinking), prefer tiny concrete actions with a cheap verification check`;
 		default:
 			return "";
 	}
@@ -492,7 +489,7 @@ A great prompt has up to 3 parts (combine naturally into 1-2 sentences):
 - HOW to verify / definition of done (prefer E2E: "curl the endpoint with sample payload", "run the CLI with real input" over just "run tests")
 - WHAT to reference or follow (include when specific files/patterns are relevant)
 
-Use an Action + proof shape by default: "Do X, then verify with Y." For behavior-changing edits, either ask the agent to call verification_plan first or name a concrete check.
+Use an Action + verification shape by default: "Do X, then verify with Y." For behavior-changing edits, either ask the agent to call verification_plan first or name a concrete check.
 
 Keep it concise: 10-45 words. One or two sentences max. Never exceed 240 characters.
 

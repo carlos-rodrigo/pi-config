@@ -4,9 +4,5 @@
   "title": "PR-Native Document Review Comments",
   "status": "implemented",
   "source": "migrated from legacy PRD/design docs",
-  "nextAction": "Use system-model.md for architecture context and proof.md for regression checks before changing PR review behavior.",
-  "verification": [
-    "npm run test:document-reviewer",
-    "bash scripts/verify.sh"
-  ]
+  "nextAction": "Use system-model.md for architecture context and task feedback loops for regression checks before changing PR review behavior."
 }

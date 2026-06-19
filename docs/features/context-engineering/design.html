@@ -1,0 +1,912 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Context Engineering — Feature Design</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page-100: #f4ecdf;
+      --surface-100: #fffaf1;
+      --surface-200: #fff6e6;
+      --surface-300: #f7e7cf;
+      --text-1000: #16211d;
+      --text-900: #43504a;
+      --text-700: #6a766f;
+      --border-400: #d8cbb8;
+      --border-500: #c5b49c;
+      --alpha-100: rgba(22, 33, 29, .05);
+      --alpha-200: rgba(22, 33, 29, .09);
+      --accent-100: #f3dccb;
+      --accent-700: #a8572a;
+      --accent-900: #5b2712;
+      --info-100: #dbeff3;
+      --info-700: #1d6174;
+      --success-100: #e1f0df;
+      --success-700: #3f7d4c;
+      --warning-100: #f5e7bf;
+      --warning-700: #946b1f;
+      --danger-100: #f4d9d6;
+      --danger-700: #a33b32;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-6: 24px;
+      --space-8: 32px;
+      --space-10: 40px;
+      --space-16: 64px;
+      --space-24: 96px;
+      --radius-sm: 6px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --radius-xl: 24px;
+      --radius-full: 9999px;
+      --shadow-card: 0 2px 2px rgba(61, 45, 31, .04), 0 12px 24px -20px rgba(61, 45, 31, .28);
+      --focus-ring: 0 0 0 2px var(--surface-100), 0 0 0 4px var(--info-700);
+      --content: 78ch;
+      --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: "Iowan Old Style", "New York", Charter, Georgia, serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --page-100: #151714;
+        --surface-100: #20241f;
+        --surface-200: #292d27;
+        --surface-300: #33372f;
+        --text-1000: #f7f0e4;
+        --text-900: #d5dacd;
+        --text-700: #aeb8ad;
+        --border-400: #42483f;
+        --border-500: #555d52;
+        --alpha-100: rgba(255, 255, 255, .06);
+        --alpha-200: rgba(255, 255, 255, .10);
+        --accent-100: #4b3329;
+        --accent-700: #f0a36f;
+        --accent-900: #ffd7bf;
+        --info-100: #1d3b42;
+        --info-700: #8dd6e8;
+        --success-100: #233d29;
+        --success-700: #a7d9a6;
+        --warning-100: #453a22;
+        --warning-700: #f0d37a;
+        --danger-100: #4a2928;
+        --danger-700: #ffaaa2;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, .18), 0 18px 36px -28px rgba(0, 0, 0, .72);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top left, color-mix(in srgb, var(--accent-700) 16%, transparent), transparent 34rem),
+        linear-gradient(180deg, var(--page-100), color-mix(in srgb, var(--page-100) 88%, var(--text-1000)));
+      color: var(--text-1000);
+      font-family: var(--sans);
+      line-height: 1.6;
+      text-rendering: optimizeLegibility;
+    }
+    a { color: var(--info-700); text-underline-offset: .18em; }
+    code, kbd { font-family: var(--mono); font-size: .92em; }
+    code {
+      background: color-mix(in srgb, var(--accent-100) 58%, transparent);
+      padding: .12rem .32rem;
+      border-radius: var(--radius-sm);
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: normal;
+    }
+    :where(a, button, summary, [tabindex]):focus-visible { outline: none; box-shadow: var(--focus-ring); }
+    .skip-link {
+      position: fixed;
+      left: var(--space-4);
+      top: var(--space-4);
+      transform: translateY(-180%);
+      background: var(--text-1000);
+      color: var(--surface-100);
+      padding: .7rem 1rem;
+      border-radius: var(--radius-full);
+      z-index: 10;
+    }
+    .skip-link:focus { transform: translateY(0); }
+    .hero {
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      padding: clamp(var(--space-8), 5vw, var(--space-16)) clamp(var(--space-4), 4vw, var(--space-10)) var(--space-8);
+    }
+    .eyebrow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+      align-items: center;
+      margin-bottom: var(--space-4);
+      color: var(--text-700);
+      font-size: .86rem;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: .18rem .62rem;
+      border: 1px solid var(--border-400);
+      border-radius: var(--radius-full);
+      background: color-mix(in srgb, var(--surface-100) 84%, transparent);
+      color: var(--text-700);
+      font-weight: 900;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+      font-size: .72rem;
+    }
+    .pill.review { background: var(--warning-100); color: var(--warning-700); border-color: color-mix(in srgb, var(--warning-700) 35%, var(--border-400)); }
+    .pill.complete { background: var(--success-100); color: var(--success-700); border-color: color-mix(in srgb, var(--success-700) 35%, var(--border-400)); }
+    h1, h2, h3 { line-height: 1.05; letter-spacing: -.035em; margin: 0; }
+    h1 {
+      max-width: 1120px;
+      font-family: var(--serif);
+      font-size: clamp(2.4rem, 6vw, 5.25rem);
+      font-weight: 760;
+    }
+    .subtitle {
+      max-width: 900px;
+      margin: var(--space-4) 0 0;
+      color: var(--text-700);
+      font-size: clamp(1.05rem, 2vw, 1.35rem);
+    }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr));
+      gap: var(--space-4);
+      margin-top: var(--space-8);
+      align-items: stretch;
+    }
+    .hero-card, .section-card, .rail-card, .toc, .figure-card {
+      min-width: 0;
+      background: color-mix(in srgb, var(--surface-100) 94%, transparent);
+      border: 1px solid var(--border-400);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-card);
+    }
+    .hero-card { padding: var(--space-6); }
+    .hero-card h2, .rail-card h2, .toc h2 {
+      font-family: var(--sans);
+      font-size: .78rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--accent-700);
+    }
+    .takeaways { display: grid; gap: var(--space-3); margin: var(--space-3) 0 0; padding: 0; list-style: none; }
+    .takeaways li { display: grid; grid-template-columns: 1.2rem minmax(0, 1fr); gap: var(--space-2); align-items: start; }
+    .takeaways li::before { content: "✦"; color: var(--accent-700); font-weight: 900; }
+    .takeaways li > span { min-width: 0; }
+    .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: var(--space-3); }
+    .meta {
+      min-height: 84px;
+      padding: var(--space-4);
+      border: 1px solid var(--border-400);
+      border-radius: var(--radius-lg);
+      background: color-mix(in srgb, var(--surface-200) 85%, transparent);
+    }
+    .meta span { display: block; color: var(--text-700); font-size: .74rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+    .meta strong { display: block; margin-top: var(--space-2); font-size: 1rem; line-height: 1.25; overflow-wrap: anywhere; }
+    .report-layout {
+      display: grid;
+      grid-template-columns: minmax(220px, 16rem) minmax(0, 1fr) minmax(260px, 19rem);
+      gap: clamp(var(--space-4), 2vw, var(--space-6));
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      padding: var(--space-4) clamp(var(--space-4), 3vw, var(--space-8)) var(--space-16);
+      align-items: start;
+    }
+    .toc, .review-rail { position: sticky; top: var(--space-4); }
+    .toc, .rail-card { padding: var(--space-4); }
+    .toc ol { list-style: none; padding: 0; margin: var(--space-3) 0 0; display: grid; gap: var(--space-1); }
+    .toc a {
+      display: block;
+      padding: .48rem .58rem;
+      border-radius: var(--radius-md);
+      color: var(--text-700);
+      text-decoration: none;
+      font-size: .92rem;
+    }
+    .toc a:hover, .toc a:focus-visible { background: var(--accent-100); color: var(--accent-900); }
+    main { display: grid; gap: var(--space-6); min-width: 0; }
+    .section-card { padding: clamp(var(--space-6), 4vw, var(--space-10)); scroll-margin-top: var(--space-6); }
+    .section-kicker {
+      display: inline-flex;
+      color: var(--accent-700);
+      font-weight: 900;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      font-size: .75rem;
+      margin-bottom: var(--space-3);
+    }
+    .section-card h2 { font-size: clamp(1.7rem, 3.4vw, 3rem); font-family: var(--serif); }
+    .section-card > p { max-width: var(--content); color: var(--text-700); font-size: 1.04rem; }
+    .section-card h3 { margin-top: var(--space-6); font-size: 1.15rem; letter-spacing: -.01em; }
+    .content-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--space-4); margin-top: var(--space-6); }
+    .mini-card, .callout, .decision, .requirement {
+      min-width: 0;
+      border: 1px solid var(--border-400);
+      border-radius: var(--radius-lg);
+      background: color-mix(in srgb, var(--surface-200) 76%, transparent);
+      padding: var(--space-4);
+    }
+    .mini-card h3, .decision h3, .requirement h3 { margin: 0 0 var(--space-2); }
+    .mini-card p, .decision p, .requirement p { margin: var(--space-2) 0 0; color: var(--text-700); }
+    .mini-card ul, .decision ul, .requirement ul { margin: var(--space-2) 0 0; padding-left: 1.1rem; color: var(--text-700); }
+    .callout { border-left: 6px solid var(--accent-700); margin-top: var(--space-4); }
+    .callout.warning { border-left-color: var(--warning-700); background: color-mix(in srgb, var(--warning-100) 66%, var(--surface-100)); }
+    .callout.success { border-left-color: var(--success-700); background: color-mix(in srgb, var(--success-100) 66%, var(--surface-100)); }
+    .callout.risk { border-left-color: var(--danger-700); background: color-mix(in srgb, var(--danger-100) 66%, var(--surface-100)); }
+    .id-chip, .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: .25rem;
+      padding: .12rem .44rem;
+      border-radius: var(--radius-full);
+      background: var(--accent-100);
+      color: var(--accent-900);
+      font-family: var(--mono);
+      font-size: .72rem;
+      font-weight: 800;
+      letter-spacing: .02em;
+      white-space: nowrap;
+    }
+    .tag.info { background: var(--info-100); color: var(--info-700); }
+    .tag.success { background: var(--success-100); color: var(--success-700); }
+    .tag.warning { background: var(--warning-100); color: var(--warning-700); }
+    figure { margin: 0; }
+    .figure-card { padding: var(--space-4); overflow: auto; margin-top: var(--space-6); }
+    .figure-card svg { display: block; width: 100%; min-width: min(900px, 100%); height: auto; }
+    figcaption { margin-top: var(--space-3); color: var(--text-700); font-size: .92rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: var(--space-4); font-size: .95rem; }
+    caption { text-align: left; color: var(--text-700); margin-bottom: var(--space-2); }
+    th, td { padding: .72rem .8rem; border-bottom: 1px solid var(--border-400); vertical-align: top; text-align: left; }
+    th { color: var(--accent-900); font-size: .78rem; letter-spacing: .06em; text-transform: uppercase; }
+    details { margin-top: var(--space-4); border: 1px solid var(--border-400); border-radius: var(--radius-lg); padding: .9rem 1rem; background: color-mix(in srgb, var(--surface-200) 70%, transparent); }
+    summary { cursor: pointer; font-weight: 800; color: var(--accent-900); border-radius: var(--radius-sm); }
+    .review-rail { display: grid; gap: var(--space-4); }
+    .rail-card ul { margin: var(--space-3) 0 0; padding-left: 1.1rem; color: var(--text-700); }
+    .rail-card li + li { margin-top: var(--space-2); }
+    [data-review-id] { position: relative; }
+    [data-review-id]:target { outline: 3px solid var(--accent-700); outline-offset: 6px; }
+    .review-label { display: inline-flex; margin-top: var(--space-4); color: var(--text-700); font-family: var(--mono); font-size: .72rem; }
+    footer { max-width: 1180px; margin: 0 auto; padding: 0 var(--space-6) var(--space-10); color: var(--text-700); font-size: .9rem; }
+
+    .svg-note { font-family: var(--sans); font-size: 13px; fill: var(--text-700); }
+    .svg-title { font-family: var(--sans); font-size: 17px; font-weight: 800; fill: var(--text-1000); }
+    .svg-label { font-family: var(--mono); font-size: 11px; font-weight: 800; fill: var(--text-700); }
+    .svg-small { font-family: var(--sans); font-size: 12px; fill: var(--text-700); }
+
+    .reveal { opacity: 1; transform: none; }
+    .js .reveal {
+      opacity: 0;
+      transform: translateY(14px);
+      transition: opacity 220ms ease, transform 260ms cubic-bezier(0.175, 0.885, 0.32, 1.1);
+      transition-delay: var(--reveal-delay, 0ms);
+    }
+    .js .reveal.is-visible { opacity: 1; transform: translateY(0); }
+    .js .reveal-group > * { --reveal-delay: 0ms; }
+    .js .reveal-group > *:nth-child(2) { --reveal-delay: 45ms; }
+    .js .reveal-group > *:nth-child(3) { --reveal-delay: 90ms; }
+    .js .reveal-group > *:nth-child(4) { --reveal-delay: 135ms; }
+
+    @media (max-width: 1500px) {
+      .report-layout { grid-template-columns: minmax(210px, 250px) minmax(0, 1fr); }
+      .review-rail {
+        grid-column: 2;
+        position: static;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+      }
+    }
+    @media (max-width: 980px) {
+      .report-layout { grid-template-columns: 1fr; }
+      .toc, .review-rail { position: static; grid-column: auto; }
+      .toc ol { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+    }
+    @media (max-width: 760px) {
+      .hero { padding: var(--space-10) var(--space-4) var(--space-6); }
+      .report-layout { padding-inline: var(--space-4); }
+      .section-card { border-radius: var(--radius-lg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+      .js .reveal { opacity: 1; transform: none; }
+    }
+    @media print {
+      body { background: white; color: black; }
+      .skip-link, .toc, .review-rail { display: none; }
+      .hero, .report-layout, footer { max-width: none; padding: 0; }
+      .report-layout { display: block; }
+      .section-card, .hero-card, .figure-card { box-shadow: none; break-inside: avoid; }
+      a { color: black; text-decoration: none; }
+      .reveal { opacity: 1 !important; transform: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="hero" data-review-id="summary">
+    <div class="eyebrow">
+      <span class="pill review">Review</span>
+      <span>Feature Design</span>
+      <span>Updated 2026-06-18</span>
+    </div>
+    <h1>Context Engineering</h1>
+    <p class="subtitle">A durable design for how Pi configuration keeps agents aligned across sessions: short always-loaded instructions, on-demand docs, task-local feedback loops, and deterministic verification backpressure.</p>
+
+    <div class="hero-grid reveal-group">
+      <section class="hero-card reveal" aria-labelledby="takeaways-title" data-review-id="summary.takeaways">
+        <h2 id="takeaways-title">Key Takeaways</h2>
+        <ul class="takeaways">
+          <li><span>Persistent knowledge lives in <code>AGENTS.md</code> and <code>docs/</code>; operational task state lives in ignored <code>.features/</code>.</span></li>
+          <li><span>Agents load context progressively: baseline rules first, then feature docs, playbooks, task briefs, and subagents only when useful.</span></li>
+          <li><span>Verification is a backpressure layer: passing checks stay quiet; failures are injected back into the agent loop with actionable output.</span></li>
+        </ul>
+      </section>
+      <section class="hero-card reveal" aria-labelledby="metadata-title" data-review-id="summary.metadata">
+        <h2 id="metadata-title">At A Glance</h2>
+        <div class="meta-grid">
+          <div class="meta"><span>Source Brief</span><strong><code>docs/features/context-engineering/strategy.md</code></strong></div>
+          <div class="meta"><span>System Notes</span><strong><code>docs/features/context-engineering/system-model.md</code></strong></div>
+          <div class="meta"><span>Status</span><strong>Implemented; design generated for review</strong></div>
+          <div class="meta"><span>Next Action</span><strong>Review architecture boundaries and migration note</strong></div>
+        </div>
+      </section>
+    </div>
+  </header>
+
+  <div class="report-layout">
+    <nav class="toc" aria-label="Table of contents">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#pattern-research">Pattern Research</a></li>
+        <li><a href="#design-thesis">Design Thesis</a></li>
+        <li><a href="#current-flow">Current Flow</a></li>
+        <li><a href="#intended-flow">Intended Flow</a></li>
+        <li><a href="#component-communication">Component Communication</a></li>
+        <li><a href="#domain-model">Domain Model</a></li>
+        <li><a href="#design-decisions">Design Decisions</a></li>
+        <li><a href="#operational-concerns">Operational Concerns</a></li>
+        <li><a href="#requirement-coverage">Requirement Coverage</a></li>
+        <li><a href="#tasks-and-feedback">Tasks And Feedback</a></li>
+        <li><a href="#open-questions">Open Questions</a></li>
+      </ol>
+    </nav>
+
+    <main id="main">
+      <section class="section-card reveal" id="pattern-research" aria-labelledby="pattern-research-title" data-review-id="pattern-research">
+        <span class="section-kicker">01 · Evidence</span>
+        <h2 id="pattern-research-title">Pattern Research</h2>
+        <p>External and repo-local patterns converge on the same design: treat agent context as a constrained runtime resource, keep durable sources small and explicit, and make verification deterministic instead of conversational.</p>
+        <div class="content-grid reveal-group">
+          <article class="mini-card reveal" data-review-id="pattern-research.intentional-compaction">
+            <h3>Frequent Intentional Compaction</h3>
+            <p>HumanLayer’s context-engineering guidance frames research, planning, implementation, and compaction artifacts as the way to keep agents in a productive context zone.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="pattern-research.backpressure">
+            <h3>Context-Efficient Backpressure</h3>
+            <p>Test/build output should collapse to a small success signal and expand only on failure. This maps directly to <code>scripts/run_silent.sh</code> and <code>scripts/verify.sh</code>.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="pattern-research.harness">
+            <h3>Harness Engineering</h3>
+            <p>Harness levers—agent instructions, skills, hooks, tools, and subagents—are treated as explicit architecture, not accidental configuration.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="pattern-research.memory-docs">
+            <h3>Persistent Memory Guidance</h3>
+            <p>Claude Code memory docs recommend concise project instructions and moving large or specialized procedures into progressively disclosed artifacts such as skills or path-scoped docs.</p>
+          </article>
+        </div>
+        <details data-review-id="pattern-research.sources">
+          <summary>Sources reviewed</summary>
+          <ul>
+            <li><a href="https://www.humanlayer.dev/blog/advanced-context-engineering">Advanced Context Engineering for Coding Agents</a></li>
+            <li><a href="https://www.humanlayer.dev/blog/context-efficient-backpressure">Context-Efficient Backpressure for Coding Agents</a></li>
+            <li><a href="https://www.humanlayer.dev/blog/skill-issue-harness-engineering-for-coding-agents">Harness Engineering for Coding Agents</a></li>
+            <li><a href="https://code.claude.com/docs/en/memory">Claude Code memory documentation</a></li>
+            <li>Repo anchors: <code>AGENTS.md</code>, <code>docs/README.md</code>, <code>docs/features/README.md</code>, <code>scripts/verify.sh</code>, <code>scripts/run_silent.sh</code>, <code>extensions/verify/index.ts</code>.</li>
+          </ul>
+        </details>
+        <span class="review-label">review: pattern-research</span>
+      </section>
+
+      <section class="section-card reveal" id="design-thesis" aria-labelledby="design-thesis-title" data-review-id="design-thesis">
+        <span class="section-kicker">02 · Direction</span>
+        <h2 id="design-thesis-title">Design Thesis</h2>
+        <p>The system is a layered context harness. Always-loaded instructions stay short; durable knowledge is stored in discoverable docs; task execution state is isolated in ignored task briefs; deterministic verification creates feedback pressure without filling the context window on success.</p>
+        <div class="callout success" data-review-id="design-thesis.summary">
+          <strong>Chosen shape:</strong>
+          <p>Use progressive disclosure plus deterministic checks, not a central knowledge graph, vector store, or chat-memory dependency.</p>
+        </div>
+        <figure class="figure-card reveal" data-review-id="design-thesis.diagram">
+          <svg viewBox="0 0 1040 610" role="img" aria-labelledby="architecture-title architecture-desc" xmlns="http://www.w3.org/2000/svg">
+            <title id="architecture-title">Context Engineering Layered Architecture</title>
+            <desc id="architecture-desc">A layered map showing always-loaded instructions, on-demand docs, task-local execution state, verification backpressure, and optional subagent context firewalls.</desc>
+            <defs>
+              <marker id="arrow-main" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                <path d="M0 0 L10 5 L0 10 z" fill="#a8572a" />
+              </marker>
+              <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                <path d="M0 0 L10 5 L0 10 z" fill="#1d6174" />
+              </marker>
+              <filter id="soft-shadow" x="-10%" y="-10%" width="120%" height="130%">
+                <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#3d2d1f" flood-opacity=".16" />
+              </filter>
+            </defs>
+
+            <rect x="22" y="24" width="996" height="548" rx="26" fill="var(--surface-200)" stroke="var(--border-400)" stroke-width="2" />
+            <text x="54" y="62" class="svg-label">LEGEND</text>
+            <rect x="54" y="78" width="20" height="12" rx="3" fill="var(--success-100)" stroke="var(--success-700)" />
+            <text x="82" y="89" class="svg-small">durable source of truth</text>
+            <rect x="248" y="78" width="20" height="12" rx="3" fill="var(--info-100)" stroke="var(--info-700)" />
+            <text x="276" y="89" class="svg-small">runtime/harness behavior</text>
+            <rect x="450" y="78" width="20" height="12" rx="3" fill="var(--warning-100)" stroke="var(--warning-700)" />
+            <text x="478" y="89" class="svg-small">task-local / ephemeral</text>
+            <path d="M685 84 H750" stroke="#a8572a" stroke-width="3" marker-end="url(#arrow-main)" />
+            <text x="764" y="89" class="svg-small">context handoff</text>
+
+            <g data-review-id="diagram.architecture.agent-entry">
+              <rect x="58" y="138" width="260" height="104" rx="18" fill="var(--info-100)" stroke="var(--info-700)" stroke-width="2.5" filter="url(#soft-shadow)" />
+              <text x="82" y="171" class="svg-title">Agent Entry</text>
+              <text x="82" y="197" class="svg-note">Pi session starts with concise</text>
+              <text x="82" y="217" class="svg-note"><tspan font-family="ui-monospace">AGENTS.md</tspan> commands and gates</text>
+            </g>
+
+            <g data-review-id="diagram.architecture.docs-layer">
+              <rect x="388" y="124" width="280" height="132" rx="18" fill="var(--success-100)" stroke="var(--success-700)" stroke-width="2.5" filter="url(#soft-shadow)" />
+              <text x="414" y="158" class="svg-title">Durable Docs Layer</text>
+              <text x="414" y="185" class="svg-note"><tspan font-family="ui-monospace">docs/README.md</tspan> for map</text>
+              <text x="414" y="205" class="svg-note"><tspan font-family="ui-monospace">docs/playbooks/</tspan> on demand</text>
+              <text x="414" y="225" class="svg-note"><tspan font-family="ui-monospace">docs/features/</tspan> when durable</text>
+            </g>
+
+            <g data-review-id="diagram.architecture.skills-tools">
+              <rect x="730" y="138" width="240" height="104" rx="18" fill="var(--info-100)" stroke="var(--info-700)" stroke-width="2.5" filter="url(#soft-shadow)" />
+              <text x="756" y="171" class="svg-title">Skills + Tools</text>
+              <text x="756" y="197" class="svg-note">Progressive instructions,</text>
+              <text x="756" y="217" class="svg-note">search, review, agent jobs</text>
+            </g>
+
+            <g data-review-id="diagram.architecture.task-layer">
+              <rect x="210" y="326" width="270" height="118" rx="18" fill="var(--warning-100)" stroke="var(--warning-700)" stroke-width="2.5" filter="url(#soft-shadow)" />
+              <text x="236" y="360" class="svg-title">Task Loop Layer</text>
+              <text x="236" y="386" class="svg-note"><tspan font-family="ui-monospace">.features/&lt;feature&gt;/tasks/</tspan></text>
+              <text x="236" y="406" class="svg-note">briefs, feedback loops, results</text>
+              <text x="236" y="426" class="svg-note">ignored by git; not durable docs</text>
+            </g>
+
+            <g data-review-id="diagram.architecture.feedback-layer">
+              <rect x="568" y="326" width="300" height="118" rx="18" fill="var(--info-100)" stroke="var(--info-700)" stroke-width="2.5" filter="url(#soft-shadow)" />
+              <text x="594" y="360" class="svg-title">Feedback Layer</text>
+              <text x="594" y="386" class="svg-note"><tspan font-family="ui-monospace">verification_plan</tspan> before edits</text>
+              <text x="594" y="406" class="svg-note"><tspan font-family="ui-monospace">scripts/verify.sh</tspan> final gate</text>
+              <text x="594" y="426" class="svg-note">agent_end auto-runs touched roots</text>
+            </g>
+
+            <g data-review-id="diagram.architecture.context-firewall">
+              <rect x="342" y="486" width="350" height="56" rx="18" fill="var(--surface-100)" stroke="var(--border-500)" stroke-width="2" stroke-dasharray="8 6" />
+              <text x="370" y="520" class="svg-title">Optional Context Firewall: researcher → oracle</text>
+            </g>
+
+            <path d="M318 190 C348 190 358 190 388 190" fill="none" stroke="#a8572a" stroke-width="3" marker-end="url(#arrow-main)" />
+            <text x="330" y="178" class="svg-small">loads only needed docs</text>
+            <path d="M668 190 C698 190 704 190 730 190" fill="none" stroke="#a8572a" stroke-width="3" marker-end="url(#arrow-main)" />
+            <text x="674" y="178" class="svg-small">activates when matched</text>
+            <path d="M528 256 C488 292 432 304 380 326" fill="none" stroke="#a8572a" stroke-width="3" marker-end="url(#arrow-main)" />
+            <text x="392" y="296" class="svg-small">task slicing when useful</text>
+            <path d="M480 385 H568" fill="none" stroke="#1d6174" stroke-width="3" marker-end="url(#arrow-blue)" />
+            <text x="494" y="374" class="svg-small">run checks</text>
+            <path d="M718 326 C690 286 632 266 582 256" fill="none" stroke="#1d6174" stroke-width="3" marker-end="url(#arrow-blue)" />
+            <text x="660" y="286" class="svg-small">failures become context</text>
+            <path d="M345 444 C390 478 438 482 500 486" fill="none" stroke="#a8572a" stroke-width="3" marker-end="url(#arrow-main)" />
+            <path d="M718 444 C672 478 612 482 546 486" fill="none" stroke="#a8572a" stroke-width="3" marker-end="url(#arrow-main)" />
+          </svg>
+          <figcaption>Color means ownership: green is durable source-of-truth documentation, blue is harness/runtime behavior, yellow is task-local operating state, and dashed borders mark optional context isolation.</figcaption>
+        </figure>
+        <span class="review-label">review: design-thesis</span>
+      </section>
+
+      <section class="section-card reveal" id="current-flow" aria-labelledby="current-flow-title" data-review-id="current-flow">
+        <span class="section-kicker">03 · Baseline</span>
+        <h2 id="current-flow-title">Current Flow</h2>
+        <p>The feature began from a failure mode: agents relied on chat memory, accumulated stale learning files, and produced noisy or skipped verification. The current repo has already implemented the replacement architecture, but these baseline risks explain why the design exists.</p>
+        <div class="content-grid reveal-group">
+          <article class="mini-card reveal" data-review-id="current-flow.context-loss">
+            <h3>Context Loss</h3>
+            <p>Without durable feature docs and concise entry instructions, an agent has to rediscover project rules or guess from stale conversation history.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="current-flow.noisy-output">
+            <h3>Noisy Verification</h3>
+            <p>Raw test output consumes context on success and can hide the one failure that matters when the system needs correction.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="current-flow.unbounded-memory">
+            <h3>Unbounded Learning Files</h3>
+            <p>Generic learning dumps do not reliably promote durable knowledge to the right place and eventually become low-signal context.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="current-flow.mixed-state">
+            <h3>Mixed Durable And Operational State</h3>
+            <p>Feature intent, architecture, task status, and verification evidence become hard to maintain when they live in the same artifact.</p>
+          </article>
+        </div>
+        <span class="review-label">review: current-flow</span>
+      </section>
+
+      <section class="section-card reveal" id="intended-flow" aria-labelledby="intended-flow-title" data-review-id="intended-flow">
+        <span class="section-kicker">04 · Target</span>
+        <h2 id="intended-flow-title">Intended Agent Flow</h2>
+        <p>An agent should move from minimal persistent context to focused source-of-truth docs, then into a small implementation slice with explicit checks. It should only write durable docs when new reusable knowledge is discovered.</p>
+        <figure class="figure-card reveal" data-review-id="intended-flow.diagram">
+          <svg viewBox="0 0 1040 520" role="img" aria-labelledby="flow-title flow-desc" xmlns="http://www.w3.org/2000/svg">
+            <title id="flow-title">Intended Agent Flow</title>
+            <desc id="flow-desc">A numbered workflow showing how an agent reads instructions, loads relevant docs, plans verification, implements a small slice, verifies, and updates durable knowledge only when appropriate.</desc>
+            <defs>
+              <marker id="arrow-flow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                <path d="M0 0 L10 5 L0 10 z" fill="#a8572a" />
+              </marker>
+            </defs>
+            <rect x="22" y="28" width="996" height="450" rx="26" fill="var(--surface-200)" stroke="var(--border-400)" stroke-width="2" />
+
+            <g data-review-id="diagram.flow.step-1">
+              <circle cx="98" cy="132" r="30" fill="var(--accent-100)" stroke="var(--accent-700)" stroke-width="2" />
+              <text x="98" y="139" text-anchor="middle" class="svg-title">1</text>
+              <rect x="146" y="92" width="210" height="82" rx="16" fill="var(--info-100)" stroke="var(--info-700)" stroke-width="2" />
+              <text x="166" y="123" class="svg-title">Read Entry Rules</text>
+              <text x="166" y="148" class="svg-note">nearest <tspan font-family="ui-monospace">AGENTS.md</tspan></text>
+            </g>
+
+            <g data-review-id="diagram.flow.step-2">
+              <circle cx="98" cy="256" r="30" fill="var(--accent-100)" stroke="var(--accent-700)" stroke-width="2" />
+              <text x="98" y="263" text-anchor="middle" class="svg-title">2</text>
+              <rect x="146" y="214" width="246" height="88" rx="16" fill="var(--success-100)" stroke="var(--success-700)" stroke-width="2" />
+              <text x="166" y="245" class="svg-title">Load Relevant Docs</text>
+              <text x="166" y="270" class="svg-note">playbook or feature packet only</text>
+            </g>
+
+            <g data-review-id="diagram.flow.step-3">
+              <circle cx="98" cy="382" r="30" fill="var(--accent-100)" stroke="var(--accent-700)" stroke-width="2" />
+              <text x="98" y="389" text-anchor="middle" class="svg-title">3</text>
+              <rect x="146" y="340" width="246" height="88" rx="16" fill="var(--info-100)" stroke="var(--info-700)" stroke-width="2" />
+              <text x="166" y="371" class="svg-title">Define Feedback Loop</text>
+              <text x="166" y="396" class="svg-note"><tspan font-family="ui-monospace">verification_plan</tspan> when behavior changes</text>
+            </g>
+
+            <g data-review-id="diagram.flow.step-4">
+              <rect x="500" y="92" width="250" height="82" rx="16" fill="var(--warning-100)" stroke="var(--warning-700)" stroke-width="2" />
+              <text x="524" y="123" class="svg-title">4 · Work Small Slice</text>
+              <text x="524" y="148" class="svg-note">task brief if delegation/resume needed</text>
+            </g>
+
+            <g data-review-id="diagram.flow.step-5">
+              <rect x="500" y="214" width="250" height="88" rx="16" fill="var(--info-100)" stroke="var(--info-700)" stroke-width="2" />
+              <text x="524" y="245" class="svg-title">5 · Verify Quietly</text>
+              <text x="524" y="270" class="svg-note"><tspan font-family="ui-monospace">run_silent</tspan> and focused checks</text>
+            </g>
+
+            <g data-review-id="diagram.flow.step-6">
+              <rect x="500" y="340" width="250" height="88" rx="16" fill="var(--info-100)" stroke="var(--info-700)" stroke-width="2" />
+              <text x="524" y="371" class="svg-title">6 · Final Gate</text>
+              <text x="524" y="396" class="svg-note"><tspan font-family="ui-monospace">bash scripts/verify.sh</tspan></text>
+            </g>
+
+            <g data-review-id="diagram.flow.step-7">
+              <rect x="820" y="214" width="160" height="88" rx="16" fill="var(--success-100)" stroke="var(--success-700)" stroke-width="2" />
+              <text x="844" y="245" class="svg-title">7 · Promote</text>
+              <text x="844" y="270" class="svg-note">only durable learnings</text>
+            </g>
+
+            <path d="M392 132 H500" fill="none" stroke="#a8572a" stroke-width="3" marker-end="url(#arrow-flow)" />
+            <path d="M392 258 H500" fill="none" stroke="#a8572a" stroke-width="3" marker-end="url(#arrow-flow)" />
+            <path d="M392 384 H500" fill="none" stroke="#a8572a" stroke-width="3" marker-end="url(#arrow-flow)" />
+            <path d="M625 174 V214" fill="none" stroke="#a8572a" stroke-width="3" marker-end="url(#arrow-flow)" />
+            <path d="M625 302 V340" fill="none" stroke="#a8572a" stroke-width="3" marker-end="url(#arrow-flow)" />
+            <path d="M750 258 H820" fill="none" stroke="#a8572a" stroke-width="3" marker-end="url(#arrow-flow)" />
+            <path d="M900 302 C900 426 760 456 638 428" fill="none" stroke="var(--success-700)" stroke-width="3" stroke-dasharray="8 6" marker-end="url(#arrow-flow)" />
+            <text x="790" y="438" class="svg-small">docs update only if reusable knowledge changed</text>
+          </svg>
+          <figcaption>The intended flow keeps the parent context lean. Detailed research, review, and implementation state can move through task briefs or subagents without becoming permanent startup context.</figcaption>
+        </figure>
+        <span class="review-label">review: intended-flow</span>
+      </section>
+
+      <section class="section-card reveal" id="component-communication" aria-labelledby="component-communication-title" data-review-id="component-communication">
+        <span class="section-kicker">05 · Boundaries</span>
+        <h2 id="component-communication-title">Component Communication</h2>
+        <p>The architecture is file- and hook-oriented. There is no service boundary, schema, or database; the important contracts are which artifacts are loaded, when tools run, and where outcomes are written.</p>
+        <table>
+          <caption>Boundary contracts for context engineering artifacts</caption>
+          <thead>
+            <tr>
+              <th scope="col">Component</th>
+              <th scope="col">Owns</th>
+              <th scope="col">Talks To</th>
+              <th scope="col">Contract</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr data-review-id="component.agents-md">
+              <td><code>AGENTS.md</code></td>
+              <td>Always-loaded project rules and commands</td>
+              <td>Agent session startup</td>
+              <td>Stay concise; point to docs/playbooks instead of embedding long procedures.</td>
+            </tr>
+            <tr data-review-id="component.docs">
+              <td><code>docs/</code></td>
+              <td>Durable agent-facing knowledge</td>
+              <td>Skills, feature design, implementation agents</td>
+              <td>Loaded on demand; updated only for reusable knowledge or current architecture.</td>
+            </tr>
+            <tr data-review-id="component.tasks">
+              <td><code>.features/&lt;feature&gt;/tasks/</code></td>
+              <td>Operational task state and results</td>
+              <td>implement-task, reviewers, resumable sessions</td>
+              <td>Ignored by git; task-local feedback loops and evidence live here.</td>
+            </tr>
+            <tr data-review-id="component.verify-script">
+              <td><code>scripts/verify.sh</code></td>
+              <td>Final regression gate</td>
+              <td>verify extension, manual agent commands</td>
+              <td>Silent on success; verbose on failure through <code>run_silent</code>.</td>
+            </tr>
+            <tr data-review-id="component.verify-extension">
+              <td><code>extensions/verify/index.ts</code></td>
+              <td>Preflight nudges and agent-end backpressure</td>
+              <td>Pi lifecycle, touched paths, project roots</td>
+              <td>Tracks edit/write paths; runs nearest verify gate; sends follow-up only on failure.</td>
+            </tr>
+          </tbody>
+        </table>
+        <span class="review-label">review: component-communication</span>
+      </section>
+
+      <section class="section-card reveal" id="domain-model" aria-labelledby="domain-model-title" data-review-id="domain-model">
+        <span class="section-kicker">06 · Concepts</span>
+        <h2 id="domain-model-title">Domain Model</h2>
+        <p>The domain model separates stable knowledge from work-in-progress state. This keeps review, compaction, and verification artifacts in the smallest useful scope.</p>
+        <div class="content-grid reveal-group">
+          <article class="mini-card reveal" data-review-id="domain.entry-instructions">
+            <h3>Entry Instructions</h3>
+            <p>Short, universal rules loaded at session start. In this repo, <code>AGENTS.md</code> names commands, search ladder, playbook loading rules, and verification behavior.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="domain.playbook">
+            <h3>Playbook</h3>
+            <p>On-demand reusable procedure under <code>docs/playbooks/</code>. It should be loaded only when the task matches the topic.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="domain.feature-artifact">
+            <h3>Feature Artifact</h3>
+            <p>Durable source of truth for product or architecture context. Current design direction favors reviewable <code>prd.html</code> and <code>design.html</code>; this feature was sourced from legacy <code>strategy.md</code>/<code>system-model.md</code>.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="domain.task-brief">
+            <h3>Task Brief</h3>
+            <p>Agent-readable, ignored Markdown under <code>.features/</code> with goal, files, risks, feedback loop, and result evidence for one vertical slice.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="domain.feedback-loop">
+            <h3>Feedback Loop</h3>
+            <p>A predeclared proof path: targeted checks, expected result, edge cases, manual check if needed, and final regression gate.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="domain.context-firewall">
+            <h3>Context Firewall</h3>
+            <p>Researcher/oracle agent jobs isolate broad search or second-opinion review so the parent session receives compact, decision-grade summaries.</p>
+          </article>
+        </div>
+        <span class="review-label">review: domain-model</span>
+      </section>
+
+      <section class="section-card reveal" id="design-decisions" aria-labelledby="design-decisions-title" data-review-id="design-decisions">
+        <span class="section-kicker">07 · Decisions</span>
+        <h2 id="design-decisions-title">Design Decisions</h2>
+        <p>The primary tradeoff is intentional structure over automatic memory accumulation. The architecture chooses small explicit artifacts and deterministic hooks instead of broad implicit context.</p>
+        <div class="content-grid reveal-group">
+          <article class="decision reveal" data-review-id="decision.progressive-disclosure">
+            <h3><span class="id-chip">D1</span> Progressive Disclosure Over Startup Dumps</h3>
+            <p><strong>Decision:</strong> Keep <code>AGENTS.md</code> compact and route recurring procedures to playbooks and skills.</p>
+            <p><strong>Tradeoff:</strong> Agents must search/read the right docs, but startup context remains small and relevant.</p>
+          </article>
+          <article class="decision reveal" data-review-id="decision.no-knowledge-graph">
+            <h3><span class="id-chip">D2</span> File-Based Docs Over Knowledge Graph</h3>
+            <p><strong>Decision:</strong> Use human-reviewable files in <code>docs/</code> rather than building a custom vector store or feature-doc graph.</p>
+            <p><strong>Tradeoff:</strong> Less automation, more direct reviewability and lower maintenance cost.</p>
+          </article>
+          <article class="decision reveal" data-review-id="decision.task-local-results">
+            <h3><span class="id-chip">D3</span> Task-Local Results Over Durable Reports</h3>
+            <p><strong>Decision:</strong> Verification evidence belongs in task <code>## Result</code> sections unless it changes durable knowledge.</p>
+            <p><strong>Tradeoff:</strong> Completed task evidence is not part of the docs site, but durable docs stay concise.</p>
+          </article>
+          <article class="decision reveal" data-review-id="decision.silent-success">
+            <h3><span class="id-chip">D4</span> Silent Success, Verbose Failure</h3>
+            <p><strong>Decision:</strong> Verification output is swallowed on success and expanded on failure through scripts and lifecycle hooks.</p>
+            <p><strong>Tradeoff:</strong> Humans get less celebratory output, agents preserve context for actual failures.</p>
+          </article>
+        </div>
+        <div class="callout warning" data-review-id="decision.migration-note">
+          <strong>Migration note:</strong>
+          <p>This source feature still uses legacy <code>strategy.md</code> and <code>system-model.md</code>. Current planning skills now prefer <code>prd.html</code> and <code>design.html</code>. This document is the HTML design artifact; migrating the source strategy into <code>prd.html</code> is optional and should be a separate docs-cleanup decision.</p>
+        </div>
+        <span class="review-label">review: design-decisions</span>
+      </section>
+
+      <section class="section-card reveal" id="operational-concerns" aria-labelledby="operational-concerns-title" data-review-id="operational-concerns">
+        <span class="section-kicker">08 · Operations</span>
+        <h2 id="operational-concerns-title">Operational Concerns</h2>
+        <p>This feature changes agent workflow rather than runtime user behavior. Operational quality is measured by whether agents find the right source, avoid noisy context, and cannot silently finish after breaking checks.</p>
+        <table>
+          <caption>Operational paths and guardrails</caption>
+          <thead>
+            <tr>
+              <th scope="col">Concern</th>
+              <th scope="col">Design Response</th>
+              <th scope="col">Evidence Anchor</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr data-review-id="operational.rollout">
+              <td>Rollout</td>
+              <td>Docs and scripts are repo-local; agents adopt them immediately through <code>AGENTS.md</code> and Pi extension loading.</td>
+              <td><code>AGENTS.md</code>, <code>package.json</code></td>
+            </tr>
+            <tr data-review-id="operational.rollback">
+              <td>Rollback</td>
+              <td>Revert docs/script/extension changes. No persistent data migration or external service contract exists.</td>
+              <td>Git history</td>
+            </tr>
+            <tr data-review-id="operational.observability">
+              <td>Observability</td>
+              <td>Passing checks are silent by design; failures appear as command output or Pi follow-up messages.</td>
+              <td><code>scripts/run_silent.sh</code>, <code>extensions/verify/index.ts</code></td>
+            </tr>
+            <tr data-review-id="operational.security">
+              <td>Safety</td>
+              <td>Scope is local files and local verification. No production services, secrets, auth, or financial paths are introduced.</td>
+              <td>Feature non-goals</td>
+            </tr>
+          </tbody>
+        </table>
+        <span class="review-label">review: operational-concerns</span>
+      </section>
+
+      <section class="section-card reveal" id="requirement-coverage" aria-labelledby="requirement-coverage-title" data-review-id="requirement-coverage">
+        <span class="section-kicker">09 · Coverage</span>
+        <h2 id="requirement-coverage-title">Requirement Coverage</h2>
+        <p>The design maps every strategy goal and success criterion to an owning artifact or workflow surface.</p>
+        <table>
+          <caption>Strategy goals mapped to design elements</caption>
+          <thead>
+            <tr>
+              <th scope="col">Goal</th>
+              <th scope="col">Design Coverage</th>
+              <th scope="col">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr data-review-id="coverage.goal-1">
+              <td>Keep agent-facing knowledge in <code>docs/</code> and short <code>AGENTS.md</code> files.</td>
+              <td>Entry instructions point to docs; docs map separates playbooks and feature artifacts.</td>
+              <td><span class="tag success">Covered</span></td>
+            </tr>
+            <tr data-review-id="coverage.goal-2">
+              <td>Use repo-local playbooks for recurring implementation patterns.</td>
+              <td><code>docs/playbooks/</code> is an on-demand procedure layer loaded during matching tasks.</td>
+              <td><span class="tag success">Covered</span></td>
+            </tr>
+            <tr data-review-id="coverage.goal-3">
+              <td>Use deterministic backpressure through <code>scripts/verify.sh</code> and <code>scripts/run_silent.sh</code>.</td>
+              <td>Feedback layer wraps test output and auto-runs final verification for touched roots.</td>
+              <td><span class="tag success">Covered</span></td>
+            </tr>
+            <tr data-review-id="coverage.goal-4">
+              <td>Keep feature knowledge in durable packets when worth preserving.</td>
+              <td>Feature artifact domain separates durable product/system context from ephemeral task results.</td>
+              <td><span class="tag warning">Transitioning</span></td>
+            </tr>
+            <tr data-review-id="coverage.goal-5">
+              <td>Keep operational task state in ignored <code>.features/</code> only when needed.</td>
+              <td>Task loop layer owns task briefs, active state, feedback loops, and result evidence.</td>
+              <td><span class="tag success">Covered</span></td>
+            </tr>
+          </tbody>
+        </table>
+        <span class="review-label">review: requirement-coverage</span>
+      </section>
+
+      <section class="section-card reveal" id="tasks-and-feedback" aria-labelledby="tasks-and-feedback-title" data-review-id="tasks-and-feedback">
+        <span class="section-kicker">10 · Execution</span>
+        <h2 id="tasks-and-feedback-title">Tasks And Feedback Hooks</h2>
+        <p>The original implementation was split into nine task briefs under <code>.features/context-engineering/tasks/</code>. Future changes should create task briefs only when they need delegation, sequencing, or resumability.</p>
+        <div class="content-grid reveal-group">
+          <article class="mini-card reveal" data-review-id="tasks.feedback-docs-only">
+            <h3>Docs-Only Changes</h3>
+            <p>Use targeted parse/link checks where possible, then run <code>bash scripts/verify.sh --quick</code> or full verification if touched project hooks should prove stability.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="tasks.feedback-extension">
+            <h3>Extension Changes</h3>
+            <p>Use <code>verification_plan</code>, run the relevant <code>npm run test:&lt;name&gt;</code>, then the repo gate. Verify command/tool/hook registration and malformed input behavior.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="tasks.feedback-skills">
+            <h3>Skill/Workflow Changes</h3>
+            <p>Check for stale terminology, read linked docs, and validate that task feedback loops still point to concrete commands and result evidence.</p>
+          </article>
+          <article class="mini-card reveal" data-review-id="tasks.feedback-final-gate">
+            <h3>Final Gate</h3>
+            <p><code>bash scripts/verify.sh</code> is the release gate. It should remain silent on success and verbose on failure.</p>
+          </article>
+        </div>
+        <span class="review-label">review: tasks-and-feedback</span>
+      </section>
+
+      <section class="section-card reveal" id="open-questions" aria-labelledby="open-questions-title" data-review-id="open-questions">
+        <span class="section-kicker">11 · Review</span>
+        <h2 id="open-questions-title">Open Questions</h2>
+        <p>No implementation blocker remains. The only design-review question is whether to migrate this legacy feature packet from <code>strategy.md</code>/<code>system-model.md</code> into the newer <code>prd.html</code>/<code>design.html</code> artifact model.</p>
+        <div class="callout warning" data-review-id="open-questions.legacy-source">
+          <strong>Review question:</strong>
+          <p>Should <code>docs/features/context-engineering/strategy.md</code> stay as the historical source brief, or should a follow-up docs task create <code>prd.html</code> and mark the Markdown strategy/system model as legacy?</p>
+        </div>
+        <span class="review-label">review: open-questions</span>
+      </section>
+    </main>
+
+    <aside class="review-rail" aria-label="Review guide">
+      <section class="rail-card reveal" data-review-id="review-guide">
+        <h2>Review These First</h2>
+        <ul>
+          <li><a href="#design-thesis">Design Thesis</a> — confirm the layered harness model is right.</li>
+          <li><a href="#design-decisions">Design Decisions</a> — confirm tradeoffs and migration note.</li>
+          <li><a href="#requirement-coverage">Requirement Coverage</a> — confirm each strategy goal is mapped.</li>
+        </ul>
+      </section>
+      <section class="rail-card reveal" data-review-id="review-anchors-summary">
+        <h2>Review Anchors</h2>
+        <ul>
+          <li><code>diagram.architecture.*</code> for architecture diagram nodes.</li>
+          <li><code>decision.*</code> for durable design choices.</li>
+          <li><code>coverage.goal-*</code> for strategy coverage rows.</li>
+        </ul>
+      </section>
+      <section class="rail-card reveal" data-review-id="readiness-summary">
+        <h2>Readiness</h2>
+        <ul>
+          <li><span class="tag success">0 blockers</span></li>
+          <li><span class="tag warning">1 migration question</span></li>
+          <li><span class="tag info">Review with /review-html</span></li>
+        </ul>
+      </section>
+    </aside>
+  </div>
+
+  <footer>
+    Generated as a self-contained HTML design artifact from <code>docs/features/context-engineering/strategy.md</code> and <code>docs/features/context-engineering/system-model.md</code>. Preserve <code>data-review-id</code> anchors when editing so sidecar review comments remain meaningful.
+  </footer>
+
+  <script>
+    document.documentElement.classList.add('js');
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const revealItems = Array.from(document.querySelectorAll('.reveal'));
+
+    if (reduceMotion || !('IntersectionObserver' in window)) {
+      revealItems.forEach((item) => item.classList.add('is-visible'));
+    } else {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add('is-visible');
+          observer.unobserve(entry.target);
+        });
+      }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+
+      revealItems.forEach((item) => observer.observe(item));
+    }
+  </script>
+</body>
+</html>

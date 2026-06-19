@@ -37,9 +37,9 @@ Suggestions follow a "devil's advocate" approach to verification:
 - **E2E bias**: Prefer verification that hits real boundaries (curl the endpoint, run CLI with real input) over just "run tests"
 - **Fixtures from reality**: Suggest using real inputs from docs/API samples, not agent-generated test data
 - **Challenge the implementation**: Verification should prove the code works to someone who didn't write it
-- **Action + proof**: Suggestions should push the next step forward and include how to prove it worked
+- **Action + verification**: Suggestions should push the next step forward and include how to verify it worked
 - **Preflight when coding**: For behavior-changing edits, suggestions can ask the agent to call `verification_plan` before editing
-- **Feature-packet aware**: When a `docs/features/<slug>/` packet, work order, or execution report is in the conversation, suggestions can point to the next strategy/design/task/report/review action for the file-based packet flow
+- **Feature-packet aware**: When a `docs/features/<slug>/` packet or `.features/<slug>/tasks/` brief is in the conversation, suggestions can point to the next strategy/design/task/result action for the file-based packet flow
 
 This addresses the blind spot problem: when an agent writes code AND writes unit tests, both can share the same misconception.
 
@@ -82,7 +82,7 @@ Example: If the agent says "Done! I've created the webhook handler" without ment
 - **Fallback model:** `openai-codex/gpt-5.4` with low thinking (if primary unavailable or unsupported)
 - State (enabled/disabled, model) persists across session restarts
 - Agent mode context (smart/deep2/deep3/fast) is included in the suggestion prompt for relevance:
-  - `fast`: GPT-5.5 with thinking off for tiny actions + cheap proof check
+  - `fast`: GPT-5.5 with thinking off for tiny actions + cheap verification check
   - `smart`: narrow next action + focused check
   - `deep`/`deep2`: outcome/constraints + `verification_plan` or focused/regression checks
   - `deep3`: reproduce/diagnose first, patch only if localized, then focused + regression checks

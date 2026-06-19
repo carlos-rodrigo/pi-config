@@ -4,7 +4,7 @@
 
 ## Overview
 
-The document-reviewer extension provides browser-based review with inline commenting for markdown files and pull requests. It runs a localhost server that renders documents and collects comments, then exports them back to the source file or PR.
+The document-reviewer extension provides browser-based review with inline commenting for markdown files, HTML files, and pull requests. It runs a localhost server that renders documents and collects comments, then exports them back to the markdown source, an HTML sidecar review file, or a PR review.
 
 ## Patterns
 
@@ -43,9 +43,10 @@ Model clipboard/export flow as explicit states: `copied`, `manual-copy`, `empty`
 
 ### PR mode vs document mode
 
-Both modes share the review UI but differ in:
-- **Document mode:** Comments are inserted as `<!-- REVIEW: ... -->` annotations into the original file
-- **PR mode:** Comments are collected and can be submitted as PR review comments
+Modes share comment APIs but differ in rendering and export behavior:
+- **Markdown document mode:** Comments are inserted as `<!-- REVIEW: ... -->` annotations into the original markdown file.
+- **HTML document mode:** The source HTML is served as the top-level review page, not an iframe. The server strips source scripts/base tags, applies a CSP nonce for the review overlay, preserves normal hash navigation, and exports comments to `<name>.review.md` without modifying the source HTML. Prefer stable `data-review-id` anchors when present.
+- **PR mode:** Comments are collected and can be submitted as PR review comments.
 
 Lift payload builders and mode-specific copy into exported pure helpers for testability.
 
