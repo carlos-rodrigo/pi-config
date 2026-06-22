@@ -4,429 +4,261 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{{TITLE}}</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --page-100: #f4ecdf;
-      --surface-100: #fffaf1;
-      --surface-200: #fff6e6;
-      --surface-300: #f8ead5;
-      --text-1000: #17211d;
-      --text-900: #48554f;
-      --text-700: #657069;
-      --border-400: #d9cbb8;
-      --border-500: #c7b7a1;
-      --alpha-100: rgba(23, 33, 29, .05);
-      --alpha-200: rgba(23, 33, 29, .09);
-      --accent-100: #f3dccb;
-      --accent-700: #a8572a;
-      --accent-900: #5b2712;
-      --owner-a-100: #e4f2df;
-      --owner-a-700: #2f7d4a;
-      --owner-b-100: #ebe7ff;
-      --owner-b-700: #5a4ab3;
-      --owner-c-100: #fff0d8;
-      --owner-c-700: #bf6b16;
-      --boundary-100: #dbeff3;
-      --boundary-700: #1d6174;
-      --danger-100: #f4d9d6;
-      --danger-700: #a33b32;
-      --space-2: 8px;
-      --space-3: 12px;
-      --space-4: 16px;
-      --space-6: 24px;
-      --space-8: 32px;
-      --space-10: 40px;
-      --space-16: 64px;
-      --radius-sm: 6px;
-      --radius-md: 12px;
-      --radius-lg: 16px;
-      --radius-xl: 24px;
-      --radius-full: 9999px;
-      --shadow-card: 0 2px 2px rgba(61, 45, 31, .04), 0 12px 24px -20px rgba(61, 45, 31, .28);
-      --focus-ring: 0 0 0 2px var(--surface-100), 0 0 0 4px var(--boundary-700);
-      --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-      --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      --serif: "Iowan Old Style", "New York", Charter, Georgia, serif;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      :root {
-        color-scheme: dark;
-        --page-100: #151714;
-        --surface-100: #20241f;
-        --surface-200: #292d27;
-        --surface-300: #33372f;
-        --text-1000: #f7f0e4;
-        --text-900: #d5dacd;
-        --text-700: #bac2b7;
-        --border-400: #444a41;
-        --border-500: #555d52;
-        --alpha-100: rgba(255, 255, 255, .06);
-        --alpha-200: rgba(255, 255, 255, .10);
-        --accent-100: #4b3329;
-        --accent-700: #f0a36f;
-        --accent-900: #ffd7bf;
-        --owner-a-100: #213829;
-        --owner-b-100: #292541;
-        --owner-c-100: #3f2c1b;
-        --boundary-100: #1d3b42;
-        --danger-100: #4a2928;
-        --danger-700: #ffaaa2;
-        --shadow-card: 0 1px 2px rgba(0, 0, 0, .18), 0 18px 36px -28px rgba(0, 0, 0, .72);
-      }
-    }
-
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    body {
-      margin: 0;
-      background:
-        radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent-700) 18%, transparent), transparent 32rem),
-        linear-gradient(180deg, var(--page-100), color-mix(in srgb, var(--page-100) 88%, var(--text-1000)));
-      color: var(--text-1000);
-      font-family: var(--sans);
-      line-height: 1.55;
-      text-rendering: optimizeLegibility;
-    }
-    a { color: var(--boundary-700); text-underline-offset: .18em; }
-    code { padding: .12rem .32rem; border-radius: var(--radius-sm); background: var(--accent-100); font-family: var(--mono); overflow-wrap: anywhere; }
-    :where(a, button, summary, [tabindex]):focus-visible { outline: none; box-shadow: var(--focus-ring); }
-    .skip-link {
-      position: fixed;
-      left: var(--space-4);
-      top: var(--space-4);
-      transform: translateY(-180%);
-      background: var(--text-1000);
-      color: var(--surface-100);
-      padding: .7rem 1rem;
-      border-radius: var(--radius-full);
-      z-index: 20;
-    }
-    .skip-link:focus { transform: translateY(0); }
-
-    .wrap { max-width: 1540px; margin: 0 auto; padding: var(--space-10) var(--space-6) var(--space-16); }
-    .hero {
-      display: grid;
-      grid-template-columns: minmax(0, 1.15fr) minmax(280px, .85fr);
-      gap: var(--space-6);
-      align-items: end;
-      margin-bottom: var(--space-6);
-    }
-    .eyebrow {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--space-2);
-      color: var(--text-700);
-      font-size: .78rem;
-      font-weight: 850;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-      margin-bottom: var(--space-3);
-    }
-    .pill {
-      display: inline-flex;
-      min-height: 28px;
-      align-items: center;
-      padding: .18rem .58rem;
-      border: 1px solid var(--border-400);
-      border-radius: var(--radius-full);
-      background: color-mix(in srgb, var(--surface-100) 86%, transparent);
-    }
-    h1, h2, h3 { margin: 0; line-height: 1.05; letter-spacing: -.035em; }
-    h1 {
-      max-width: 980px;
-      font-family: var(--serif);
-      font-size: clamp(2.35rem, 6vw, 5.2rem);
-      font-weight: 760;
-      letter-spacing: -.045em;
-    }
-    .subtitle {
-      max-width: 820px;
-      margin: var(--space-4) 0 0;
-      color: var(--text-700);
-      font-size: clamp(1rem, 1.8vw, 1.22rem);
-    }
-    .read-card, .canvas-card, .note-card, .toc {
-      background: color-mix(in srgb, var(--surface-100) 94%, transparent);
-      border: 1px solid var(--border-400);
-      border-radius: var(--radius-xl);
-      box-shadow: var(--shadow-card);
-    }
-    .read-card, .toc { padding: var(--space-6); }
-    .read-card h2, .note-card h2, .toc h2 {
-      margin: 0 0 var(--space-3);
-      color: var(--accent-700);
-      font-size: .78rem;
-      font-weight: 850;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-    }
-    .read-card p, .note-card p { margin: 0; color: var(--text-700); }
-    .toc ol { display: grid; gap: 4px; margin: var(--space-3) 0 0; padding: 0; list-style: none; }
-    .toc a { display: block; padding: .48rem .58rem; border-radius: var(--radius-md); color: var(--text-700); text-decoration: none; }
-    .toc a:hover, .toc a:focus-visible { background: var(--accent-100); color: var(--accent-900); }
-
-    .layout { display: grid; grid-template-columns: minmax(210px, 250px) minmax(0, 1fr); gap: var(--space-6); align-items: start; }
-    .toc { position: sticky; top: var(--space-4); }
-    main { display: grid; gap: var(--space-6); min-width: 0; }
-    .canvas-card { overflow: hidden; scroll-margin-top: var(--space-6); }
-    .canvas-toolbar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--space-3);
-      justify-content: space-between;
-      align-items: center;
-      padding: var(--space-4);
-      border-bottom: 1px solid var(--border-400);
-      background: color-mix(in srgb, var(--surface-100) 78%, var(--surface-200));
-    }
-    .canvas-toolbar strong { font-size: .9rem; }
-    .canvas-toolbar span { color: var(--text-700); font-size: .9rem; }
-    .canvas-scroll {
-      overflow: auto;
-      background:
-        linear-gradient(var(--alpha-100) 1px, transparent 1px),
-        linear-gradient(90deg, var(--alpha-100) 1px, transparent 1px),
-        var(--surface-200);
-      background-size: 28px 28px;
-    }
-    svg { display: block; width: 100%; min-width: 1280px; height: auto; }
-
-    .legend {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--space-3);
-      padding: var(--space-4);
-      border-top: 1px solid var(--border-400);
-      color: var(--text-700);
-      font-size: .88rem;
-      background: color-mix(in srgb, var(--surface-100) 88%, transparent);
-    }
-    .legend span { display: inline-flex; align-items: center; gap: var(--space-2); }
-    .swatch { width: 1.2rem; height: .72rem; border-radius: var(--radius-sm); border: 2px solid currentColor; display: inline-block; }
-
-    .notes-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
-    .note-card { padding: var(--space-6); }
-    .review-label { color: var(--text-700); font-family: var(--mono); font-size: .72rem; }
-    footer { max-width: 1180px; margin: 0 auto; padding: var(--space-8) 0 0; color: var(--text-700); font-size: .9rem; }
-
-    .lane-label { font-size: 18px; font-weight: 850; letter-spacing: -.01em; }
-    .box-title { font-size: 15px; font-weight: 850; fill: var(--text-1000); }
-    .box-sub { font-size: 12px; fill: var(--text-700); }
-    .payload { font-size: 12px; fill: var(--text-1000); font-family: var(--mono); opacity: .84; }
-    .num { font-size: 14px; font-weight: 900; fill: #fff; }
-    .arrow-label { font-size: 12px; fill: var(--text-1000); font-weight: 760; }
-    .note { font-size: 12px; fill: var(--danger-700); font-weight: 760; }
-
-    [data-review-id] { position: relative; }
-    [data-review-id]:target { outline: 3px solid var(--accent-700); outline-offset: 6px; }
-
-    .reveal, .diagram-reveal { opacity: 1; transform: none; }
-    .js .reveal {
-      opacity: 0;
-      transform: translateY(14px);
-      transition: opacity 220ms ease, transform 260ms cubic-bezier(0.175, 0.885, 0.32, 1.1);
-      transition-delay: var(--reveal-delay, 0ms);
-    }
-    .js .reveal.is-visible { opacity: 1; transform: translateY(0); }
-    .js .canvas-card .diagram-reveal {
-      opacity: 0;
-      transform: translateY(10px);
-      transform-box: fill-box;
-      transform-origin: center;
-      transition: opacity 260ms ease, transform 380ms cubic-bezier(0.175, 0.885, 0.32, 1.1);
-      transition-delay: var(--reveal-delay, 0ms);
-    }
-    .js .canvas-card.is-visible .diagram-reveal { opacity: 1; transform: translateY(0); }
-
-    @media (max-width: 1080px) {
-      .hero, .layout, .notes-grid { grid-template-columns: 1fr; }
-      .toc { position: static; }
-      .wrap { padding-inline: var(--space-4); }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      html { scroll-behavior: auto; }
-      *, *::before, *::after {
-        animation-duration: 0.001ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.001ms !important;
-        scroll-behavior: auto !important;
-      }
-      .js .reveal, .js .canvas-card .diagram-reveal { opacity: 1; transform: none; }
-    }
-    @media print {
-      body { background: white; color: black; }
-      .skip-link, .toc { display: none; }
-      .wrap { max-width: none; padding: 0; }
-      .layout { display: block; }
-      .read-card, .canvas-card, .note-card { box-shadow: none; break-inside: avoid; }
-      svg { min-width: 0; }
-      .reveal, .diagram-reveal { opacity: 1 !important; transform: none !important; }
-    }
+  <style data-tailwind-build="system-diagram.tailwind.css">
+/* tailwind-report-css:start */
+*,:after,:before{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }/*! tailwindcss v3.4.19 | MIT License | https://tailwindcss.com*/*,:after,:before{box-sizing:border-box;border:0 solid #e5e7eb}:after,:before{--tw-content:""}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;-o-tab-size:4;tab-size:4;font-family:Geist,Geist Sans,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;font-feature-settings:normal;font-variation-settings:normal;-webkit-tap-highlight-color:transparent}body{line-height:inherit}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,pre,samp{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-feature-settings:normal;font-variation-settings:normal;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}button,input,optgroup,select,textarea{font-family:inherit;font-feature-settings:inherit;font-variation-settings:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}:-moz-focusring{outline:auto}:-moz-ui-invalid{box-shadow:none}progress{vertical-align:baseline}::-webkit-inner-spin-button,::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}summary{display:list-item}blockquote,dd,dl,figure,h1,h2,h3,h4,h5,h6,hr,p,pre{margin:0}fieldset{margin:0}fieldset,legend{padding:0}menu,ol,ul{list-style:none;margin:0;padding:0}dialog{padding:0}textarea{resize:vertical}input::-moz-placeholder,textarea::-moz-placeholder{opacity:1;color:#9ca3af}input::placeholder,textarea::placeholder{opacity:1;color:#9ca3af}[role=button],button{cursor:pointer}:disabled{cursor:default}audio,canvas,embed,iframe,img,object,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}.prose{color:var(--tw-prose-body);max-width:65ch}.prose :where(p):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:1.25em;margin-bottom:1.25em}.prose :where([class~=lead]):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-lead);font-size:1.25em;line-height:1.6;margin-top:1.2em;margin-bottom:1.2em}.prose :where(a):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-links);text-decoration:underline;font-weight:500}.prose :where(strong):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-bold);font-weight:600}.prose :where(a strong):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit}.prose :where(blockquote strong):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit}.prose :where(thead th strong):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit}.prose :where(ol):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:decimal;margin-top:1.25em;margin-bottom:1.25em;padding-inline-start:1.625em}.prose :where(ol[type=A]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:upper-alpha}.prose :where(ol[type=a]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:lower-alpha}.prose :where(ol[type=A s]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:upper-alpha}.prose :where(ol[type=a s]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:lower-alpha}.prose :where(ol[type=I]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:upper-roman}.prose :where(ol[type=i]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:lower-roman}.prose :where(ol[type=I s]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:upper-roman}.prose :where(ol[type=i s]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:lower-roman}.prose :where(ol[type="1"]):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:decimal}.prose :where(ul):not(:where([class~=not-prose],[class~=not-prose] *)){list-style-type:disc;margin-top:1.25em;margin-bottom:1.25em;padding-inline-start:1.625em}.prose :where(ol>li):not(:where([class~=not-prose],[class~=not-prose] *))::marker{font-weight:400;color:var(--tw-prose-counters)}.prose :where(ul>li):not(:where([class~=not-prose],[class~=not-prose] *))::marker{color:var(--tw-prose-bullets)}.prose :where(dt):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-headings);font-weight:600;margin-top:1.25em}.prose :where(hr):not(:where([class~=not-prose],[class~=not-prose] *)){border-color:var(--tw-prose-hr);border-top-width:1px;margin-top:3em;margin-bottom:3em}.prose :where(blockquote):not(:where([class~=not-prose],[class~=not-prose] *)){font-weight:500;font-style:italic;color:var(--tw-prose-quotes);border-inline-start-width:.25rem;border-inline-start-color:var(--tw-prose-quote-borders);quotes:"\201C""\201D""\2018""\2019";margin-top:1.6em;margin-bottom:1.6em;padding-inline-start:1em}.prose :where(blockquote p:first-of-type):not(:where([class~=not-prose],[class~=not-prose] *)):before{content:open-quote}.prose :where(blockquote p:last-of-type):not(:where([class~=not-prose],[class~=not-prose] *)):after{content:close-quote}.prose :where(h1):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-headings);font-weight:800;font-size:2.25em;margin-top:0;margin-bottom:.8888889em;line-height:1.1111111}.prose :where(h1 strong):not(:where([class~=not-prose],[class~=not-prose] *)){font-weight:900;color:inherit}.prose :where(h2):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-headings);font-weight:700;font-size:1.5em;margin-top:2em;margin-bottom:1em;line-height:1.3333333}.prose :where(h2 strong):not(:where([class~=not-prose],[class~=not-prose] *)){font-weight:800;color:inherit}.prose :where(h3):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-headings);font-weight:600;font-size:1.25em;margin-top:1.6em;margin-bottom:.6em;line-height:1.6}.prose :where(h3 strong):not(:where([class~=not-prose],[class~=not-prose] *)){font-weight:700;color:inherit}.prose :where(h4):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-headings);font-weight:600;margin-top:1.5em;margin-bottom:.5em;line-height:1.5}.prose :where(h4 strong):not(:where([class~=not-prose],[class~=not-prose] *)){font-weight:700;color:inherit}.prose :where(img):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:2em;margin-bottom:2em}.prose :where(picture):not(:where([class~=not-prose],[class~=not-prose] *)){display:block;margin-top:2em;margin-bottom:2em}.prose :where(video):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:2em;margin-bottom:2em}.prose :where(kbd):not(:where([class~=not-prose],[class~=not-prose] *)){font-weight:500;font-family:inherit;color:var(--tw-prose-kbd);box-shadow:0 0 0 1px var(--tw-prose-kbd-shadows),0 3px 0 var(--tw-prose-kbd-shadows);font-size:.875em;border-radius:.3125rem;padding-top:.1875em;padding-inline-end:.375em;padding-bottom:.1875em;padding-inline-start:.375em}.prose :where(code):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-code);font-weight:600;font-size:.875em}.prose :where(code):not(:where([class~=not-prose],[class~=not-prose] *)):before{content:"`"}.prose :where(code):not(:where([class~=not-prose],[class~=not-prose] *)):after{content:"`"}.prose :where(a code):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit}.prose :where(h1 code):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit}.prose :where(h2 code):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit;font-size:.875em}.prose :where(h3 code):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit;font-size:.9em}.prose :where(h4 code):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit}.prose :where(blockquote code):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit}.prose :where(thead th code):not(:where([class~=not-prose],[class~=not-prose] *)){color:inherit}.prose :where(pre):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-pre-code);background-color:var(--tw-prose-pre-bg);overflow-x:auto;font-weight:400;font-size:.875em;line-height:1.7142857;margin-top:1.7142857em;margin-bottom:1.7142857em;border-radius:.375rem;padding-top:.8571429em;padding-inline-end:1.1428571em;padding-bottom:.8571429em;padding-inline-start:1.1428571em}.prose :where(pre code):not(:where([class~=not-prose],[class~=not-prose] *)){background-color:transparent;border-width:0;border-radius:0;padding:0;font-weight:inherit;color:inherit;font-size:inherit;font-family:inherit;line-height:inherit}.prose :where(pre code):not(:where([class~=not-prose],[class~=not-prose] *)):before{content:none}.prose :where(pre code):not(:where([class~=not-prose],[class~=not-prose] *)):after{content:none}.prose :where(table):not(:where([class~=not-prose],[class~=not-prose] *)){width:100%;table-layout:auto;margin-top:2em;margin-bottom:2em;font-size:.875em;line-height:1.7142857}.prose :where(thead):not(:where([class~=not-prose],[class~=not-prose] *)){border-bottom-width:1px;border-bottom-color:var(--tw-prose-th-borders)}.prose :where(thead th):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-headings);font-weight:600;vertical-align:bottom;padding-inline-end:.5714286em;padding-bottom:.5714286em;padding-inline-start:.5714286em}.prose :where(tbody tr):not(:where([class~=not-prose],[class~=not-prose] *)){border-bottom-width:1px;border-bottom-color:var(--tw-prose-td-borders)}.prose :where(tbody tr:last-child):not(:where([class~=not-prose],[class~=not-prose] *)){border-bottom-width:0}.prose :where(tbody td):not(:where([class~=not-prose],[class~=not-prose] *)){vertical-align:baseline}.prose :where(tfoot):not(:where([class~=not-prose],[class~=not-prose] *)){border-top-width:1px;border-top-color:var(--tw-prose-th-borders)}.prose :where(tfoot td):not(:where([class~=not-prose],[class~=not-prose] *)){vertical-align:top}.prose :where(th,td):not(:where([class~=not-prose],[class~=not-prose] *)){text-align:start}.prose :where(figure>*):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:0;margin-bottom:0}.prose :where(figcaption):not(:where([class~=not-prose],[class~=not-prose] *)){color:var(--tw-prose-captions);font-size:.875em;line-height:1.4285714;margin-top:.8571429em}.prose{--tw-prose-body:#374151;--tw-prose-headings:#111827;--tw-prose-lead:#4b5563;--tw-prose-links:#111827;--tw-prose-bold:#111827;--tw-prose-counters:#6b7280;--tw-prose-bullets:#d1d5db;--tw-prose-hr:#e5e7eb;--tw-prose-quotes:#111827;--tw-prose-quote-borders:#e5e7eb;--tw-prose-captions:#6b7280;--tw-prose-kbd:#111827;--tw-prose-kbd-shadows:rgba(17,24,39,.1);--tw-prose-code:#111827;--tw-prose-pre-code:#e5e7eb;--tw-prose-pre-bg:#1f2937;--tw-prose-th-borders:#d1d5db;--tw-prose-td-borders:#e5e7eb;--tw-prose-invert-body:#d1d5db;--tw-prose-invert-headings:#fff;--tw-prose-invert-lead:#9ca3af;--tw-prose-invert-links:#fff;--tw-prose-invert-bold:#fff;--tw-prose-invert-counters:#9ca3af;--tw-prose-invert-bullets:#4b5563;--tw-prose-invert-hr:#374151;--tw-prose-invert-quotes:#f3f4f6;--tw-prose-invert-quote-borders:#374151;--tw-prose-invert-captions:#9ca3af;--tw-prose-invert-kbd:#fff;--tw-prose-invert-kbd-shadows:hsla(0,0%,100%,.1);--tw-prose-invert-code:#fff;--tw-prose-invert-pre-code:#d1d5db;--tw-prose-invert-pre-bg:rgba(0,0,0,.5);--tw-prose-invert-th-borders:#4b5563;--tw-prose-invert-td-borders:#374151;font-size:1rem;line-height:1.75}.prose :where(picture>img):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:0;margin-bottom:0}.prose :where(li):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:.5em;margin-bottom:.5em}.prose :where(ol>li):not(:where([class~=not-prose],[class~=not-prose] *)){padding-inline-start:.375em}.prose :where(ul>li):not(:where([class~=not-prose],[class~=not-prose] *)){padding-inline-start:.375em}.prose :where(.prose>ul>li p):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:.75em;margin-bottom:.75em}.prose :where(.prose>ul>li>p:first-child):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:1.25em}.prose :where(.prose>ul>li>p:last-child):not(:where([class~=not-prose],[class~=not-prose] *)){margin-bottom:1.25em}.prose :where(.prose>ol>li>p:first-child):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:1.25em}.prose :where(.prose>ol>li>p:last-child):not(:where([class~=not-prose],[class~=not-prose] *)){margin-bottom:1.25em}.prose :where(ul ul,ul ol,ol ul,ol ol):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:.75em;margin-bottom:.75em}.prose :where(dl):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:1.25em;margin-bottom:1.25em}.prose :where(dd):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:.5em;padding-inline-start:1.625em}.prose :where(hr+*):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:0}.prose :where(h2+*):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:0}.prose :where(h3+*):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:0}.prose :where(h4+*):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:0}.prose :where(thead th:first-child):not(:where([class~=not-prose],[class~=not-prose] *)){padding-inline-start:0}.prose :where(thead th:last-child):not(:where([class~=not-prose],[class~=not-prose] *)){padding-inline-end:0}.prose :where(tbody td,tfoot td):not(:where([class~=not-prose],[class~=not-prose] *)){padding-top:.5714286em;padding-inline-end:.5714286em;padding-bottom:.5714286em;padding-inline-start:.5714286em}.prose :where(tbody td:first-child,tfoot td:first-child):not(:where([class~=not-prose],[class~=not-prose] *)){padding-inline-start:0}.prose :where(tbody td:last-child,tfoot td:last-child):not(:where([class~=not-prose],[class~=not-prose] *)){padding-inline-end:0}.prose :where(figure):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:2em;margin-bottom:2em}.prose :where(.prose>:first-child):not(:where([class~=not-prose],[class~=not-prose] *)){margin-top:0}.prose :where(.prose>:last-child):not(:where([class~=not-prose],[class~=not-prose] *)){margin-bottom:0}.prose-neutral{--tw-prose-body:#404040;--tw-prose-headings:#171717;--tw-prose-lead:#525252;--tw-prose-links:#171717;--tw-prose-bold:#171717;--tw-prose-counters:#737373;--tw-prose-bullets:#d4d4d4;--tw-prose-hr:#e5e5e5;--tw-prose-quotes:#171717;--tw-prose-quote-borders:#e5e5e5;--tw-prose-captions:#737373;--tw-prose-kbd:#171717;--tw-prose-kbd-shadows:hsla(0,0%,9%,.1);--tw-prose-code:#171717;--tw-prose-pre-code:#e5e5e5;--tw-prose-pre-bg:#262626;--tw-prose-th-borders:#d4d4d4;--tw-prose-td-borders:#e5e5e5;--tw-prose-invert-body:#d4d4d4;--tw-prose-invert-headings:#fff;--tw-prose-invert-lead:#a3a3a3;--tw-prose-invert-links:#fff;--tw-prose-invert-bold:#fff;--tw-prose-invert-counters:#a3a3a3;--tw-prose-invert-bullets:#525252;--tw-prose-invert-hr:#404040;--tw-prose-invert-quotes:#f5f5f5;--tw-prose-invert-quote-borders:#404040;--tw-prose-invert-captions:#a3a3a3;--tw-prose-invert-kbd:#fff;--tw-prose-invert-kbd-shadows:hsla(0,0%,100%,.1);--tw-prose-invert-code:#fff;--tw-prose-invert-pre-code:#d4d4d4;--tw-prose-invert-pre-bg:rgba(0,0,0,.5);--tw-prose-invert-th-borders:#525252;--tw-prose-invert-td-borders:#404040}.\!visible{visibility:visible!important}.visible{visibility:visible}.collapse{visibility:collapse}.static{position:static}.fixed{position:fixed}.absolute{position:absolute}.relative{position:relative}.sticky{position:sticky}.block{display:block}.inline{display:inline}.flex{display:flex}.table{display:table}.grid{display:grid}.contents{display:contents}.hidden{display:none}.max-w-none{max-width:none}.border-collapse{border-collapse:collapse}.transform{transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.flex-wrap{flex-wrap:wrap}.text-wrap{text-wrap:wrap}.border{border-width:1px}.uppercase{text-transform:uppercase}.outline{outline-style:solid}.blur{--tw-blur:blur(8px)}.blur,.drop-shadow{filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.drop-shadow{--tw-drop-shadow:drop-shadow(0 1px 2px rgba(0,0,0,.1)) drop-shadow(0 1px 1px rgba(0,0,0,.06))}.filter{filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.transition{transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,-webkit-backdrop-filter;transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,backdrop-filter;transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,backdrop-filter,-webkit-backdrop-filter;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}:root{color-scheme:light;--page:#fff;--surface:#fff;--surface-subtle:#fafafa;--surface-raised:#fff;--text:#000;--text-muted:#666;--text-subtle:#8a8a8a;--border:#eaeaea;--border-strong:#dedede;--accent:#000;--accent-soft:#f5f5f5;--blue:#0070f3;--blue-soft:#eef6ff;--amber:#a35200;--amber-soft:#fff7ed;--danger:#e00;--danger-soft:#fff1f1;--green:#147d3f;--green-soft:#effaf3;--purple:#6d4aff;--purple-soft:#f4f0ff;--focus:0 0 0 3px rgba(0,112,243,.24);--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px;--space-8:32px;--space-10:40px;--radius-sm:6px;--radius-md:6px;--radius-lg:8px;--radius-xl:12px;--content:78ch;--mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;--sans:"Geist","Geist Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--page);color:var(--text);font-family:var(--sans);line-height:1.58;text-rendering:optimizeLegibility}a{color:var(--accent);text-underline-offset:.18em}code,kbd{font-family:var(--mono);font-size:.92em}code{padding:.12rem .32rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-subtle);overflow-wrap:anywhere}:where(a,button,summary,input,[tabindex]):focus-visible{outline:none;box-shadow:var(--focus)}.skip-link{position:fixed;top:var(--space-4);left:var(--space-4);z-index:30;transform:translateY(-180%);padding:.65rem .9rem;border-radius:999px;background:var(--text);color:var(--surface);text-decoration:none}.skip-link:focus{transform:translateY(0)}.doc-shell{display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr);gap:clamp(var(--space-6),4vw,var(--space-10));max-width:1440px;margin:0 auto;padding:var(--space-8) clamp(var(--space-4),3vw,var(--space-8)) var(--space-10);align-items:start}.side-nav{position:sticky;top:var(--space-6);max-height:calc(100vh - var(--space-8));overflow:auto;padding-right:var(--space-4)}.index-details{margin-top:0;padding:0;border:0;border-radius:0;background:transparent}.index-details>summary{display:flex;align-items:center;gap:var(--space-2);margin:0 0 var(--space-3);padding:.4rem .5rem;border:0;border-radius:var(--radius-md);background:transparent;color:var(--text);cursor:pointer;list-style:none}.index-details>summary:hover{background:var(--surface-subtle)}.index-details>summary::-webkit-details-marker{display:none}.index-details>summary:after{content:"⌄";margin-left:auto;color:var(--text-subtle);transition:transform .18s ease}.index-details[open]>summary:after{transform:rotate(180deg)}.nav-title,.panel-title,.side-nav h2{margin:0 0 var(--space-3);color:var(--text-subtle);font-size:.74rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.index-details>summary .nav-title{margin:0;color:var(--text)}.side-nav ol,.side-nav ul{display:grid;gap:2px;margin:0;padding:0;list-style:none}.side-nav a{display:block;padding:.38rem .5rem;border:0;border-radius:var(--radius-md);color:var(--text-muted);font-size:.9rem;text-decoration:none;box-shadow:none}.side-nav a.is-active,.side-nav a:hover{background:var(--surface-subtle);color:var(--text);border:0;box-shadow:none}.side-nav a.is-active{font-weight:700}.side-nav .nav-group{margin-top:var(--space-5);padding-top:var(--space-4);border-top:1px solid var(--border)}.doc-main{min-width:0}.breadcrumbs{margin-bottom:var(--space-4);color:var(--text-subtle);font-size:.9rem}.breadcrumbs ol{display:flex;flex-wrap:wrap;gap:var(--space-2);margin:0;padding:0;list-style:none}.breadcrumbs li:not(:last-child):after{content:"/";margin-left:var(--space-2);color:var(--text-subtle)}.breadcrumbs a{color:var(--text-muted);text-decoration:none}.article-header{margin-bottom:var(--space-8);padding:var(--space-6) 0 var(--space-6);border-bottom:1px solid var(--border)}.article-meta{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-4)}.pill{display:inline-flex;align-items:center;min-height:26px;padding:.16rem .56rem;border:1px solid var(--border);border-radius:999px;background:var(--surface-subtle);color:var(--text-muted);font-size:.72rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase}.pill.draft{background:var(--accent-soft);color:var(--accent)}h1{margin:0;max-width:900px;font-size:clamp(2rem,4vw,3.25rem);line-height:1.05;letter-spacing:-.035em}h1,h2,h3{text-wrap:balance}h2,h3{color:var(--text);line-height:1.22;letter-spacing:-.015em}.subtitle{max-width:var(--content);margin:var(--space-4) 0 0;color:var(--text-muted);font-size:clamp(1rem,1.2vw,1.14rem)}.takeaway-list{display:grid;gap:var(--space-3);margin-top:var(--space-4);padding-left:1.15rem;color:var(--text-muted)}.section-card{margin-bottom:var(--space-8);padding:0 0 var(--space-8);scroll-margin-top:var(--space-4);border-bottom:1px solid var(--border)}.section-kicker{display:inline-flex;margin-bottom:var(--space-2);color:var(--text-subtle);font-size:.76rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.section-card h2{margin:0;font-size:clamp(1.45rem,2.5vw,2.25rem)}.section-summary{max-width:var(--content);margin:var(--space-3) 0 0;color:var(--text-muted)}.card-grid,.quality-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:var(--space-4);margin-top:var(--space-4)}.canvas-card,.feedback-widget,.info-card,.quality-card{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface)}.feedback-widget,.info-card,.quality-card{padding:var(--space-4);transition:transform .18s cubic-bezier(.2,.8,.2,1),border-color .18s ease,background .18s ease}@media (hover:hover){.info-card:hover,.quality-card:hover{transform:translateY(-2px);border-color:var(--border-strong)}}.info-card h3,.quality-card h3{margin:0 0 var(--space-2);font-size:1rem}.info-card p,.quality-card p{margin:var(--space-2) 0 0;color:var(--text-muted)}.checklist{display:grid;gap:var(--space-2);margin:var(--space-3) 0 0;padding-left:1.2rem;color:var(--text-muted)}.id-chip,.review-label{display:inline-flex;align-items:center;border-radius:999px;font-family:var(--mono);font-size:.72rem;font-weight:800;letter-spacing:.02em}.id-chip{margin-right:.35rem;padding:.12rem .44rem;background:var(--accent-soft);color:var(--accent)}.review-label{margin-top:var(--space-4);color:var(--text-subtle)}.canvas-card{overflow:hidden;margin-top:var(--space-5)}.canvas-header{display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:start;justify-content:space-between;padding:var(--space-4);border-bottom:1px solid var(--border);background:var(--surface-subtle)}.canvas-header strong{display:block;max-width:72ch;line-height:1.35}.canvas-header span{color:var(--text-muted);font-size:.9rem}.canvas-scroll{overflow:auto;background:linear-gradient(var(--border-muted,#f1f1f1) 1px,transparent 1px),linear-gradient(90deg,var(--border-muted,#f1f1f1) 1px,transparent 1px),var(--surface);background-size:32px 32px}svg{display:block;width:100%;min-width:1180px;height:auto}.diagram-caption{display:flex;flex-wrap:wrap;gap:var(--space-3);padding:var(--space-4);border-top:1px solid var(--border);color:var(--text-muted);font-size:.88rem;background:var(--surface-subtle)}.legend-item{display:inline-flex;align-items:center;gap:var(--space-2)}.swatch{width:1.2rem;height:.72rem;border-radius:var(--radius-sm);border:2px solid;display:inline-block;background:color-mix(in srgb,currentColor 12%,transparent)}.diagram-bg{fill:#fff}.diagram-boundary{fill:transparent;stroke-width:2;stroke-dasharray:9 7}.diagram-node-card{stroke-width:2;transition:stroke .18s ease,filter .18s ease,transform .18s ease}.diagram-node-title{font-size:15px;font-weight:850;fill:var(--text)}.diagram-node-subtitle{font-size:13px;fill:var(--text-muted)}.diagram-node-meta{font-size:12px;fill:var(--text);font-family:var(--mono);opacity:.84}.diagram-step{font-size:13px;font-weight:900;fill:#fff}.diagram-lane-title{font-size:15px;font-weight:850;fill:var(--text)}.diagram-arrow{fill:none;stroke:var(--text);stroke-width:2.5;marker-end:url(#diagram-arrow)}.diagram-arrow-boundary{fill:none;stroke:var(--blue);stroke-width:2.7;stroke-dasharray:7 6;marker-end:url(#diagram-boundary-arrow)}.diagram-arrow-risk{fill:none;stroke:var(--danger);stroke-width:2.5;stroke-dasharray:6 6;marker-end:url(#diagram-risk-arrow)}.diagram-edge-label{pointer-events:none}.diagram-label-bg{fill:color-mix(in srgb,var(--surface) 94%,transparent);stroke:var(--border-strong);stroke-width:1.4;filter:drop-shadow(0 6px 12px rgba(0,0,0,.06))}.diagram-arrow-label{font-size:12px;fill:var(--text);font-weight:780}.diagram-label-detail{font-size:11px;fill:var(--text-muted);font-weight:650}.diagram-callout{fill:var(--amber-soft);stroke:var(--amber);stroke-width:1.8}.diagram-callout-text{font-size:12px;fill:var(--amber);font-weight:760}@media (hover:hover){.diagram-node:hover .diagram-node-card{stroke:var(--blue);filter:drop-shadow(0 8px 16px rgba(0,0,0,.08))}.diagram-edge:hover path{stroke-width:3.4}}[data-review-id]{position:relative}[data-review-id]:target{outline:3px solid var(--accent);outline-offset:5px}.diagram-reveal,.reveal{opacity:1;transform:none;filter:none}.js .reveal{opacity:0;transform:translateY(14px);filter:blur(3px);transition:opacity .36s cubic-bezier(.2,.8,.2,1),transform .42s cubic-bezier(.2,.8,.2,1),filter .42s ease}.js .reveal.is-visible{opacity:1;transform:translateY(0);filter:blur(0)}.js .canvas-card .diagram-reveal{opacity:0;transform:translateY(12px);filter:blur(2px);transform-box:fill-box;transform-origin:center;transition:opacity .36s cubic-bezier(.2,.8,.2,1),transform .42s cubic-bezier(.2,.8,.2,1),filter .42s ease;transition-delay:var(--reveal-delay,0ms)}.js .canvas-card.is-visible .diagram-reveal{opacity:1;transform:translateY(0);filter:blur(0)}.path-draw{stroke-dasharray:1;stroke-dashoffset:0}.js .path-draw{stroke-dashoffset:1;transition:stroke-dashoffset .7s cubic-bezier(.2,.8,.2,1);transition-delay:var(--reveal-delay,0ms)}.js .canvas-card.is-visible .path-draw{stroke-dashoffset:0}.feedback-widget{margin-top:var(--space-5);padding:var(--space-4)}.feedback-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-3)}.feedback-actions button{border:1px solid var(--border);border-radius:999px;background:var(--surface-subtle);color:var(--text);padding:.42rem .72rem;cursor:pointer}.feedback-note,.feedback-result{color:var(--text-muted);font-size:.9rem}.feedback-result{min-height:1.4em}.back-to-top{position:fixed;right:var(--space-5);bottom:var(--space-5);display:grid;place-items:center;width:2.4rem;height:2.4rem;border:1px solid var(--border);border-radius:999px;background:var(--surface);text-decoration:none}footer{max-width:1440px;margin:0 auto;padding:0 clamp(var(--space-4),3vw,var(--space-8)) var(--space-8);color:var(--text-muted);font-size:.9rem}@media (max-width:960px){.doc-shell{grid-template-columns:1fr}.side-nav{position:static;max-height:none;padding-right:0}.canvas-header{display:block}}@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,:after,:before{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}.js .canvas-card .diagram-reveal,.js .reveal{opacity:1;transform:none;filter:none}.js .path-draw{stroke-dashoffset:0}}@media print{body{background:#fff;color:#000}.back-to-top,.feedback-widget,.side-nav{display:none}.doc-shell{display:block;max-width:none;padding:0}.article-header,.canvas-card,.info-card,.quality-card,.section-card{box-shadow:none;-moz-column-break-inside:avoid;break-inside:avoid}svg{min-width:0}a{color:#000;text-decoration:none}.diagram-reveal,.reveal{opacity:1!important;transform:none!important;filter:none!important}.path-draw{stroke-dashoffset:0!important}}
+/* tailwind-report-css:end */
   </style>
 </head>
-<body>
+<body data-visual-mode="system-diagram-packet">
   <a class="skip-link" href="#main">Skip to content</a>
-  <div class="wrap">
-    <header class="hero" data-review-id="summary">
-      <div>
-        <div class="eyebrow">
-          <span class="pill">{{DIAGRAM_MODE}}</span>
-          <span>{{UPDATED_DATE}}</span>
-          <span class="review-label">review: summary</span>
-        </div>
-        <h1>{{TITLE}}</h1>
-        <p class="subtitle">{{SUBTITLE}}</p>
-      </div>
-      <aside class="read-card reveal" aria-label="How to read this" data-review-id="how-to-read">
-        <h2>How To Read This</h2>
-        <p>Follow the numbered steps first. Colors show ownership/runtime. Dashed blue arrows cross boundaries. Red dashed paths are risks, recovery, cancellation, or intentionally absent flows.</p>
-      </aside>
-    </header>
 
-    <div class="layout">
-      <nav class="toc" aria-label="Table of contents">
-        <h2>Contents</h2>
+  <div class="doc-shell">
+    <aside class="side-nav" aria-label="Diagram navigation" data-review-id="chrome.side-nav">
+      <details class="index-details" open>
+        <summary><span class="nav-title">System diagram</span></summary>
+        <nav aria-label="Table of contents" data-review-id="chrome.index">
+          <ol>
+            <li><a href="#summary">Overview</a></li>
+            <li><a href="#diagram-brief">Diagram brief</a></li>
+            <li><a href="#diagram-figure">Diagram</a></li>
+            <li><a href="#diagram-evidence">Evidence</a></li>
+            <li><a href="#diagram-quality">Quality gate</a></li>
+          </ol>
+        </nav>
+        <div class="nav-group">
+          <h2>Review focus</h2>
+          <ul>
+            <li><a href="#diagram-figure">Check flow order</a></li>
+            <li><a href="#diagram-evidence">Check source anchors</a></li>
+            <li><a href="#diagram-quality">Check ambiguity</a></li>
+          </ul>
+        </div>
+      </details>
+    </aside>
+
+    <main id="main" class="doc-main">
+      <nav class="breadcrumbs" aria-label="Breadcrumbs" data-review-id="summary.breadcrumbs">
         <ol>
-          <li><a href="#diagram-figure">Diagram</a></li>
-          <li><a href="#diagram-notes">Notes</a></li>
-          <li><a href="#diagram-provenance">Provenance</a></li>
+          <li><a href="{{DOCS_HOME_PATH}}">Docs</a></li>
+          <li><a href="{{SOURCE_DOC_PATH}}">{{SOURCE_DOC_LABEL}}</a></li>
+          <li aria-current="page">Diagram</li>
         </ol>
       </nav>
 
-      <main id="main">
-        <figure class="canvas-card reveal" id="diagram-figure" data-review-id="diagram.figure">
-          <div class="canvas-toolbar">
-            <strong>{{DIAGRAM_QUESTION}}</strong>
-            <span>{{SOURCE_HINT}}</span>
+      <article class="prose prose-neutral max-w-none">
+        <header class="article-header" id="summary" data-review-id="summary">
+          <div class="article-meta">
+            <span class="pill draft">{{DIAGRAM_MODE}}</span>
+            <span class="pill">Updated {{UPDATED_DATE}}</span>
+            <span class="pill">{{DIAGRAM_STATUS}}</span>
           </div>
-          <div class="canvas-scroll">
-            <svg viewBox="0 0 1500 960" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="diagram-title diagram-desc">
-              <title id="diagram-title">{{TITLE}}</title>
-              <desc id="diagram-desc">{{DIAGRAM_DESC}}</desc>
-              <defs>
-                <filter id="roughen">
-                  <feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="1" result="noise" />
-                  <feDisplacementMap in="SourceGraphic" in2="noise" scale=".7" />
-                </filter>
-                <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-1000)" />
-                </marker>
-                <marker id="boundary-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--boundary-700)" />
-                </marker>
-                <marker id="risk-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--danger-700)" />
-                </marker>
-                <style>
-                  .rough { filter: url(#roughen); }
-                  .lane { fill: transparent; stroke-width: 3; stroke-dasharray: 10 8; }
-                  .box { stroke-width: 2.6; filter: url(#roughen); }
-                  .call { stroke: var(--text-1000); stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
-                  .boundary { stroke: var(--boundary-700); stroke-width: 2.9; fill: none; stroke-dasharray: 7 6; marker-end: url(#boundary-arrow); }
-                  .risk { stroke: var(--danger-700); stroke-width: 2.7; fill: none; stroke-dasharray: 6 6; marker-end: url(#risk-arrow); }
-                  .chip { fill: color-mix(in srgb, var(--surface-100) 72%, transparent); stroke: color-mix(in srgb, var(--text-1000) 35%, transparent); stroke-width: 1.4; stroke-dasharray: 4 4; }
-                </style>
-              </defs>
+          <h1>{{TITLE}}</h1>
+          <p class="subtitle">{{SUBTITLE}}</p>
+          <ul class="takeaway-list" data-review-id="summary.takeaways">
+            <li>{{TAKEAWAY_1}}</li>
+            <li>{{TAKEAWAY_2}}</li>
+            <li>{{TAKEAWAY_3}}</li>
+          </ul>
+        </header>
 
-              <rect class="lane rough diagram-reveal" style="--reveal-delay: 0ms" x="45" y="70" width="410" height="760" rx="22" stroke="var(--owner-a-700)" data-review-id="lane.owner-a" />
-              <rect class="lane rough diagram-reveal" style="--reveal-delay: 45ms" x="545" y="70" width="410" height="760" rx="22" stroke="var(--owner-b-700)" data-review-id="lane.owner-b" />
-              <rect class="lane rough diagram-reveal" style="--reveal-delay: 90ms" x="1045" y="70" width="410" height="760" rx="22" stroke="var(--owner-c-700)" data-review-id="lane.owner-c" />
-              <text class="lane-label diagram-reveal" style="--reveal-delay: 120ms" x="70" y="105" fill="var(--owner-a-700)">{{OWNER_A}}</text>
-              <text class="lane-label diagram-reveal" style="--reveal-delay: 145ms" x="570" y="105" fill="var(--owner-b-700)">{{OWNER_B}}</text>
-              <text class="lane-label diagram-reveal" style="--reveal-delay: 170ms" x="1070" y="105" fill="var(--owner-c-700)">{{OWNER_C}}</text>
-
-              <g class="diagram-reveal" style="--reveal-delay: 220ms" data-review-id="step-1">
-                <rect class="box" x="90" y="140" width="320" height="108" rx="16" fill="var(--owner-a-100)" stroke="var(--owner-a-700)" />
-                <circle cx="116" cy="166" r="14" fill="var(--owner-a-700)" />
-                <text class="num" x="116" y="171" text-anchor="middle">1</text>
-                <text class="box-title" x="250" y="164" text-anchor="middle">{{STEP_1_LABEL}}</text>
-                <text class="box-sub" x="250" y="186" text-anchor="middle">{{STEP_1_SYMBOL}}</text>
-                <text class="payload" x="250" y="208" text-anchor="middle">input: {{STEP_1_INPUT}}</text>
-                <text class="payload" x="250" y="226" text-anchor="middle">output: {{STEP_1_OUTPUT}}</text>
-              </g>
-
-              <path class="call diagram-reveal" style="--reveal-delay: 300ms" d="M250 248 L250 302" data-review-id="handoff.local-1" />
-              <text class="arrow-label diagram-reveal" style="--reveal-delay: 320ms" x="266" y="282">same-runtime call / local handoff</text>
-
-              <g class="diagram-reveal" style="--reveal-delay: 380ms" data-review-id="step-2">
-                <rect class="box" x="90" y="302" width="320" height="108" rx="16" fill="var(--owner-a-100)" stroke="var(--owner-a-700)" />
-                <circle cx="116" cy="328" r="14" fill="var(--owner-a-700)" />
-                <text class="num" x="116" y="333" text-anchor="middle">2</text>
-                <text class="box-title" x="250" y="326" text-anchor="middle">{{STEP_2_LABEL}}</text>
-                <text class="box-sub" x="250" y="348" text-anchor="middle">{{STEP_2_SYMBOL}}</text>
-                <text class="payload" x="250" y="371" text-anchor="middle">payload: {{STEP_2_PAYLOAD}}</text>
-              </g>
-
-              <path class="boundary diagram-reveal" style="--reveal-delay: 460ms" d="M410 356 C485 356 485 194 560 194" data-review-id="handoff.boundary-1" />
-              <text class="arrow-label diagram-reveal" style="--reveal-delay: 480ms" x="442" y="264">{{BOUNDARY_LABEL}}</text>
-
-              <g class="diagram-reveal" style="--reveal-delay: 540ms" data-review-id="step-3">
-                <rect class="box" x="590" y="140" width="320" height="108" rx="16" fill="var(--owner-b-100)" stroke="var(--owner-b-700)" />
-                <circle cx="616" cy="166" r="14" fill="var(--owner-b-700)" />
-                <text class="num" x="616" y="171" text-anchor="middle">3</text>
-                <text class="box-title" x="750" y="164" text-anchor="middle">{{STEP_3_LABEL}}</text>
-                <text class="box-sub" x="750" y="186" text-anchor="middle">{{STEP_3_SYMBOL}}</text>
-                <text class="payload" x="750" y="209" text-anchor="middle">state: {{STEP_3_STATE}}</text>
-              </g>
-
-              <path class="boundary diagram-reveal" style="--reveal-delay: 620ms" d="M910 194 C990 194 990 194 1070 194" data-review-id="handoff.boundary-2" />
-              <text class="arrow-label diagram-reveal" style="--reveal-delay: 640ms" x="950" y="176">{{ASYNC_OR_API_LABEL}}</text>
-
-              <g class="diagram-reveal" style="--reveal-delay: 700ms" data-review-id="step-4">
-                <rect class="box" x="1090" y="140" width="320" height="108" rx="16" fill="var(--owner-c-100)" stroke="var(--owner-c-700)" />
-                <circle cx="1116" cy="166" r="14" fill="var(--owner-c-700)" />
-                <text class="num" x="1116" y="171" text-anchor="middle">4</text>
-                <text class="box-title" x="1250" y="164" text-anchor="middle">{{STEP_4_LABEL}}</text>
-                <text class="box-sub" x="1250" y="186" text-anchor="middle">{{STEP_4_SYMBOL}}</text>
-                <text class="payload" x="1250" y="209" text-anchor="middle">work: {{STEP_4_WORK}}</text>
-              </g>
-
-              <path class="risk diagram-reveal" style="--reveal-delay: 780ms" d="M1250 248 C1250 312 1020 472 900 472" data-review-id="handoff.risk-1" />
-              <g class="diagram-reveal" style="--reveal-delay: 820ms" data-review-id="risk-or-removed-path">
-                <rect class="chip" x="600" y="438" width="300" height="68" rx="14" />
-                <text class="note" x="750" y="464" text-anchor="middle">{{RISK_OR_REMOVED_PATH}}</text>
-                <text class="payload" x="750" y="486" text-anchor="middle">{{RISK_DETAIL}}</text>
-              </g>
-            </svg>
+        <section class="section-card reveal" id="diagram-brief" aria-labelledby="diagram-brief-title" data-review-id="diagram.brief">
+          <span class="section-kicker">One question, one answer</span>
+          <h2 id="diagram-brief-title">Diagram Brief</h2>
+          <p class="section-summary">{{DIAGRAM_BRIEF_SUMMARY}}</p>
+          <div class="card-grid">
+            <article class="info-card" data-review-id="diagram.brief.question">
+              <h3><span class="id-chip">Q</span>Question</h3>
+              <p>{{DIAGRAM_QUESTION}}</p>
+            </article>
+            <article class="info-card" data-review-id="diagram.brief.audience">
+              <h3><span class="id-chip">A</span>Audience</h3>
+              <p>{{AUDIENCE}}</p>
+            </article>
+            <article class="info-card" data-review-id="diagram.brief.mode">
+              <h3><span class="id-chip">M</span>Mode</h3>
+              <p>{{DIAGRAM_MODE_RATIONALE}}</p>
+            </article>
           </div>
-          <figcaption class="legend" data-review-id="legend">
-            <span><i class="swatch" style="color: var(--owner-a-700)"></i>{{OWNER_A}}</span>
-            <span><i class="swatch" style="color: var(--owner-b-700)"></i>{{OWNER_B}}</span>
-            <span><i class="swatch" style="color: var(--owner-c-700)"></i>{{OWNER_C}}</span>
-            <span><i class="swatch" style="color: var(--boundary-700); border-style: dashed;"></i>Boundary/API/process crossing</span>
-            <span><i class="swatch" style="color: var(--danger-700); border-style: dashed;"></i>Risk/recovery/removed path</span>
-          </figcaption>
-        </figure>
-
-        <section class="notes-grid" id="diagram-notes" aria-label="Diagram notes">
-          <article class="note-card reveal" data-review-id="key-decisions">
-            <h2>Key Decisions</h2>
-            <p>{{KEY_DECISIONS}}</p>
-          </article>
-          <article class="note-card reveal" data-review-id="uncertainty">
-            <h2>Uncertainty</h2>
-            <p>{{UNCERTAINTY}}</p>
-          </article>
-          <article class="note-card reveal" data-review-id="what-this-explains">
-            <h2>What This Explains</h2>
-            <p>{{WHAT_THIS_EXPLAINS}}</p>
-          </article>
+          <span class="review-label">review: diagram.brief</span>
         </section>
 
-        <footer id="diagram-provenance" data-review-id="provenance">
-          <p>Generated/updated {{UPDATED_DATE}} as a self-contained HTML/SVG diagram. Preserve <code>data-review-id</code> anchors for review comments.</p>
-        </footer>
-      </main>
-    </div>
+        <section class="section-card reveal" id="diagram-figure" aria-labelledby="diagram-title-heading" data-review-id="diagram.section">
+          <span class="section-kicker">Readable system story</span>
+          <h2 id="diagram-title-heading">Diagram</h2>
+          <p class="section-summary">{{HOW_TO_READ}}</p>
+
+          <figure class="canvas-card reveal" data-review-id="diagram.figure">
+            <div class="canvas-header">
+              <strong>{{DIAGRAM_QUESTION}}</strong>
+              <span>{{SOURCE_HINT}}</span>
+            </div>
+            <div class="canvas-scroll">
+              <svg viewBox="0 0 1280 760" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="diagram-title diagram-desc" data-review-id="diagram.svg">
+                <title id="diagram-title">{{TITLE}}</title>
+                <desc id="diagram-desc">{{DIAGRAM_DESC}}</desc>
+                <defs>
+                  <marker id="diagram-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                    <path d="M0 0 L10 5 L0 10 z" fill="var(--text)" />
+                  </marker>
+                  <marker id="diagram-boundary-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                    <path d="M0 0 L10 5 L0 10 z" fill="var(--blue)" />
+                  </marker>
+                  <marker id="diagram-risk-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                    <path d="M0 0 L10 5 L0 10 z" fill="var(--danger)" />
+                  </marker>
+                </defs>
+
+                <rect class="diagram-bg" x="0" y="0" width="1280" height="760" />
+
+                <g class="diagram-reveal" style="--reveal-delay: 0ms" data-review-id="diagram.boundary.actor">
+                  <rect class="diagram-boundary" x="40" y="70" width="300" height="560" rx="18" stroke="var(--green)" />
+                  <text class="diagram-lane-title" x="64" y="104">{{LANE_1_TITLE}}</text>
+                </g>
+                <g class="diagram-reveal" style="--reveal-delay: 70ms" data-review-id="diagram.boundary.system">
+                  <rect class="diagram-boundary" x="390" y="70" width="500" height="560" rx="18" stroke="var(--purple)" />
+                  <text class="diagram-lane-title" x="414" y="104">{{LANE_2_TITLE}}</text>
+                </g>
+                <g class="diagram-reveal" style="--reveal-delay: 140ms" data-review-id="diagram.boundary.external">
+                  <rect class="diagram-boundary" x="940" y="70" width="300" height="560" rx="18" stroke="var(--amber)" />
+                  <text class="diagram-lane-title" x="964" y="104">{{LANE_3_TITLE}}</text>
+                </g>
+
+                <g class="diagram-node diagram-reveal" style="--reveal-delay: 220ms" data-review-id="diagram.node.trigger">
+                  <rect class="diagram-node-card" x="76" y="150" width="228" height="116" rx="16" fill="var(--green-soft)" stroke="var(--green)" />
+                  <circle cx="104" cy="178" r="14" fill="var(--green)" />
+                  <text class="diagram-step" x="104" y="183" text-anchor="middle">1</text>
+                  <text class="diagram-node-title" x="190" y="180" text-anchor="middle">{{STEP_1_LABEL}}</text>
+                  <text class="diagram-node-subtitle" x="190" y="205" text-anchor="middle">{{STEP_1_MEANING}}</text>
+                  <text class="diagram-node-meta" x="190" y="230" text-anchor="middle">{{STEP_1_TRACE}}</text>
+                </g>
+
+                <g class="diagram-edge diagram-reveal" style="--reveal-delay: 300ms" data-review-id="diagram.edge.trigger-to-entry">
+                  <path class="diagram-arrow-boundary path-draw" pathLength="1" d="M304 208 C360 208 414 208 470 208" />
+                </g>
+
+                <g class="diagram-node diagram-reveal" style="--reveal-delay: 380ms" data-review-id="diagram.node.entrypoint">
+                  <rect class="diagram-node-card" x="480" y="150" width="228" height="116" rx="16" fill="var(--surface)" stroke="var(--border-strong)" />
+                  <circle cx="508" cy="178" r="14" fill="var(--text)" />
+                  <text class="diagram-step" x="508" y="183" text-anchor="middle">2</text>
+                  <text class="diagram-node-title" x="594" y="180" text-anchor="middle">{{STEP_2_LABEL}}</text>
+                  <text class="diagram-node-subtitle" x="594" y="205" text-anchor="middle">{{STEP_2_MEANING}}</text>
+                  <text class="diagram-node-meta" x="594" y="230" text-anchor="middle">{{STEP_2_TRACE}}</text>
+                </g>
+
+                <g class="diagram-edge diagram-reveal" style="--reveal-delay: 460ms" data-review-id="diagram.edge.entry-to-domain">
+                  <path class="diagram-arrow path-draw" pathLength="1" d="M594 266 L594 334" />
+                </g>
+
+                <g class="diagram-node diagram-reveal" style="--reveal-delay: 540ms" data-review-id="diagram.node.domain">
+                  <rect class="diagram-node-card" x="480" y="338" width="228" height="116" rx="16" fill="var(--purple-soft)" stroke="var(--purple)" />
+                  <circle cx="508" cy="366" r="14" fill="var(--purple)" />
+                  <text class="diagram-step" x="508" y="371" text-anchor="middle">3</text>
+                  <text class="diagram-node-title" x="594" y="368" text-anchor="middle">{{STEP_3_LABEL}}</text>
+                  <text class="diagram-node-subtitle" x="594" y="393" text-anchor="middle">{{STEP_3_MEANING}}</text>
+                  <text class="diagram-node-meta" x="594" y="418" text-anchor="middle">{{STEP_3_TRACE}}</text>
+                </g>
+
+                <g class="diagram-edge diagram-reveal" style="--reveal-delay: 620ms" data-review-id="diagram.edge.domain-to-external">
+                  <path class="diagram-arrow-boundary path-draw" pathLength="1" d="M708 396 C800 396 828 210 952 210" />
+                </g>
+
+                <g class="diagram-node diagram-reveal" style="--reveal-delay: 700ms" data-review-id="diagram.node.external-system">
+                  <rect class="diagram-node-card" x="976" y="150" width="228" height="116" rx="16" fill="var(--amber-soft)" stroke="var(--amber)" />
+                  <circle cx="1004" cy="178" r="14" fill="var(--amber)" />
+                  <text class="diagram-step" x="1004" y="183" text-anchor="middle">4</text>
+                  <text class="diagram-node-title" x="1090" y="180" text-anchor="middle">{{STEP_4_LABEL}}</text>
+                  <text class="diagram-node-subtitle" x="1090" y="205" text-anchor="middle">{{STEP_4_MEANING}}</text>
+                  <text class="diagram-node-meta" x="1090" y="230" text-anchor="middle">{{STEP_4_TRACE}}</text>
+                </g>
+
+                <g class="diagram-edge diagram-reveal" style="--reveal-delay: 780ms" data-review-id="diagram.edge.recovery">
+                  <path class="diagram-arrow-risk path-draw" pathLength="1" d="M1090 266 C1090 536 820 548 708 430" />
+                </g>
+
+                <g class="diagram-reveal" style="--reveal-delay: 860ms" data-review-id="diagram.decision.ambiguity">
+                  <rect class="diagram-callout" x="730" y="456" width="290" height="88" rx="16" />
+                  <text class="diagram-callout-text" x="875" y="488" text-anchor="middle">{{DECISION_OR_RISK}}</text>
+                  <text class="diagram-node-meta" x="875" y="516" text-anchor="middle">{{DECISION_OR_RISK_DETAIL}}</text>
+                </g>
+
+                <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 920ms" data-review-id="diagram.edge-label.trigger-to-entry">
+                  <rect class="diagram-label-bg" x="314" y="128" width="152" height="50" rx="12" />
+                  <text class="diagram-arrow-label" x="390" y="150" text-anchor="middle"><tspan>{{EDGE_1_LABEL}}</tspan><tspan class="diagram-label-detail" x="390" dy="16">{{EDGE_1_DETAIL}}</tspan></text>
+                </g>
+                <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 960ms" data-review-id="diagram.edge-label.entry-to-domain">
+                  <rect class="diagram-label-bg" x="724" y="276" width="174" height="50" rx="12" />
+                  <text class="diagram-arrow-label" x="811" y="298" text-anchor="middle"><tspan>{{EDGE_2_LABEL}}</tspan><tspan class="diagram-label-detail" x="811" dy="16">{{EDGE_2_DETAIL}}</tspan></text>
+                </g>
+                <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 1000ms" data-review-id="diagram.edge-label.domain-to-external">
+                  <rect class="diagram-label-bg" x="728" y="316" width="184" height="50" rx="12" />
+                  <text class="diagram-arrow-label" x="820" y="338" text-anchor="middle"><tspan>{{EDGE_3_LABEL}}</tspan><tspan class="diagram-label-detail" x="820" dy="16">{{EDGE_3_DETAIL}}</tspan></text>
+                </g>
+                <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 1040ms" data-review-id="diagram.edge-label.recovery">
+                  <rect class="diagram-label-bg" x="1038" y="408" width="176" height="50" rx="12" />
+                  <text class="diagram-arrow-label" x="1126" y="430" text-anchor="middle"><tspan>{{RISK_EDGE_LABEL}}</tspan><tspan class="diagram-label-detail" x="1126" dy="16">{{RISK_EDGE_DETAIL}}</tspan></text>
+                </g>
+              </svg>
+            </div>
+            <figcaption class="diagram-caption" data-review-id="diagram.legend">
+              <span class="legend-item"><i class="swatch" style="color: var(--green)"></i>{{LEGEND_ACTOR}}</span>
+              <span class="legend-item"><i class="swatch" style="color: var(--purple)"></i>{{LEGEND_SYSTEM}}</span>
+              <span class="legend-item"><i class="swatch" style="color: var(--amber)"></i>{{LEGEND_EXTERNAL}}</span>
+              <span class="legend-item"><i class="swatch" style="color: var(--blue); border-style: dashed"></i>Boundary/API/process crossing</span>
+              <span class="legend-item"><i class="swatch" style="color: var(--danger); border-style: dashed"></i>Risk/recovery/removed path</span>
+            </figcaption>
+          </figure>
+          <span class="review-label">review: diagram.figure</span>
+        </section>
+
+        <section class="section-card reveal" id="diagram-evidence" aria-labelledby="diagram-evidence-title" data-review-id="diagram.evidence">
+          <span class="section-kicker">Why this is true</span>
+          <h2 id="diagram-evidence-title">Evidence And Source Anchors</h2>
+          <p class="section-summary">{{EVIDENCE_SUMMARY}}</p>
+          <div class="card-grid">
+            <article class="info-card" data-review-id="diagram.evidence.source-1"><h3>{{SOURCE_1_LABEL}}</h3><p>{{SOURCE_1_DETAIL}}</p></article>
+            <article class="info-card" data-review-id="diagram.evidence.source-2"><h3>{{SOURCE_2_LABEL}}</h3><p>{{SOURCE_2_DETAIL}}</p></article>
+            <article class="info-card" data-review-id="diagram.evidence.source-3"><h3>{{SOURCE_3_LABEL}}</h3><p>{{SOURCE_3_DETAIL}}</p></article>
+          </div>
+          <span class="review-label">review: diagram.evidence</span>
+        </section>
+
+        <section class="section-card reveal" id="diagram-quality" aria-labelledby="diagram-quality-title" data-review-id="diagram.quality-gate">
+          <span class="section-kicker">Diagram quality gate</span>
+          <h2 id="diagram-quality-title">Quality Gate</h2>
+          <p class="section-summary">{{QUALITY_GATE_SUMMARY}}</p>
+          <div class="quality-grid">
+            <article class="quality-card" data-review-id="diagram.quality.question"><h3>Focused question</h3><p>{{QUALITY_QUESTION}}</p></article>
+            <article class="quality-card" data-review-id="diagram.quality.arrows"><h3>Labelled arrows</h3><p>{{QUALITY_ARROWS}}</p></article>
+            <article class="quality-card" data-review-id="diagram.quality.ambiguity"><h3>Visible uncertainty</h3><p>{{QUALITY_UNCERTAINTY}}</p></article>
+          </div>
+          <ul class="checklist" data-review-id="diagram.quality.checklist">
+            <li>{{QUALITY_CHECK_SOURCE}}</li>
+            <li>{{QUALITY_CHECK_LEGEND}}</li>
+            <li>{{QUALITY_CHECK_REVIEW_IDS}}</li>
+          </ul>
+          <span class="review-label">review: diagram.quality-gate</span>
+        </section>
+
+        <section class="feedback-widget" id="feedback" aria-labelledby="feedback-title" data-review-id="feedback">
+          <h2 id="feedback-title" class="panel-title">Was this diagram useful?</h2>
+          <p class="feedback-note">{{FEEDBACK_PROMPT}}</p>
+          <div class="feedback-actions"><button type="button" data-feedback="yes">Yes</button><button type="button" data-feedback="no">No</button></div>
+          <p class="feedback-result" aria-live="polite"></p>
+        </section>
+      </article>
+    </main>
   </div>
+
+  <a class="back-to-top" href="#main" aria-label="Back to top">↑</a>
+  <footer id="diagram-provenance" data-review-id="provenance">
+    <p>Generated/updated {{UPDATED_DATE}} as a self-contained HTML/SVG diagram. Preserve <code>data-review-id</code> anchors for review comments.</p>
+  </footer>
 
   <script>
     document.documentElement.classList.add('js');
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const revealItems = Array.from(document.querySelectorAll('.reveal'));
-
     if (reduceMotion || !('IntersectionObserver' in window)) {
       revealItems.forEach((item) => item.classList.add('is-visible'));
     } else {
@@ -436,10 +268,29 @@
           entry.target.classList.add('is-visible');
           observer.unobserve(entry.target);
         });
-      }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
-
+      }, { threshold: 0.12, rootMargin: '0px 0px -10% 0px' });
       revealItems.forEach((item) => observer.observe(item));
     }
+
+    const tocLinks = Array.from(document.querySelectorAll('nav[aria-label="Table of contents"] a[href^="#"]'));
+    const tocTargets = tocLinks.map((link) => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+    if (!reduceMotion && 'IntersectionObserver' in window && tocTargets.length > 0) {
+      const tocObserver = new IntersectionObserver((entries) => {
+        const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visible) return;
+        tocLinks.forEach((link) => link.classList.toggle('is-active', link.getAttribute('href') === '#' + visible.target.id));
+      }, { rootMargin: '-20% 0px -65% 0px', threshold: [0.1, 0.4, 0.8] });
+      tocTargets.forEach((target) => tocObserver.observe(target));
+    }
+
+    document.querySelectorAll('[data-feedback]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const widget = button.closest('.feedback-widget');
+        widget?.setAttribute('data-feedback', button.dataset.feedback);
+        const result = widget?.querySelector('.feedback-result');
+        if (result) result.textContent = button.dataset.feedback === 'yes' ? 'Marked useful.' : 'Marked for follow-up.';
+      });
+    });
   </script>
 </body>
 </html>

@@ -172,6 +172,24 @@ Use labels such as:
 - `unproven`,
 - `not used / removed`.
 
+## Diagram brief contract
+
+Before drawing, write a compact brief. The final diagram must make this brief obvious in the page:
+
+```markdown
+Diagram question: What single question should this diagram answer?
+Audience: Who needs to understand it?
+Mode: Context | Flow | Sequence | State | Ownership | Slice | Decision
+Scope: What is included and intentionally excluded?
+Evidence: Which files/docs/tests/logs back this drawing?
+Nodes: What actors/components/concepts must appear?
+Edges: What calls/events/transitions must be labelled?
+Boundaries: What runtime/team/module/process boundaries matter?
+Uncertainty: What is assumed, unresolved, removed, risky, or decision-needed?
+```
+
+If the brief cannot be filled from repo/product context, ask one focused question instead of drawing a vague topology.
+
 ## Workflow
 
 ### Step 1: Define the diagram question
@@ -260,11 +278,12 @@ When the user says a layer, responsibility, domain relationship, or call arrow f
 ## HTML/SVG Drawing Rules
 
 - Use inline SVG inside self-contained HTML.
-- Treat the diagram as an informational figure with a title, caption, and “How to read this” note.
-- Use the `html-report-designer` shell for polished long-form pages: hero summary, sticky contents, review rail, semantic sections, and print styles.
-- Use a tokenized report/diagram design system: semantic surfaces, text ranks, borders, accents, spacing, radius, and focus rings before one-off styling.
-- Use a warm editorial technical-atlas aesthetic: paper background, high-contrast ink, one strong accent, semantic status colors, generous margins, and calm density.
-- Use subtle scroll appearance for diagram sections/nodes when it teaches reading order; keep content visible without JavaScript and honor `prefers-reduced-motion`.
+- Treat the diagram as an informational figure with a title, caption, legend, and “How to read this” note.
+- Use the `html-report-designer` shell for polished long-form pages: breadcrumbs, collapsible left sidebar, no top menu/right rail, semantic sections, feedback, provenance, and print styles.
+- Use `resources/system-diagram-template.html` for diagram-only pages. It uses build-time Tailwind and inline compiled CSS; edit `resources/system-diagram.tailwind.css`, then run `npm run build:report-css` from `/Users/carlosrodrigo/agents` before handoff/commit.
+- Do not use Tailwind CDN/runtime, remote fonts, Mermaid runtime, or external CSS in finished diagrams. D2/Mermaid/Graphviz may be used only at build time if the final SVG is inlined and restyled to this system.
+- Use a tokenized Vercel-style diagram system: semantic surfaces, text ranks, borders, neutral default, status colors, spacing, radius, focus rings, and reduced-motion-safe motion.
+- Use subtle scroll appearance, SVG node reveal, and path draw-in motion when it teaches reading order; keep content visible without JavaScript and honor `prefers-reduced-motion`.
 - Keep text readable; do not shrink below 12px effective size in SVG.
 - Prefer semantic HTML text around the SVG over packing every explanation into SVG labels.
 - Use `foreignObject` only when necessary, and give it extra height to avoid clipping.
@@ -273,8 +292,20 @@ When the user says a layer, responsibility, domain relationship, or call arrow f
 - Use red dashed arrows only for exceptional paths.
 - Add a legend that defines colors for this specific diagram.
 - Add stable `data-review-id` anchors to major sections and meaningful SVG groups/nodes.
-- Include accessible SVG `<title>` and `<desc>` or an equivalent surrounding figure caption.
+- Include accessible SVG `<title>` and `<desc>` plus a visible figure caption/legend.
 - Avoid decorative complexity that makes the system harder to understand.
+
+## Diagram primitives
+
+Use these reusable primitives instead of ad hoc boxes:
+
+- **Lanes/boundaries** — dashed rounded regions for actor, system/module, external dependency, worker/process, or team ownership.
+- **Nodes** — rounded cards with a human label, real symbol/path when known, owner/runtime/layer, and important input/output/state.
+- **Edges** — labelled arrows; solid for local/same-runtime handoffs, blue dashed for boundary/API/process crossings, red dashed for risk/recovery/removed paths. Put labels in foreground pill groups (`diagram.edge-label.*`) so they are never hidden behind nodes or clipped by nearby components.
+- **Decision/callout nodes** — amber cards for unresolved decisions, assumptions, unproven claims, or escalation triggers.
+- **Legend** — visible semantic color/line guide tied to this diagram, not a generic decorative palette.
+
+For design reports, reuse the same semantics in embedded architecture and slice diagrams even when the SVG is smaller.
 
 ## Diagram quality gate
 
@@ -289,6 +320,8 @@ Before handoff, check:
 - text remains readable at the expected viewport and is at least 12px effective size;
 - uncertainty, removed paths, recovery, or decision-needed paths are visible instead of implied;
 - progressive motion is optional and respects `prefers-reduced-motion`;
+- final HTML has no external CSS/JS/runtime assets;
+- build-time Tailwind CSS is current (`npm run check:report-css` in `/Users/carlosrodrigo/agents`);
 - diagram-only pages pass `node /Users/carlosrodrigo/agents/scripts/validate-html-report.mjs --allow-placeholders resources/system-diagram-template.html` when validating templates, and finished diagrams pass without `--allow-placeholders`.
 
 ## Output Format
