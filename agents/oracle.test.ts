@@ -14,6 +14,7 @@ const researchAndPlanPrompt = readFileSync(new URL("../prompts/research-and-plan
 
 test("oracle agent emphasizes concise, evidence-first, high-signal feedback", () => {
 	assert.match(oracleAgent, /model: openai-codex\/gpt-5\.5/);
+	assert.match(oracleAgent, /tools: read, grep, find, ls, agent_job_start, agent_job_status/);
 	assert.match(oracleAgent, /Feedback style:/);
 	assert.match(oracleAgent, /Lead with the conclusion/);
 	assert.match(oracleAgent, /Default to short, sharp feedback/);
@@ -23,6 +24,21 @@ test("oracle agent emphasizes concise, evidence-first, high-signal feedback", ()
 	assert.match(oracleAgent, /selection visibility/);
 	assert.match(oracleAgent, /perceived latency/);
 	assert.match(oracleAgent, /Documentation Destination[\s\S]*none/);
+});
+
+test("oracle coordinates Are You Proud validation with five focused child jobs", () => {
+	assert.match(oracleAgent, /Are You Proud validation mode:/);
+	assert.match(oracleAgent, /\/Users\/carlosrodrigo\/agents\/skills\/are-you-proud\/SKILL\.md/);
+	assert.match(oracleAgent, /Correctness and intent/);
+	assert.match(oracleAgent, /Simplicity \/ YAGNI \/ overengineering/);
+	assert.match(oracleAgent, /Naming and self-explanatory code/);
+	assert.match(oracleAgent, /SOLID and design fit/);
+	assert.match(oracleAgent, /Tests and verification/);
+	assert.match(oracleAgent, /Start exactly five child agent jobs/);
+	assert.match(oracleAgent, /followUp: false/);
+	assert.match(oracleAgent, /Do not spawn subagents/);
+	assert.match(oracleAgent, /agent_job_status/);
+	assert.match(oracleAgent, /Proud[\s\S]*Mostly proud[\s\S]*Not proud yet[\s\S]*Would not ship/);
 });
 
 test("oracle prompt templates require repo-specific evidence and interactive-flow feedback", () => {
