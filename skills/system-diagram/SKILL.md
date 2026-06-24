@@ -282,6 +282,7 @@ When the user says a layer, responsibility, domain relationship, or call arrow f
 - Use the `html-report-designer` shell for polished long-form pages: breadcrumbs, collapsible left sidebar, no top menu/right rail, semantic sections, feedback, provenance, and print styles.
 - Use `resources/system-diagram-template.html` for diagram-only pages. It uses build-time Tailwind and inline compiled CSS; edit `resources/system-diagram.tailwind.css`, then run `npm run build:report-css` from `/Users/carlosrodrigo/agents` before handoff/commit.
 - Do not use Tailwind CDN/runtime, remote fonts, Mermaid runtime, or external CSS in finished diagrams. D2/Mermaid/Graphviz may be used only at build time if the final SVG is inlined and restyled to this system.
+- Prefer the build-time ELK renderer for multi-node architecture/call-flow diagrams: create an ELK JSON spec, run `node /Users/carlosrodrigo/agents/scripts/render-elk-diagram.mjs spec.json output.svg`, inspect spacing/labels, then inline the SVG. Use manual SVG only for tiny diagrams or intentionally custom spatial metaphors.
 - Use a tokenized Vercel-style diagram system: semantic surfaces, text ranks, borders, neutral default, status colors, spacing, radius, focus rings, and reduced-motion-safe motion.
 - Use subtle scroll appearance, SVG node reveal, and path draw-in motion when it teaches reading order; keep content visible without JavaScript and honor `prefers-reduced-motion`.
 - Keep text readable; do not shrink below 12px effective size in SVG.
@@ -301,7 +302,7 @@ Use these reusable primitives instead of ad hoc boxes:
 
 - **Lanes/boundaries** — dashed rounded regions for actor, system/module, external dependency, worker/process, or team ownership.
 - **Nodes** — rounded cards with a human label, real symbol/path when known, owner/runtime/layer, and important input/output/state.
-- **Edges** — labelled arrows; solid for local/same-runtime handoffs, blue dashed for boundary/API/process crossings, red dashed for risk/recovery/removed paths. Put labels in foreground pill groups (`diagram.edge-label.*`) so they are never hidden behind nodes or clipped by nearby components.
+- **Edges** — labelled arrows; solid for local/same-runtime handoffs, blue dashed for boundary/API/process crossings, red dashed for risk/recovery/removed paths. Use ELK orthogonal routing for 4+ node flows. Put labels in foreground pill groups (`diagram.edge-label.*`) so they are never hidden behind nodes or clipped by nearby components.
 - **Decision/callout nodes** — amber cards for unresolved decisions, assumptions, unproven claims, or escalation triggers.
 - **Legend** — visible semantic color/line guide tied to this diagram, not a generic decorative palette.
 
@@ -315,6 +316,7 @@ Before handoff, check:
 - source evidence was inspected for real actors, calls, state, and boundaries;
 - every color has a responsibility meaning documented in the legend;
 - every meaningful arrow is labeled with call/event/protocol/payload;
+- for 4+ node diagrams, spacing/routing is generated with ELK or the manual layout has an explicit reason;
 - key SVG groups/nodes have stable `data-review-id` anchors;
 - SVG has `<title>` and `<desc>` and a visible caption/how-to-read note;
 - text remains readable at the expected viewport and is at least 12px effective size;
