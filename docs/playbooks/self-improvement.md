@@ -17,6 +17,8 @@ use Pi normally
 
 The loop is quiet by default. It does not secretly edit code, switch models, or launch background agents.
 
+For finish-phase promotion rules, use the companion playbook: [`compound-engineering.md`](compound-engineering.md).
+
 ## What runs automatically
 
 While Pi is active:
@@ -88,7 +90,7 @@ These never happen unless invoked:
    - evidence,
    - proposed change,
    - a coarse `low|medium|high` scorecard for evidence strength, reproducibility, expected metric, effort, risk, rollback clarity, test coverage, and confidence,
-   - compound-engineering answers: how this helps the next similar task, how to verify the learning, and whether it will catch or accelerate itself next time,
+   - Compound engineering answers: lowest useful leverage rung, evidence, verification, retirement signal, and safety check,
    - expected metric,
    - likely files,
    - verification,
@@ -97,6 +99,13 @@ These never happen unless invoked:
 5. If you approve, ask Pi to implement that one proposal as a normal task.
 6. Run targeted tests and `bash scripts/verify.sh`.
 7. Run `/bench run` again and compare.
+8. Optional Compound step: if the approved work reveals a repeated lesson, apply [`compound-engineering.md`](compound-engineering.md); otherwise do nothing.
+
+## Compound step
+
+Use compound engineering only when evidence shows a repeated lesson worth preserving. Prefer the lowest useful artifact: task handoff, playbook note, regression check, benchmark seed, warning, extension/tool, then skill guidance.
+
+Do not compound one-off friction, stale local state, or obvious task-specific details. The step must not mutate AGENTS, skills, prompts, models, or extensions automatically; proposals remain human-gated until explicitly approved.
 
 ## Data locations
 

@@ -34,6 +34,7 @@ Do not create feature docs by default for every change.
 
 - Playbooks follow the template in each file (Overview → Patterns → Constraints → Gotchas)
 - Self-improvement workflow: `docs/playbooks/self-improvement.md`
+- Compound engineering promotion rules: `docs/playbooks/compound-engineering.md`
 - Playbooks stay under 200 lines — split if growing beyond that
 - Verification details belong in task feedback loops and task `## Result` sections, not separate report files
 - Agents update relevant docs only when they discover durable, reusable knowledge during implementation
