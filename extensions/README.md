@@ -18,6 +18,7 @@ Or run the install script for symlink-based local development:
 
 ```bash
 pi install ./extensions/agent-jobs
+pi install ./extensions/agent-benchmark
 pi install ./extensions/auto-prompt
 pi install ./extensions/bordered-editor
 pi install ./extensions/code-intel
@@ -26,9 +27,11 @@ pi install ./extensions/document-reviewer
 pi install ./extensions/file-opener
 pi install ./extensions/git-blame
 pi install ./extensions/lazygit
+pi install ./extensions/overseer
 pi install ./extensions/prompt-queue
 pi install ./extensions/review-mode
 pi install ./extensions/semantic-search
+pi install ./extensions/self-improvement-archive
 pi install ./extensions/session-query
 pi install ./extensions/verify
 pi install ./extensions/web-tools
@@ -41,6 +44,7 @@ pi install ./extensions/worktree-manager
 | Extension | Description |
 |-----------|-------------|
 | [agent-jobs](agent-jobs/) | Non-blocking tmux-backed researcher/oracle jobs with persisted logs/results |
+| [agent-benchmark](agent-benchmark/) | Cheap local benchmark suite for evidence-based Pi config improvement |
 | [auto-prompt](auto-prompt/) | Inline ghost text prompt suggestions (fish-style) |
 | [bordered-editor](bordered-editor/) | Bordered input editor with model/context/git info |
 | [branch-switcher](branch-switcher/) | Interactive git branch switching with local + remote-only branch support |
@@ -49,9 +53,11 @@ pi install ./extensions/worktree-manager
 | [file-opener](file-opener/) | Syntax-highlighted file viewer with diff support |
 | [git-blame](git-blame/) | Interactive git blame overlay |
 | [lazygit](lazygit/) | LazyGit launcher via tmux |
+| [overseer](overseer/) | Warning-only event watchdog for repeated tool failures and risky large mutations |
 | [prompt-queue](prompt-queue/) | Interactive queue palette for staging prompts, pasting them into the editor, or running them serially |
 | [review-mode](review-mode/) | Overlay review workbench for local/staged/unstaged/outgoing diffs with colorized preview, hunk/file/all scopes, same-session questions, and saved review notes |
 | [semantic-search](semantic-search/) | Local Ollama-backed hybrid code index, semantic search tool, and repo concept map |
+| [self-improvement-archive](self-improvement-archive/) | Quiet local archive of run, verification, benchmark, warning, and proposal evidence |
 | [session-query](session-query/) | Query previous Pi session files for context and decisions |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
 | [workflow-modes](workflow-modes/) | Smart/deep2/deep3/fast mode switching |

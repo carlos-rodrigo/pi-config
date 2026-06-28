@@ -4,8 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import verifyExtension from "./index.ts";
-
+import verifyExtension, { VERIFICATION_OUTCOME_EVENT } from "./index.ts";
 type PiEventHandler = (...args: any[]) => unknown;
 type ExecCall = { command: string; args: string[]; options?: { cwd?: string; timeout?: number } };
 
@@ -28,6 +27,7 @@ function createHarness(
 	const sendUserMessages: Array<{ content: string; options: any }> = [];
 	const execCalls: ExecCall[] = [];
 	const eventBusHandlers = new Map<string, ((data: unknown) => void)[]>();
+	const emittedEvents: Array<{ name: string; data: unknown }> = [];
 
 	const pi = {
 		on(name: string, handler: PiEventHandler) {
@@ -44,6 +44,7 @@ function createHarness(
 		},
 		events: {
 			emit(name: string, data: unknown) {
+				emittedEvents.push({ name, data });
 				for (const handler of eventBusHandlers.get(name) ?? []) {
 					handler(data);
 				}
@@ -70,6 +71,7 @@ function createHarness(
 		tools,
 		sendUserMessages,
 		execCalls,
+		emittedEvents,
 		emit(name: string, data?: unknown) {
 			for (const handler of eventBusHandlers.get(name) ?? []) {
 				handler(data);
@@ -179,14 +181,14 @@ test("before_agent_start skips docs-only prompts", async () => {
 	assert.equal(result, undefined);
 });
 
-test("agent_end verifies only the touched project root and stays silent on success", async (t) => {
+test("agent_end verifies only the touched project root, emits a passed outcome, and stays silent on success", async (t) => {
 	const fixture = makeTempProject();
 	t.after(() => fixture.cleanup());
 
 	fs.mkdirSync(path.join(fixture.root, "scripts"), { recursive: true });
 	fs.writeFileSync(path.join(fixture.root, "scripts", "verify.sh"), "#!/bin/bash\nexit 0\n", "utf8");
 
-	const { eventHandlers, execCalls, sendUserMessages } = createHarness(async (command, args, options) => {
+	const { eventHandlers, execCalls, sendUserMessages, emittedEvents } = createHarness(async (command, args, options) => {
 		if (command === "bash" && args[0] === "scripts/verify.sh") {
 			return { stdout: "", stderr: "", code: 0, killed: false };
 		}
@@ -207,6 +209,13 @@ test("agent_end verifies only the touched project root and stays silent on succe
 		options: { cwd: fixture.root, timeout: 60_000 },
 	});
 	assert.equal(sendUserMessages.length, 0);
+	const outcome = emittedEvents.find((event) => event.name === VERIFICATION_OUTCOME_EVENT)?.data as any;
+	assert.equal(outcome.status, "passed");
+	assert.equal(outcome.projectRoot, fixture.root);
+	assert.equal(outcome.command, "bash scripts/verify.sh");
+	assert.equal(outcome.trigger, "auto");
+	assert.equal(outcome.touchedPaths.length, 1);
+	assert.ok(outcome.touchedPaths[0].endsWith(path.join("src", "index.ts")));
 });
 
 test("agent_end skips missing scripts/verify.sh even when a project root is detected", async (t) => {
@@ -215,7 +224,7 @@ test("agent_end skips missing scripts/verify.sh even when a project root is dete
 
 	fs.writeFileSync(path.join(fixture.root, "package.json"), JSON.stringify({ name: "fixture" }), "utf8");
 
-	const { eventHandlers, execCalls, sendUserMessages } = createHarness(async () => {
+	const { eventHandlers, execCalls, sendUserMessages, emittedEvents } = createHarness(async () => {
 		return { stdout: "", stderr: "fatal: not a git repository", code: 1, killed: false };
 	});
 	const toolCall = eventHandlers.get("tool_call");
@@ -228,6 +237,7 @@ test("agent_end skips missing scripts/verify.sh even when a project root is dete
 
 	assert.equal(execCalls.some((call) => call.command === "bash" && call.args[0] === "scripts/verify.sh"), false);
 	assert.equal(sendUserMessages.length, 0);
+	assert.equal(emittedEvents.some((event) => event.name === VERIFICATION_OUTCOME_EVENT), false);
 });
 
 test("verification failure message points the agent at the correct repo root", async (t) => {
@@ -237,7 +247,7 @@ test("verification failure message points the agent at the correct repo root", a
 	fs.mkdirSync(path.join(fixture.root, "scripts"), { recursive: true });
 	fs.writeFileSync(path.join(fixture.root, "scripts", "verify.sh"), "#!/bin/bash\nexit 1\n", "utf8");
 
-	const { eventHandlers, sendUserMessages } = createHarness(async (command, args) => {
+	const { eventHandlers, sendUserMessages, emittedEvents } = createHarness(async (command, args) => {
 		if (command === "bash" && args[0] === "scripts/verify.sh") {
 			return { stdout: "", stderr: "tests failed", code: 2, killed: false };
 		}
@@ -255,6 +265,9 @@ test("verification failure message points the agent at the correct repo root", a
 	assert.match(sendUserMessages[0].content, /tests failed/);
 	assert.ok(sendUserMessages[0].content.includes(`cd '${fixture.root}' && bash scripts/verify.sh`));
 	assert.deepEqual(sendUserMessages[0].options, { deliverAs: "followUp" });
+	const outcome = emittedEvents.find((event) => event.name === VERIFICATION_OUTCOME_EVENT)?.data as any;
+	assert.equal(outcome.status, "failed");
+	assert.match(outcome.failureSummary, /tests failed/);
 });
 
 test("session id drift clears touched paths even if no lifecycle event fired", async (t) => {

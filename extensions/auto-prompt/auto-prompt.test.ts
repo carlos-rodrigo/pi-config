@@ -127,6 +127,24 @@ test("buildSuggestionPrompt is mode-aware for smart work", () => {
 	assert.match(prompt, /focused check/i);
 });
 
+test("buildSuggestionPrompt can include compact archive guidance", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Continue.\n\nAssistant: Done.",
+		"smart",
+		[],
+		[],
+		undefined,
+		undefined,
+		false,
+		undefined,
+		"2 recent verification failures; prefer verification-first next steps",
+	);
+
+	assert.match(prompt, /self_improvement_archive/);
+	assert.match(prompt, /verification failures/i);
+	assert.match(prompt, /verification-first/i);
+});
+
 test("extractFeaturePacketSuggestionState detects feature packets, slug, and ready task stage", () => {
 	const state = extractFeaturePacketSuggestionState(
 		"Assistant: Created .features/saved-search-filters/tasks/001-change-output.md with status: ready for WO-001.",

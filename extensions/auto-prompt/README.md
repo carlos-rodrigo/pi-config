@@ -40,6 +40,7 @@ Suggestions follow a "devil's advocate" approach to verification:
 - **Action + verification**: Suggestions should push the next step forward and include how to verify it worked
 - **Preflight when coding**: For behavior-changing edits, suggestions can ask the agent to call `verification_plan` before editing
 - **Feature-packet aware**: When a `docs/features/<slug>/` packet or `.features/<slug>/tasks/` brief is in the conversation, suggestions can point to the next strategy/design/task/result action for the file-based packet flow
+- **Archive-aware**: When `self-improvement-archive` has compact evidence of recent verification gaps or overseer warnings, suggestions can bias toward verification-first next steps without adding another LLM call
 
 This addresses the blind spot problem: when an agent writes code AND writes unit tests, both can share the same misconception.
 

@@ -1,13 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 import agentJobsExtension, {
+	buildLoopCommandArgs,
+	buildLoopRunScript,
 	buildRunScript,
 	buildTmuxNewWindowArgs,
 	collectReviewContext,
 	createJobId,
 	parseAgentEvents,
+	parseLoopBgCommandArgs,
+	parseLoopJobStatusCommandArgs,
+	resolveLoopFeature,
 	sanitizeJobPart,
 	shellQuote,
 } from "./index.ts";
@@ -60,6 +68,95 @@ test("buildTmuxNewWindowArgs creates a detached window that exits when the job f
 	assert.deepEqual(args.slice(0, 6), ["new-window", "-d", "-n", "pi-oracle-abcdef", "-c", "/tmp/repo"]);
 	assert.equal(args[6], "bash '/tmp/repo/.pi/agent-jobs/job/run.sh'");
 	assert.doesNotMatch(args[6]!, /read _|Press Enter to close/);
+});
+
+test("buildLoopCommandArgs and buildLoopRunScript launch loop.sh with durable logs", () => {
+	const command = buildLoopCommandArgs({
+		loopScriptPath: "/Users/me/.agents/skills/loop/loop.sh",
+		feature: "campaign-stock-ledger",
+		task: "TASK-002",
+		cwd: "/tmp/repo",
+		maxIterations: 5,
+		tool: "pi",
+		sleepSeconds: 5,
+		pollSeconds: 30,
+		rateLimitStreak: 3,
+	});
+	const script = buildLoopRunScript({
+		cwd: "/tmp/repo",
+		jobId: "loop-1",
+		command,
+		stdoutPath: "/tmp/repo/.pi/loop-jobs/loop-1/stdout.log",
+		stderrPath: "/tmp/repo/.pi/loop-jobs/loop-1/stderr.log",
+		exitPath: "/tmp/repo/.pi/loop-jobs/loop-1/exit.json",
+		pidPath: "/tmp/repo/.pi/loop-jobs/loop-1/pid",
+		resultPath: "/tmp/repo/.pi/loop-jobs/loop-1/result.md",
+	});
+
+	assert.deepEqual(command, [
+		"bash",
+		"/Users/me/.agents/skills/loop/loop.sh",
+		"--feature",
+		"campaign-stock-ledger",
+		"--project-root",
+		"/tmp/repo",
+		"--task",
+		"TASK-002",
+		"--tool",
+		"pi",
+		"--sleep",
+		"5",
+		"--poll",
+		"30",
+		"--rate-limit-streak",
+		"3",
+		"5",
+	]);
+	assert.match(script, /pi background loop job: loop-1/);
+	assert.match(script, /'bash' '\/Users\/me\/\.agents\/skills\/loop\/loop\.sh' '--feature' 'campaign-stock-ledger'/);
+	assert.match(script, /> '\/tmp\/repo\/\.pi\/loop-jobs\/loop-1\/stdout\.log' 2> '\/tmp\/repo\/\.pi\/loop-jobs\/loop-1\/stderr\.log'/);
+	assert.match(script, /exit\.json/);
+});
+
+test("parseLoopBgCommandArgs accepts flags and positional shorthand", () => {
+	assert.deepEqual(parseLoopBgCommandArgs("--feature campaign-stock-ledger --task TASK-002 --max 5 --tool pi --poll 30 --sleep 5"), {
+		feature: "campaign-stock-ledger",
+		task: "TASK-002",
+		maxIterations: 5,
+		tool: "pi",
+		pollSeconds: 30,
+		sleepSeconds: 5,
+	});
+	assert.deepEqual(parseLoopBgCommandArgs("campaign-stock-ledger TASK-002 5"), {
+		feature: "campaign-stock-ledger",
+		task: "TASK-002",
+		maxIterations: 5,
+	});
+});
+
+test("parseLoopJobStatusCommandArgs supports project-root polling", () => {
+	assert.deepEqual(parseLoopJobStatusCommandArgs("--project-root /tmp/repo loop-123"), {
+		cwd: "/tmp/repo",
+		jobId: "loop-123",
+	});
+	assert.deepEqual(parseLoopJobStatusCommandArgs("loop-123"), {
+		jobId: "loop-123",
+	});
+});
+
+test("resolveLoopFeature infers feature from task or single ready feature", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-loop-feature-"));
+	try {
+		await mkdir(join(root, ".features", "alpha", "tasks"), { recursive: true });
+		await mkdir(join(root, ".features", "beta", "tasks"), { recursive: true });
+		await writeFile(join(root, ".features", "alpha", "tasks", "001-alpha.md"), "---\nid: TASK-001\nstatus: ready\n---\n", "utf8");
+		await writeFile(join(root, ".features", "beta", "tasks", "002-beta.md"), "---\nid: TASK-002\nstatus: draft\n---\n", "utf8");
+
+		assert.equal(await resolveLoopFeature(root, undefined, "TASK-002"), "beta");
+		assert.equal(await resolveLoopFeature(root), "alpha");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 });
 
 test("parseAgentEvents extracts final assistant output, usage, and tool count", () => {
@@ -146,6 +243,6 @@ test("agentJobsExtension registers background job tools and commands", () => {
 
 	agentJobsExtension(api);
 
-	assert.deepEqual([...tools].sort(), ["agent_job_cancel", "agent_job_start", "agent_job_status"]);
-	assert.deepEqual([...commands].sort(), ["agent-job-status", "ask-oracle-bg", "deep-review-bg", "research-bg"]);
+	assert.deepEqual([...tools].sort(), ["agent_job_cancel", "agent_job_start", "agent_job_status", "loop_job_cancel", "loop_job_start", "loop_job_status"]);
+	assert.deepEqual([...commands].sort(), ["agent-job-status", "ask-oracle-bg", "deep-review-bg", "loop-bg", "loop-job-status", "research-bg"]);
 });

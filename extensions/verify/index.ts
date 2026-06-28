@@ -7,6 +7,7 @@ import { Type } from "@sinclair/typebox";
 export const VERIFY_SCRIPT_RELATIVE_PATH = "scripts/verify.sh";
 const VERIFY_TIMEOUT_MS = 60_000;
 const MAX_ERROR_CHARS = 12_000;
+export const VERIFICATION_OUTCOME_EVENT = "self-improvement:verification";
 
 type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
 export type VerifyTemplateKind = "node" | "go" | "rust" | "python" | "ruby" | "elixir" | "generic";
@@ -20,6 +21,18 @@ export type DetectedProjectTemplate = {
 type VerificationFailure = {
 	projectRoot: string;
 	errors: string;
+};
+
+export type VerificationOutcome = {
+	schemaVersion: 1;
+	projectRoot: string;
+	command: string;
+	status: "passed" | "failed" | "skipped";
+	durationMs?: number;
+	failureSummary?: string;
+	touchedPaths?: string[];
+	trigger: "auto" | "manual" | "setup";
+	timestamp: string;
 };
 
 type VerificationPlanInput = {
@@ -103,6 +116,18 @@ function describeTemplate(template: DetectedProjectTemplate): string {
 function formatVerifyCommand(projectRoot: string, quick = false): string {
 	const command = quick ? `bash ${VERIFY_SCRIPT_RELATIVE_PATH} --quick` : `bash ${VERIFY_SCRIPT_RELATIVE_PATH}`;
 	return `cd ${shellQuote(projectRoot)} && ${command}`;
+}
+
+function emitVerificationOutcome(pi: ExtensionAPI, outcome: VerificationOutcome): void {
+	pi.events?.emit?.(VERIFICATION_OUTCOME_EVENT, outcome);
+}
+
+function touchedPathsForRoot(projectRoot: string, touchedPaths: string[]): string[] {
+	const root = resolve(projectRoot);
+	return touchedPaths.filter((path) => {
+		const absolutePath = resolve(path);
+		return absolutePath === root || absolutePath.startsWith(`${root}/`);
+	});
 }
 
 async function findNearestVerifyRoot(startDir: string): Promise<string | undefined> {
@@ -642,6 +667,7 @@ export default function (pi: ExtensionAPI) {
 		syncSessionState(ctx);
 		if (!ctx.hasUI) return;
 
+		const touchedSnapshot = Array.from(touchedPaths);
 		const roots = new Set<string>(touchedProjectRoots);
 		for (const root of await collectTouchedProjectRoots(pi, touchedPaths)) {
 			roots.add(root);
@@ -651,7 +677,21 @@ export default function (pi: ExtensionAPI) {
 
 		const failures: VerificationFailure[] = [];
 		for (const projectRoot of roots) {
+			if (!(await pathExists(join(projectRoot, VERIFY_SCRIPT_RELATIVE_PATH)))) continue;
+			const startedAt = Date.now();
 			const failure = await runVerification(pi, projectRoot);
+			const durationMs = Date.now() - startedAt;
+			emitVerificationOutcome(pi, {
+				schemaVersion: 1,
+				projectRoot,
+				command: `bash ${VERIFY_SCRIPT_RELATIVE_PATH}`,
+				status: failure ? "failed" : "passed",
+				durationMs,
+				failureSummary: failure ? truncateForMessage(failure.errors) : undefined,
+				touchedPaths: touchedPathsForRoot(projectRoot, touchedSnapshot),
+				trigger: "auto",
+				timestamp: new Date().toISOString(),
+			});
 			if (failure) failures.push(failure);
 		}
 		if (failures.length === 0) return;

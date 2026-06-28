@@ -1,5 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 
+import { recommendModeFromArchive } from "../self-improvement-archive/index.ts";
+
 type AgentMode = "smart" | "deep2" | "deep3" | "fast";
 type ModelLike = { provider?: string; id?: string; model?: string } | undefined;
 
@@ -220,7 +222,14 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (input.toLowerCase() === "help") {
-				ctx.ui.notify("Usage: /mode smart | /mode deep2 | /mode deep3 | /mode fast", "info");
+				ctx.ui.notify("Usage: /mode smart | /mode deep2 | /mode deep3 | /mode fast | /mode recommend", "info");
+				return;
+			}
+
+			if (["recommend", "why"].includes(input.toLowerCase())) {
+				const recommendation = recommendModeFromArchive(ctx.cwd);
+				ctx.ui.notify(`Recommended mode: ${MODE_LABEL[recommendation.mode]} — ${recommendation.reason}`, "info");
+				ctx.ui.setEditorText?.(`Recommended mode: ${recommendation.mode}\n\n${recommendation.reason}\n\nRun /${recommendation.mode === "deep2" ? "deep2" : recommendation.mode} to switch if you agree.`);
 				return;
 			}
 

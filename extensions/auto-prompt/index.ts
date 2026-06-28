@@ -42,6 +42,8 @@ import {
 } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 
+import { buildArchiveGuidance } from "../self-improvement-archive/index.ts";
+
 // --- Configuration defaults ---
 
 type ModelSelection = { provider: string; id: string };
@@ -444,10 +446,14 @@ export function buildSuggestionPrompt(
 	baselineGuidelines?: string[],
 	unverifiedImplementation?: boolean,
 	featurePacketState?: FeaturePacketSuggestionState,
+	archiveGuidance?: string,
 ): string {
 	const modeHint = workflowMode ? `\n- Current agent mode: ${workflowMode}` : "";
 	const modeGuidance = getWorkflowModeGuidance(workflowMode);
 	const featurePacketGuidance = getFeaturePacketGuidance(featurePacketState);
+	const archiveContext = archiveGuidance
+		? `\n\n<self_improvement_archive>\n${archiveGuidance}\n</self_improvement_archive>`
+		: "";
 
 	const fileContext =
 		filePaths && filePaths.length > 0
@@ -529,7 +535,7 @@ Examples:
 
 <recent_conversation>
 ${conversationContext}
-</recent_conversation>${fileContext}${cmdContext}${baselineContext}`;
+</recent_conversation>${fileContext}${cmdContext}${archiveContext}${baselineContext}`;
 }
 
 function getPhaseGuidance(phase: ConversationPhase): string {
@@ -885,6 +891,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext, gener
 	const baselineGuidelines = extractBaselineGuidelines(ctx.getSystemPrompt());
 	const unverifiedImplementation = detectUnverifiedImplementation(conversationContext);
 	const featurePacketState = extractFeaturePacketSuggestionState(conversationContext, filePaths);
+	const archiveGuidance = buildArchiveGuidance(ctx.cwd);
 
 	const controller = new AbortController();
 	pendingController = controller;
@@ -899,6 +906,7 @@ async function generateSuggestion(pi: ExtensionAPI, ctx: ExtensionContext, gener
 			baselineGuidelines,
 			unverifiedImplementation,
 			featurePacketState,
+			archiveGuidance,
 		);
 		const prompt = revisionHint
 			? `${basePrompt}\n\n<revision_request>\n${revisionHint}\n</revision_request>`
