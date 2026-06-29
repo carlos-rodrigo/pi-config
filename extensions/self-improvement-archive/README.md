@@ -10,7 +10,7 @@ While Pi is active, the extension appends compact JSONL records to:
 .pi/self-improvement/archive.jsonl
 ```
 
-Records include run duration, model/mode when available, tool counts, touched files, tool failures, structured verification outcomes, warnings, and notes. It does **not** store full prompts or session transcripts by default.
+Records include run duration, model/mode when available, tool counts, touched files, tool failures, structured verification outcomes, warnings, and notes. Run records also include capped replay-lite steps: ordered tool/action summaries, timings, status, touched files, failure summaries, and in-run warning/verification events; common secret-like env tokens are redacted in replay summaries. It does **not** store full prompts, tool outputs, or session transcripts by default.
 
 ## Commands
 
@@ -23,7 +23,7 @@ Records include run duration, model/mode when available, tool counts, touched fi
 /propose-improvement
 ```
 
-`proposal` writes a human-gated improvement draft to the editor. It includes a deterministic low/medium/high scorecard for evidence strength, reproducibility, expected metric, effort, risk, rollback clarity, test coverage, and confidence, plus compound-engineering questions about how the change helps the next similar task and how to verify the learning. It does not edit code or launch agents.
+`last` includes a compact replay-lite block for newer run records and falls back to the legacy one-line summary for older records. `proposal` writes a human-gated improvement draft to the editor. It includes a deterministic low/medium/high scorecard for evidence strength, reproducibility, expected metric, effort, risk, rollback clarity, test coverage, and confidence, plus compound-engineering questions about how the change helps the next similar task and how to verify the learning. It does not edit code or launch agents.
 
 ## Tool
 

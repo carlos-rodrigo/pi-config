@@ -23,6 +23,7 @@ pi install ./extensions/auto-prompt
 pi install ./extensions/bordered-editor
 pi install ./extensions/code-intel
 pi install ./extensions/branch-switcher
+pi install ./extensions/checkpoint-rollback
 pi install ./extensions/document-reviewer
 pi install ./extensions/file-opener
 pi install ./extensions/git-blame
@@ -48,6 +49,7 @@ pi install ./extensions/worktree-manager
 | [auto-prompt](auto-prompt/) | Inline ghost text prompt suggestions (fish-style) |
 | [bordered-editor](bordered-editor/) | Bordered input editor with model/context/git info |
 | [branch-switcher](branch-switcher/) | Interactive git branch switching with local + remote-only branch support |
+| [checkpoint-rollback](checkpoint-rollback/) | Human-controlled git checkpoints with previewed rollback and explicit confirmation |
 | [code-intel](code-intel/) | `code_find` orchestration plus symbol, dependency, git-history, and AST search tools |
 | [document-reviewer](document-reviewer/) | Markdown review sessions with browser UI |
 | [file-opener](file-opener/) | Syntax-highlighted file viewer with diff support |

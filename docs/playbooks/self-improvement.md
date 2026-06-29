@@ -23,7 +23,7 @@ For finish-phase promotion rules, use the companion playbook: [`compound-enginee
 
 While Pi is active:
 
-- `self-improvement-archive` records compact local evidence to `.pi/self-improvement/archive.jsonl`.
+- `self-improvement-archive` records compact local evidence to `.pi/self-improvement/archive.jsonl`, including capped/redacted replay-lite run steps for `/improve-archive last`.
 - `verify` emits structured verification outcomes when its existing `agent_end` verification hook runs.
 - `overseer` watches for repeated tool failures or risky large mutations and shows rate-limited warnings.
 - `auto-prompt` may include a tiny archive summary in its suggestion prompt.
@@ -34,7 +34,7 @@ These hooks are in-process. They run only during an active Pi session.
 
 These never happen unless invoked:
 
-- Benchmarks: `/bench run` or `agent_benchmark`.
+- Benchmarks: `/bench run`, `/bench run <tier>`, or `agent_benchmark`.
 - Improvement proposal: `/propose-improvement`, `/improve-archive proposal`, or `archive_analysis` with `action: proposal`.
 - Background agents/loops: `agent_job_start`, `/research-bg`, `/ask-oracle-bg`, `/loop-bg`, etc.
 - Mode switching: `/mode smart|deep2|deep3|fast`; `/mode recommend` only explains a recommendation.
@@ -44,7 +44,7 @@ These never happen unless invoked:
 ```bash
 # Inspect evidence
 /improve-archive status
-/improve-archive last 10
+/improve-archive last 10     # includes replay-lite steps for newer run records
 /improve-archive failures
 /improve-archive trends
 
@@ -55,6 +55,7 @@ These never happen unless invoked:
 # Run/compare cheap local benchmarks
 /bench list
 /bench run
+/bench run smoke
 /bench compare
 
 # Ask for mode guidance without switching
@@ -110,8 +111,9 @@ Do not compound one-off friction, stale local state, or obvious task-specific de
 ## Data locations
 
 ```text
-.pi/self-improvement/archive.jsonl         # compact evidence records
-.pi/self-improvement/benchmarks/*.json     # local benchmark results
+.pi/self-improvement/archive.jsonl                     # compact evidence records, including capped/redacted replay-lite run steps
+.pi/self-improvement/benchmarks/*.json                 # local benchmark results
+.pi/self-improvement/benchmark-regressions/*.json      # optional past-failure seed metadata
 ```
 
 `.pi/` is ignored by git.
@@ -131,4 +133,5 @@ Do not compound one-off friction, stale local state, or obvious task-specific de
 - New extensions require `/reload` or a new Pi session before they are available.
 - Archive evidence starts empty; run a few real tasks and benchmark runs before trusting trends.
 - Benchmarks are cheap local config checks, not SWE-Bench-style agent evaluations.
+- Benchmark tiers are `smoke`, `harness`, `scenario`, and `regression`; regression seeds represent past failures as metadata and do not launch hidden agents.
 - If semantic index status is stale, that is unrelated to this loop unless the proposal touches semantic-search behavior.

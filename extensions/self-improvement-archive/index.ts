@@ -15,6 +15,9 @@ const MAX_FAILURE_TEXT = 1_200;
 const MAX_TOUCHED_FILES = 40;
 const MAX_TOOL_FAILURES = 10;
 const DEFAULT_LIMIT = 20;
+const MAX_REPLAY_LITE_STEPS = 80;
+const MAX_REPLAY_LITE_FILES = 5;
+const MAX_REPLAY_LITE_SUMMARY = 240;
 
 type ArchiveKind = "run" | "verification" | "warning" | "note";
 
@@ -28,6 +31,21 @@ type BenchmarkEvidence = {
 		failures: string[];
 	};
 	errors: string[];
+};
+
+export type ReplayLiteStep = {
+	type: "tool" | "verification" | "warning";
+	name: string;
+	status: "started" | "passed" | "failed" | "skipped" | "warning";
+	atMs?: number;
+	durationMs?: number;
+	summary?: string;
+	touchedFiles?: string[];
+};
+
+export type ReplayLite = {
+	steps: ReplayLiteStep[];
+	truncated?: boolean;
 };
 
 export type VerificationArchivePayload = {
@@ -66,6 +84,7 @@ export type ArchiveRecord = {
 	toolCounts?: Record<string, number>;
 	toolFailures?: Array<{ toolName: string; message: string }>;
 	touchedFiles?: string[];
+	replayLite?: ReplayLite;
 	verification?: VerificationArchivePayload;
 	warning?: WarningArchivePayload;
 	note?: string;
@@ -103,6 +122,8 @@ type RunState = {
 	toolCounts: Record<string, number>;
 	toolFailures: Array<{ toolName: string; message: string }>;
 	touchedFiles: Set<string>;
+	replayLite: ReplayLite;
+	pendingToolSteps: Map<string, number[]>;
 };
 
 function isoNow(): string {
@@ -111,6 +132,144 @@ function isoNow(): string {
 
 function truncate(text: string, max = MAX_FAILURE_TEXT): string {
 	return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
+function redactReplayText(text: string): string {
+	return text
+		.replace(/\b([A-Z0-9_]*(?:API[_-]?KEY|PASSWORD|SECRET|TOKEN)[A-Z0-9_]*)=\S+/gi, "$1=[redacted]")
+		.replace(/(authorization:\s*bearer\s+)\S+/gi, "$1[redacted]");
+}
+
+function compactReplayText(text: string, max = MAX_REPLAY_LITE_SUMMARY): string {
+	return truncate(redactReplayText(text).replace(/\s+/g, " ").trim(), max);
+}
+
+function objectInput(input: unknown): Record<string, unknown> | undefined {
+	return input && typeof input === "object" ? (input as Record<string, unknown>) : undefined;
+}
+
+function normalizedPathFromInput(input: unknown): string | undefined {
+	const data = objectInput(input);
+	return typeof data?.path === "string" ? normalizePathArg(data.path) : undefined;
+}
+
+function summarizeToolAction(toolName: string, input: unknown): string | undefined {
+	const data = objectInput(input);
+	if (!data) return undefined;
+	if (toolName === "bash" && typeof data.command === "string") return `command: ${compactReplayText(data.command, 180)}`;
+	const path = normalizedPathFromInput(input);
+	if (path) return path;
+	if (Array.isArray(data.paths)) {
+		const paths = data.paths.filter((item): item is string => typeof item === "string").map((item) => normalizePathArg(item) ?? item);
+		if (paths.length > 0) return `paths: ${paths.slice(0, MAX_REPLAY_LITE_FILES).join(", ")}`;
+	}
+	if (typeof data.pattern === "string") return `pattern: ${compactReplayText(data.pattern, 120)}`;
+	return undefined;
+}
+
+function touchedFilesFromToolInput(toolName: string, input: unknown, cwd: string): string[] {
+	if (toolName !== "edit" && toolName !== "write") return [];
+	const path = normalizedPathFromInput(input);
+	return path ? [resolve(cwd, path)] : [];
+}
+
+function cappedFiles(files: string[] | undefined): string[] | undefined {
+	const compact = (files ?? []).filter((file): file is string => typeof file === "string" && file.length > 0).slice(0, MAX_REPLAY_LITE_FILES);
+	return compact.length > 0 ? compact : undefined;
+}
+
+function elapsedMs(state: RunState): number {
+	return Math.max(0, Date.now() - state.startedAt);
+}
+
+function pushReplayLiteStep(state: RunState, step: ReplayLiteStep): number | undefined {
+	if (state.replayLite.steps.length >= MAX_REPLAY_LITE_STEPS) {
+		state.replayLite.truncated = true;
+		return undefined;
+	}
+	state.replayLite.steps.push({
+		...step,
+		summary: step.summary ? compactReplayText(step.summary) : undefined,
+		touchedFiles: cappedFiles(step.touchedFiles),
+	});
+	return state.replayLite.steps.length - 1;
+}
+
+function rememberPendingToolStep(state: RunState, toolName: string, index: number): void {
+	const pending = state.pendingToolSteps.get(toolName) ?? [];
+	pending.push(index);
+	state.pendingToolSteps.set(toolName, pending);
+}
+
+function takePendingToolStep(state: RunState, toolName: string): number | undefined {
+	const pending = state.pendingToolSteps.get(toolName);
+	const index = pending?.shift();
+	if (pending && pending.length === 0) state.pendingToolSteps.delete(toolName);
+	return index;
+}
+
+function textFromToolResult(event: { content?: Array<{ text?: string }> }): string {
+	return (event.content ?? [])
+		.map((part) => part.text)
+		.filter((text): text is string => Boolean(text))
+		.join("\n")
+		.trim();
+}
+
+function recordToolCallReplay(state: RunState, event: { toolName: string; input?: unknown }, cwd: string): void {
+	const index = pushReplayLiteStep(state, {
+		type: "tool",
+		name: event.toolName,
+		status: "started",
+		atMs: elapsedMs(state),
+		summary: summarizeToolAction(event.toolName, event.input),
+		touchedFiles: touchedFilesFromToolInput(event.toolName, event.input, cwd),
+	});
+	if (index !== undefined) rememberPendingToolStep(state, event.toolName, index);
+}
+
+function recordToolResultReplay(state: RunState, event: { toolName: string; isError?: boolean; content?: Array<{ text?: string }> }): void {
+	const isError = Boolean(event.isError);
+	const status: ReplayLiteStep["status"] = isError ? "failed" : "passed";
+	const failureSummary = isError ? compactReplayText(textFromToolResult(event) || "tool failed") : undefined;
+	const index = takePendingToolStep(state, event.toolName);
+	if (index !== undefined) {
+		const step = state.replayLite.steps[index];
+		if (!step) return;
+		const elapsed = elapsedMs(state);
+		step.status = status;
+		step.durationMs = Math.max(0, elapsed - (step.atMs ?? elapsed));
+		if (failureSummary) step.summary = step.summary ? compactReplayText(`${step.summary} — ${failureSummary}`) : failureSummary;
+		return;
+	}
+	pushReplayLiteStep(state, {
+		type: "tool",
+		name: event.toolName,
+		status,
+		atMs: elapsedMs(state),
+		summary: failureSummary,
+	});
+}
+
+function recordVerificationReplay(state: RunState, payload: VerificationArchivePayload): void {
+	pushReplayLiteStep(state, {
+		type: "verification",
+		name: "verification",
+		status: payload.status,
+		atMs: elapsedMs(state),
+		summary: compactReplayText(`${payload.command}${payload.failureSummary ? ` — ${payload.failureSummary}` : ""}`),
+		touchedFiles: payload.touchedPaths,
+	});
+}
+
+function recordWarningReplay(state: RunState, payload: WarningArchivePayload): void {
+	pushReplayLiteStep(state, {
+		type: "warning",
+		name: "warning",
+		status: "warning",
+		atMs: elapsedMs(state),
+		summary: compactReplayText(`${payload.type}: ${payload.message}`),
+	});
 }
 
 function normalizePathArg(path: string | undefined): string | undefined {
@@ -317,7 +476,7 @@ export function formatArchiveReport(action: string, readResult: ArchiveReadResul
 	if (action === "last") {
 		const selected = records.slice(-limit).reverse();
 		lines.push("", `Last ${selected.length} record(s):`);
-		for (const record of selected) lines.push(formatRecordLine(record));
+		for (const record of selected) lines.push(...formatRecordBlock(record));
 		return lines.join("\n");
 	}
 
@@ -349,6 +508,19 @@ export function formatArchiveReport(action: string, readResult: ArchiveReadResul
 	return lines.join("\n");
 }
 
+function formatRecordBlock(record: ArchiveRecord): string[] {
+	const lines = [formatRecordLine(record)];
+	if (record.kind !== "run") return lines;
+	const replay = replayLiteFromRecord(record);
+	if (replay.malformed) lines.push("  replay-lite unavailable (malformed)");
+	if (replay.steps.length > 0) {
+		lines.push("  Replay-lite:");
+		for (const [index, step] of replay.steps.entries()) lines.push(formatReplayLiteStep(step, index));
+		if (replay.truncated) lines.push(`  Replay-lite truncated at ${MAX_REPLAY_LITE_STEPS} step(s).`);
+	}
+	return lines;
+}
+
 function formatRecordLine(record: ArchiveRecord): string {
 	if (record.kind === "verification") {
 		return `- ${record.timestamp} verification ${record.verification?.status} ${record.verification?.command ?? ""}${record.verification?.failureSummary ? ` — ${record.verification.failureSummary}` : ""}`;
@@ -360,6 +532,35 @@ function formatRecordLine(record: ArchiveRecord): string {
 		return `- ${record.timestamp} run ${record.durationMs ?? 0}ms, tools=${Object.values(record.toolCounts ?? {}).reduce((a, b) => a + b, 0)}, touched=${record.touchedFiles?.length ?? 0}`;
 	}
 	return `- ${record.timestamp} ${record.kind}`;
+}
+
+function replayLiteFromRecord(record: ArchiveRecord): { steps: ReplayLiteStep[]; truncated: boolean; malformed: boolean } {
+	const replay = (record as { replayLite?: unknown }).replayLite;
+	if (replay === undefined) return { steps: [], truncated: false, malformed: false };
+	if (!replay || typeof replay !== "object" || !Array.isArray((replay as ReplayLite).steps)) {
+		return { steps: [], truncated: false, malformed: true };
+	}
+	const rawSteps = (replay as ReplayLite).steps;
+	const steps = rawSteps.filter(isReplayLiteStep).slice(0, MAX_REPLAY_LITE_STEPS);
+	return {
+		steps,
+		truncated: Boolean((replay as ReplayLite).truncated),
+		malformed: rawSteps.length !== steps.length,
+	};
+}
+
+function isReplayLiteStep(value: unknown): value is ReplayLiteStep {
+	if (!value || typeof value !== "object") return false;
+	const step = value as ReplayLiteStep;
+	return typeof step.name === "string" && typeof step.status === "string";
+}
+
+function formatReplayLiteStep(step: ReplayLiteStep, index: number): string {
+	const at = typeof step.atMs === "number" ? `+${Math.round(step.atMs)}ms ` : "";
+	const duration = typeof step.durationMs === "number" ? ` (${Math.round(step.durationMs)}ms)` : "";
+	const summary = step.summary ? ` — ${step.summary}` : "";
+	const touched = step.touchedFiles?.length ? ` — touched: ${step.touchedFiles.join(", ")}` : "";
+	return `  ${index + 1}. ${at}${step.name} ${step.status}${duration}${summary}${touched}`;
 }
 
 type ProposalScoreLabel = "low" | "medium" | "high";
@@ -580,6 +781,9 @@ function buildRunRecord(state: RunState, ctx: ExtensionContext): ArchiveRecord {
 		toolCounts: state.toolCounts,
 		toolFailures: state.toolFailures.slice(0, MAX_TOOL_FAILURES),
 		touchedFiles: [...state.touchedFiles].slice(0, MAX_TOUCHED_FILES),
+		replayLite: state.replayLite.steps.length > 0 || state.replayLite.truncated
+			? { steps: state.replayLite.steps.slice(0, MAX_REPLAY_LITE_STEPS), truncated: state.replayLite.truncated || undefined }
+			: undefined,
 	};
 }
 
@@ -624,6 +828,7 @@ export default function selfImprovementArchiveExtension(pi: ExtensionAPI) {
 		const data = payload as VerificationArchivePayload;
 		const cwd = data.projectRoot || currentCtx?.cwd;
 		if (!cwd || !data.command || !data.status) return;
+		if (runState && runState.cwd === cwd) recordVerificationReplay(runState, data);
 		appendArchiveRecord(cwd, verificationRecord(cwd, data, currentCtx));
 	});
 
@@ -631,6 +836,7 @@ export default function selfImprovementArchiveExtension(pi: ExtensionAPI) {
 		const data = payload as WarningArchivePayload;
 		const cwd = currentCtx?.cwd;
 		if (!cwd || !data.type || !data.message) return;
+		if (runState && runState.cwd === cwd) recordWarningReplay(runState, data);
 		appendArchiveRecord(cwd, warningRecord(cwd, data, currentCtx));
 	});
 
@@ -656,6 +862,8 @@ export default function selfImprovementArchiveExtension(pi: ExtensionAPI) {
 			toolCounts: {},
 			toolFailures: [],
 			touchedFiles: new Set<string>(),
+			replayLite: { steps: [] },
+			pendingToolSteps: new Map<string, number[]>(),
 		};
 	});
 
@@ -663,17 +871,15 @@ export default function selfImprovementArchiveExtension(pi: ExtensionAPI) {
 		currentCtx = ctx;
 		if (!runState) return;
 		runState.toolCounts[event.toolName] = (runState.toolCounts[event.toolName] ?? 0) + 1;
-		if (event.toolName === "edit" || event.toolName === "write") {
-			const input = event.input as { path?: string };
-			const toolPath = normalizePathArg(input.path);
-			if (toolPath) runState.touchedFiles.add(resolve(ctx.cwd, toolPath));
-		}
+		recordToolCallReplay(runState, event, ctx.cwd);
+		for (const touchedFile of touchedFilesFromToolInput(event.toolName, event.input, ctx.cwd)) runState.touchedFiles.add(touchedFile);
 	});
 
 	pi.on("tool_result", async (event) => {
-		if (!runState || !(event as { isError?: boolean }).isError) return;
-		const content = (event as { content?: Array<{ text?: string }> }).content ?? [];
-		const message = content.map((part) => part.text).filter(Boolean).join("\n") || "tool failed";
+		if (!runState) return;
+		recordToolResultReplay(runState, event);
+		if (!(event as { isError?: boolean }).isError) return;
+		const message = textFromToolResult(event) || "tool failed";
 		runState.toolFailures.push({ toolName: event.toolName, message: truncate(message) });
 	});
 

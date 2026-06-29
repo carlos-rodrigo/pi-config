@@ -172,6 +172,82 @@ test("extension records a compact run from events", async (t) => {
 	assert.ok(read.records[0].touchedFiles?.[0].endsWith(path.join("src", "a.ts")));
 });
 
+test("last report displays compact replay-lite trajectory with failures, warnings, and verification", async (t) => {
+	const fixture = makeTempProject();
+	t.after(() => fixture.cleanup());
+	const harness = createHarness();
+	const { ctx } = createCtx(fixture.root);
+	const longFailure = `boom SECRET_TOKEN=abc123 ${"x".repeat(1_000)}`;
+
+	await harness.emit("session_start", {}, ctx);
+	await harness.emit("agent_start", { prompt: "Do not archive full transcripts" }, ctx);
+	await harness.emit("tool_call", { toolName: "read", input: { path: "README.md" } }, ctx);
+	await harness.emit("tool_result", { toolName: "read", isError: false, content: [{ type: "text", text: "full file output should not be stored" }] }, ctx);
+	await harness.emit("tool_call", { toolName: "edit", input: { path: "src/a.ts", edits: [{ oldText: "a", newText: "b" }] } }, ctx);
+	await harness.emit("tool_result", { toolName: "edit", isError: false, content: [{ type: "text", text: "edited" }] }, ctx);
+	await harness.emit("tool_call", { toolName: "bash", input: { command: "SECRET_TOKEN=abc123 npm run broken" } }, ctx);
+	await harness.emit("tool_result", { toolName: "bash", isError: true, content: [{ type: "text", text: longFailure }] }, ctx);
+	harness.emitEvent(WARNING_EVENT, { type: "repeated-tool-error", message: "bash failed twice", toolName: "bash", count: 2 });
+	harness.emitEvent(VERIFICATION_EVENT, {
+		projectRoot: fixture.root,
+		command: "bash scripts/verify.sh --quick",
+		status: "failed",
+		trigger: "auto",
+		failureSummary: "quick gate failed",
+		touchedPaths: ["src/a.ts"],
+	});
+	await harness.emit("agent_end", {}, ctx);
+
+	const read = readArchiveRecords(fixture.root);
+	const run = read.records.find((item) => item.kind === "run") as any;
+	assert.ok(run.replayLite);
+	assert.deepEqual(run.replayLite.steps.map((step: any) => `${step.name}:${step.status}`), ["read:passed", "edit:passed", "bash:failed", "warning:warning", "verification:failed"]);
+	assert.ok(run.replayLite.steps[1].touchedFiles[0].endsWith(path.join("src", "a.ts")));
+	assert.ok(run.replayLite.steps[2].summary.length < longFailure.length);
+
+	const report = formatArchiveReport("last", read, 5);
+	assert.match(report, /Replay-lite:/);
+	assert.match(report, /read passed/);
+	assert.match(report, /edit passed/);
+	assert.match(report, /bash failed/);
+	assert.match(report, /npm run broken/);
+	assert.match(report, /SECRET_TOKEN=\[redacted\]/);
+	assert.match(report, /boom SECRET_TOKEN=\[redacted\] x+/);
+	assert.doesNotMatch(report, /abc123/);
+	assert.doesNotMatch(report, new RegExp(`x{${900}}`));
+	assert.match(report, /warning warning — repeated-tool-error: bash failed twice/);
+	assert.match(report, /verification failed/);
+	assert.match(report, /quick gate failed/);
+	assert.doesNotMatch(report, /full file output should not be stored/);
+});
+
+test("replay-lite is capped and legacy or malformed trajectory data stays readable", async (t) => {
+	const fixture = makeTempProject();
+	t.after(() => fixture.cleanup());
+	const harness = createHarness();
+	const { ctx } = createCtx(fixture.root);
+
+	appendArchiveRecord(fixture.root, record("run", { toolCounts: { read: 1 } }));
+	appendArchiveRecord(fixture.root, record("run", { replayLite: { steps: "not-an-array" } } as any));
+
+	await harness.emit("session_start", {}, ctx);
+	await harness.emit("agent_start", { prompt: "many tiny reads" }, ctx);
+	for (let i = 0; i < 90; i++) {
+		await harness.emit("tool_call", { toolName: "read", input: { path: `file-${i}.md` } }, ctx);
+	}
+	await harness.emit("agent_end", {}, ctx);
+
+	const read = readArchiveRecords(fixture.root);
+	const cappedRun = read.records.at(-1) as any;
+	assert.equal(cappedRun.replayLite.steps.length, 80);
+	assert.equal(cappedRun.replayLite.truncated, true);
+
+	const report = formatArchiveReport("last", read, 10);
+	assert.match(report, /run 0ms, tools=1, touched=0/);
+	assert.match(report, /replay-lite unavailable \(malformed\)/);
+	assert.match(report, /Replay-lite truncated/);
+});
+
 test("extension records verification and warning event bus payloads", async (t) => {
 	const fixture = makeTempProject();
 	t.after(() => fixture.cleanup());
