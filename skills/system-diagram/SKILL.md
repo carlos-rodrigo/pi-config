@@ -1,14 +1,8 @@
 ---
 name: system-diagram
-description: "Create reviewable HTML/SVG system diagrams and diagram-led report pages for application flows, classes/methods/call chains, component communication, architecture boundaries, domain concepts, and system mental models."
+description: "Create reviewable HTML/SVG system diagrams and diagram-led report pages for application flows, call chains, component communication, architecture boundaries, domain concepts, and system mental models. Use when asked for system diagram, flow diagram, architecture/data-flow/sequence diagram, component map, domain model, or before/after system story."
 argument-hint: "[feature-or-doc-path]"
-allowed-tools:
-  - Read
-  - Write
-  - Edit
-  - Bash
-  - Grep
-  - Glob
+allowed-tools: Read Write Edit Bash Grep Glob
 ---
 
 # System Diagram
