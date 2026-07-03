@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
 	formatBackgroundJobIndicator,
 	formatBottomLeftUsage,
+	formatComposerActivityIndicator,
 	formatTokenCount,
 	formatWorkflowModeLabel,
 	getAssistantUsageTotals,
@@ -28,6 +29,15 @@ test("pickPrimaryExtensionStatus prefers review over prompt queue", () => {
 	]);
 
 	assert.equal(pickPrimaryExtensionStatus(statuses), "reviewing");
+});
+
+test("pickPrimaryExtensionStatus surfaces semantic search rebuild status", () => {
+	const statuses = new Map<string, string>([
+		["workflow-mode", "mode: Smart"],
+		["semantic-search", "idx: embedding 60% · ~11s"],
+	]);
+
+	assert.equal(pickPrimaryExtensionStatus(statuses), "idx: embedding 60% · ~11s");
 });
 
 test("pickPrimaryExtensionStatus falls back to ambient workflow mode status", () => {
@@ -66,6 +76,12 @@ test("formatBackgroundJobIndicator only appears for running jobs", () => {
 	assert.equal(formatBackgroundJobIndicator(0), null);
 	assert.equal(formatBackgroundJobIndicator(1), "1 bg job");
 	assert.equal(formatBackgroundJobIndicator(2), "2 bg jobs");
+});
+
+test("formatComposerActivityIndicator combines index rebuilds and background jobs", () => {
+	assert.equal(formatComposerActivityIndicator(null, 0), null);
+	assert.equal(formatComposerActivityIndicator("idx: embedding 60% · ~11s", 0), "idx: embedding 60% · ~11s");
+	assert.equal(formatComposerActivityIndicator("idx: embedding 60% · ~11s", 2), "idx: embedding 60% · ~11s · 2 bg jobs");
 });
 
 test("formatTokenCount keeps token totals compact", () => {

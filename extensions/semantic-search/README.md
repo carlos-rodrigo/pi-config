@@ -12,14 +12,14 @@ Local hybrid code search for Pi, backed by required local Ollama semantic-card s
 
 ```bash
 /index status            # show index freshness
-/index rebuild           # rebuild with Ollama summaries + embeddings
+/index rebuild           # start Ollama summary+embedding rebuild in the background
 /index build             # alias for /index rebuild
 /index rebuild mxbai-embed-large
 /index rebuild --summary-model qwen2.5-coder:32b
-/index rebuild --background
-/index rebuild --status  # show background rebuild pid/state/log and current index freshness
-/index rebuild --no-summaries # diagnostic: embeddings without generated card summaries
-/index lexical           # diagnostic: rebuild lexical-only
+/index rebuild --status  # show background rebuild pid/state/progress/ETA/log and current index freshness
+/index rebuild --foreground # explicit blocking rebuild escape hatch
+/index rebuild --no-summaries # background diagnostic: embeddings without generated card summaries
+/index lexical           # diagnostic: rebuild lexical-only in the foreground
 /code-search <q>         # run a natural-language search and show results in the session
 ```
 
@@ -57,8 +57,8 @@ Configuration:
 - Default search/index rebuilds require Ollama summaries and embeddings; missing Ollama/models are treated as setup errors, not automatic lexical fallback.
 - Builds semantic cards for each file and detected symbols (classes, modules, methods, functions, markdown headings). Cards include path role, symbols, calls/references, comments, inferred concepts, and an Ollama-generated concise summary for meaning-oriented queries.
 - Summary generation runs in parallel during embedding index builds and caches unchanged card summaries under `.pi/semantic-search/summaries.json`.
-- `/index rebuild --background` starts the slower summary+embedding rebuild in a detached Node process and logs to `.pi/semantic-search/rebuild.log`.
-- `/index rebuild --status` reports whether the last background rebuild is running, succeeded, failed, or unknown, plus recent log lines and current index freshness.
+- `/index rebuild` starts the slower summary+embedding rebuild in a detached Node process by default, so the main session does not block. While it runs, the composer/footer status shows a compact `index: ...` indicator. Use `/index rebuild --foreground` only when you explicitly want to wait in-session.
+- `/index rebuild --status` reports whether the last background rebuild is running, succeeded, failed, or unknown, plus progress phase/count/ETA when available, recent log lines, and current index freshness.
 - Caps and adaptively shrinks embedding inputs before retrying Ollama context-length failures, so one oversized code chunk or semantic card should not abort the whole index build.
 - Combines Ollama embedding similarity over raw chunks and semantic cards, lexical terms, paths, symbols, lightweight vector scoring, and code-concept expansion.
 - Treat results as candidates: read the returned file range before editing.

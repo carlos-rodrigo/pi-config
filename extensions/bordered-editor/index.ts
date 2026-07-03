@@ -26,7 +26,7 @@ const ANSI_RESET = "\x1b[0m";
 const PADDING_X = 2;
 
 export function pickPrimaryExtensionStatus(statuses: ReadonlyMap<string, string>): string | null {
-	const highPriorityKeys = ["auto-prompt", "review"];
+	const highPriorityKeys = ["auto-prompt", "review", "semantic-search"];
 	for (const key of highPriorityKeys) {
 		const status = statuses.get(key);
 		if (status) return status;
@@ -63,6 +63,15 @@ export function getWorkflowModeColor(label: string | null | undefined): Workflow
 export function formatBackgroundJobIndicator(count: number): string | null {
 	if (!Number.isFinite(count) || count <= 0) return null;
 	return count === 1 ? "1 bg job" : `${count} bg jobs`;
+}
+
+export function formatComposerActivityIndicator(indexRebuildIndicator: string | null | undefined, backgroundJobCount: number): string | null {
+	const labels: string[] = [];
+	const indexLabel = indexRebuildIndicator?.trim();
+	if (indexLabel) labels.push(indexLabel);
+	const jobLabel = formatBackgroundJobIndicator(backgroundJobCount);
+	if (jobLabel) labels.push(jobLabel);
+	return labels.length > 0 ? labels.join(" · ") : null;
 }
 
 export function formatTokenCount(count: number): string {
@@ -201,6 +210,7 @@ class BorderedEditor extends CustomEditor {
 	private getThinkingLevel: () => string = () => "off";
 	private getExtensionStatus: () => string | null = () => null;
 	private backgroundJobCount = 0;
+	private indexRebuildIndicator: string | null = null;
 
 	// --- Mode label state ---
 	private modeLabel: string | null = null;
@@ -237,6 +247,10 @@ class BorderedEditor extends CustomEditor {
 
 	setBackgroundJobCount(count: number): void {
 		this.backgroundJobCount = Math.max(0, Math.floor(count));
+	}
+
+	setIndexRebuildIndicator(indicator: string | null): void {
+		this.indexRebuildIndicator = indicator?.trim() || null;
 	}
 
 	setGhostText(text: string | null): void {
@@ -345,8 +359,8 @@ class BorderedEditor extends CustomEditor {
 				: this.ctx.cwd;
 			const branch = this.getGitBranch();
 			const worktreeInfo = this.getWorktreeInfo();
-			const jobIndicator = formatBackgroundJobIndicator(this.backgroundJobCount);
-			bottomRight = jobIndicator ? theme.fg("warning", jobIndicator) + theme.fg("dim", " · ") : "";
+			const activityIndicator = formatComposerActivityIndicator(this.indexRebuildIndicator, this.backgroundJobCount);
+			bottomRight = activityIndicator ? theme.fg("warning", activityIndicator) + theme.fg("dim", " · ") : "";
 			bottomRight += theme.fg("muted", cwd);
 			if (worktreeInfo) {
 				bottomRight += theme.fg("dim", " ") + theme.fg("thinkingHigh", `[WT ${worktreeInfo}]`);
@@ -418,7 +432,15 @@ class BorderedEditor extends CustomEditor {
 		const rightOH = rw > 0 ? rw + 3 : 0;
 		const fill = inner - leftOH - rightOH;
 
-		// Not enough room — plain border
+		if (fill < 0 && lw > 0) {
+			const availableLabelWidth = Math.max(0, inner - 3);
+			const truncatedLeft = truncateToWidth(leftLabel, availableLabelWidth);
+			const truncatedWidth = visibleWidth(truncatedLeft);
+			const fallbackFill = Math.max(0, inner - truncatedWidth - 3);
+			return bc(leftCorner) + bc("─ ") + truncatedLeft + " " + bc("─".repeat(fallbackFill)) + bc(rightCorner);
+		}
+
+		// Not enough room and no left label — plain border
 		if (fill < 0) return bc(leftCorner + "─".repeat(inner) + rightCorner);
 
 		let line = "";
@@ -437,6 +459,7 @@ export default function (pi: ExtensionAPI) {
 	let editorInstance: BorderedEditor | undefined;
 	let requestRender: (() => void) | undefined;
 	let backgroundJobCount = 0;
+	let indexRebuildIndicator: string | null = null;
 
 	// --- Agent mode events ---
 
@@ -455,6 +478,15 @@ export default function (pi: ExtensionAPI) {
 		backgroundJobCount = count ?? 0;
 		if (editorInstance) {
 			editorInstance.setBackgroundJobCount(backgroundJobCount);
+			requestRender?.();
+		}
+	});
+
+	pi.events.on("semantic-search:rebuild-status", (data) => {
+		const { indicator } = data as { indicator?: unknown };
+		indexRebuildIndicator = typeof indicator === "string" ? indicator : null;
+		if (editorInstance) {
+			editorInstance.setIndexRebuildIndicator(indexRebuildIndicator);
 			requestRender?.();
 		}
 	});
@@ -512,6 +544,7 @@ export default function (pi: ExtensionAPI) {
 			requestRender = () => tui.requestRender();
 			const editor = new BorderedEditor(tui, theme, kb, { paddingX: PADDING_X });
 			editor.setBackgroundJobCount(backgroundJobCount);
+			editor.setIndexRebuildIndicator(indexRebuildIndicator);
 			editor.setDataProviders(
 				ctx,
 				() => gitBranch,

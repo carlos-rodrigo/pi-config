@@ -492,6 +492,20 @@ type IndexStatus = {
 	summary?: SummaryMetadata;
 };
 
+type RebuildProgressPhase = "starting" | "indexing" | "summarizing" | "embedding" | "finished" | "unknown";
+
+export type RebuildProgress = {
+	phase: RebuildProgressPhase;
+	message: string;
+	current?: number;
+	total?: number;
+	percent?: number;
+	phaseStartedAt?: string;
+	updatedAt: string;
+	elapsedMs?: number;
+	estimatedRemainingMs?: number;
+};
+
 type BackgroundRebuildStatus = {
 	status: "running" | "succeeded" | "failed" | "unknown";
 	cwd: string;
@@ -502,6 +516,7 @@ type BackgroundRebuildStatus = {
 	embeddingModel?: string;
 	summaryModel?: string;
 	summariesDisabled?: boolean;
+	progress?: RebuildProgress;
 	message?: string;
 	error?: string;
 	notified?: boolean;
@@ -955,11 +970,12 @@ async function embedBatchWithOllama(texts: string[], config: OllamaEmbeddingConf
 	}
 }
 
-async function embedTextsWithOllama(texts: string[], config: OllamaEmbeddingConfig, signal?: AbortSignal): Promise<number[][]> {
+async function embedTextsWithOllama(texts: string[], config: OllamaEmbeddingConfig, signal?: AbortSignal, onProgress?: (message: string) => void, label = "inputs"): Promise<number[][]> {
 	const embeddings: number[][] = [];
 	for (let start = 0; start < texts.length; start += config.batchSize) {
 		const batch = texts.slice(start, start + config.batchSize);
 		embeddings.push(...await embedBatchWithOllama(batch, config, signal));
+		onProgress?.(`Embedded ${Math.min(start + batch.length, texts.length)}/${texts.length} ${label} with ${config.model}`);
 	}
 	return embeddings;
 }
@@ -1705,8 +1721,8 @@ export async function buildSearchIndexWithEmbeddings(cwd: string, options: Embed
 	}
 
 	options.onProgress?.(`Embedding ${index.chunks.length} chunks and ${index.cards.length} semantic cards with Ollama model ${config.model} (max ${config.maxInputChars} chars/input)`);
-	const chunkEmbeddings = await embedTextsWithOllama(index.chunks.map(embeddingInputForChunk), config, options.signal);
-	const cardEmbeddings = index.cards.length > 0 ? await embedTextsWithOllama(index.cards.map(embeddingInputForCard), config, options.signal) : [];
+	const chunkEmbeddings = await embedTextsWithOllama(index.chunks.map(embeddingInputForChunk), config, options.signal, options.onProgress, "chunks");
+	const cardEmbeddings = index.cards.length > 0 ? await embedTextsWithOllama(index.cards.map(embeddingInputForCard), config, options.signal, options.onProgress, "semantic cards") : [];
 	const dimensions = chunkEmbeddings[0]?.length ?? cardEmbeddings[0]?.length ?? 0;
 	index.chunks = index.chunks.map((chunk, chunkIndex) => ({ ...chunk, embedding: chunkEmbeddings[chunkIndex] }));
 	index.cards = index.cards.map((card, cardIndex) => ({ ...card, embedding: cardEmbeddings[cardIndex] }));
@@ -2215,6 +2231,66 @@ function isProcessRunning(pid: number | undefined): boolean {
 	}
 }
 
+function parseProgressCount(message: string): { current?: number; total?: number } {
+	const fraction = message.match(/\b(\d+)\/(\d+)\b/);
+	if (fraction) return { current: Number(fraction[1]), total: Number(fraction[2]) };
+	const summarizing = message.match(/Summarizing\s+(\d+)\s+semantic cards/i);
+	if (summarizing) return { current: 0, total: Number(summarizing[1]) };
+	const embedding = message.match(/Embedding\s+(\d+)\s+chunks\s+and\s+(\d+)\s+semantic cards/i);
+	if (embedding) return { current: 0, total: Number(embedding[1]) + Number(embedding[2]) };
+	return {};
+}
+
+export function parseRebuildProgressMessage(message: string): Pick<RebuildProgress, "phase" | "message" | "current" | "total"> {
+	const lower = message.toLowerCase();
+	const phase: RebuildProgressPhase = lower.includes("finished")
+		? "finished"
+		: lower.includes("start") || lower.includes("spawn")
+			? "starting"
+			: lower.includes("summariz")
+				? "summarizing"
+				: lower.includes("embed")
+					? "embedding"
+					: lower.includes("index") || lower.includes("lexical") || lower.includes("build")
+						? "indexing"
+						: "unknown";
+	return { phase, message, ...parseProgressCount(message) };
+}
+
+export function buildRebuildProgressSnapshot(message: string, phaseStartedAtMs: number, nowMs = Date.now()): RebuildProgress {
+	const parsed = parseRebuildProgressMessage(message);
+	const current = parsed.current;
+	const total = parsed.total;
+	const hasProgress = typeof current === "number" && typeof total === "number" && total > 0;
+	const elapsedMs = Math.max(0, nowMs - phaseStartedAtMs);
+	const percent = hasProgress ? Math.min(100, Math.max(0, Math.round((current / total) * 100))) : parsed.phase === "finished" ? 100 : undefined;
+	const estimatedRemainingMs = hasProgress && current > 0 && current < total
+		? Math.round((elapsedMs / current) * (total - current))
+		: undefined;
+	return {
+		phase: parsed.phase,
+		message,
+		current,
+		total,
+		percent,
+		phaseStartedAt: new Date(phaseStartedAtMs).toISOString(),
+		updatedAt: new Date(nowMs).toISOString(),
+		elapsedMs,
+		estimatedRemainingMs,
+	};
+}
+
+function formatDurationMs(ms: number): string {
+	if (!Number.isFinite(ms) || ms < 0) return "unknown";
+	const totalSeconds = Math.max(0, Math.round(ms / 1000));
+	const hours = Math.floor(totalSeconds / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+	const seconds = totalSeconds % 60;
+	if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+	if (minutes > 0) return `${minutes}m ${seconds}s`;
+	return `${seconds}s`;
+}
+
 function writeBackgroundRebuildStatus(status: BackgroundRebuildStatus): void {
 	const statusPath = getIndexRebuildStatusPath(status.cwd);
 	mkdirSync(dirname(statusPath), { recursive: true });
@@ -2273,6 +2349,35 @@ function markBackgroundRebuildNotified(status: BackgroundRebuildStatus): void {
 	writeBackgroundRebuildStatus({ ...status, notified: true });
 }
 
+function formatRebuildProgressLines(progress: RebuildProgress): string[] {
+	const count = typeof progress.current === "number" && typeof progress.total === "number" ? ` ${progress.current}/${progress.total}` : "";
+	const percent = typeof progress.percent === "number" ? ` (${progress.percent}%)` : "";
+	const lines = [`Progress: ${progress.phase}${count}${percent} — ${progress.message}`];
+	if (typeof progress.elapsedMs === "number") lines.push(`Phase elapsed: ${formatDurationMs(progress.elapsedMs)}`);
+	if (typeof progress.estimatedRemainingMs === "number") lines.push(`ETA: ~${formatDurationMs(progress.estimatedRemainingMs)} remaining (best effort)`);
+	lines.push(`Progress updated: ${progress.updatedAt}`);
+	return lines;
+}
+
+export function formatBackgroundRebuildIndicator(status: Pick<BackgroundRebuildStatus, "status" | "progress"> | undefined): string | undefined {
+	if (status?.status !== "running") return undefined;
+	const progress = status.progress;
+	if (!progress) return "idx: rebuilding…";
+	const percent = typeof progress.percent === "number" ? ` ${progress.percent}%` : "";
+	const eta = typeof progress.estimatedRemainingMs === "number" ? ` · ~${formatDurationMs(progress.estimatedRemainingMs)}` : "";
+	return `idx: ${progress.phase}${percent}${eta}`;
+}
+
+type RebuildStatusUI = {
+	setStatus?: (key: string, value: string | undefined) => void;
+};
+
+function publishBackgroundRebuildComposerStatus(pi: ExtensionAPI, ui: RebuildStatusUI | undefined, status: BackgroundRebuildStatus | undefined): void {
+	const indicator = formatBackgroundRebuildIndicator(status);
+	ui?.setStatus?.("semantic-search", indicator);
+	pi.events?.emit?.("semantic-search:rebuild-status", { indicator, status: status?.status, progress: status?.progress });
+}
+
 function formatBackgroundRebuildStatus(cwd: string, indexStatus: IndexStatus): string {
 	const status = currentBackgroundRebuildStatus(cwd);
 	const logPath = status?.logPath ?? getIndexRebuildLogPath(resolve(cwd));
@@ -2283,11 +2388,16 @@ function formatBackgroundRebuildStatus(cwd: string, indexStatus: IndexStatus): s
 	} else {
 		lines.push(`State: ${status.status}${status.status === "running" && isProcessRunning(status.pid) ? " (process active)" : ""}`);
 		if (status.pid) lines.push(`PID: ${status.pid}`);
-		if (status.startedAt) lines.push(`Started: ${status.startedAt}`);
+		if (status.startedAt) {
+			lines.push(`Started: ${status.startedAt}`);
+			const startedMs = Date.parse(status.startedAt);
+			if (Number.isFinite(startedMs) && status.status === "running") lines.push(`Elapsed: ${formatDurationMs(Date.now() - startedMs)}`);
+		}
 		if (status.finishedAt) lines.push(`Finished: ${status.finishedAt}`);
 		if (status.embeddingModel) lines.push(`Embedding model: ${status.embeddingModel}`);
 		if (status.summariesDisabled) lines.push("Summaries: disabled");
 		else if (status.summaryModel) lines.push(`Summary model: ${status.summaryModel}`);
+		if (status.progress) lines.push(...formatRebuildProgressLines(status.progress));
 		if (status.message) lines.push(`Message: ${status.message}`);
 		if (status.error) lines.push(`Error: ${status.error}`);
 		lines.push(`Log: ${status.logPath}`);
@@ -2311,13 +2421,18 @@ function formatBackgroundRebuildFinished(status: BackgroundRebuildStatus, indexS
 	return lines.join("\n");
 }
 
-function watchBackgroundIndexBuild(pi: ExtensionAPI, cwd: string): void {
+function watchBackgroundIndexBuild(pi: ExtensionAPI, cwd: string, ui?: RebuildStatusUI): void {
 	const absoluteCwd = resolve(cwd);
-	if (watchedBackgroundRebuilds.has(absoluteCwd)) return;
+	if (watchedBackgroundRebuilds.has(absoluteCwd)) {
+		publishBackgroundRebuildComposerStatus(pi, ui, currentBackgroundRebuildStatus(absoluteCwd));
+		return;
+	}
 	const initialStatus = currentBackgroundRebuildStatus(absoluteCwd);
+	publishBackgroundRebuildComposerStatus(pi, ui, initialStatus);
 	if (!initialStatus || (initialStatus.status !== "running" && initialStatus.notified)) return;
 	const check = () => {
 		const status = currentBackgroundRebuildStatus(absoluteCwd);
+		publishBackgroundRebuildComposerStatus(pi, ui, status);
 		if (!status) return;
 		if (status.status === "running") return;
 		const interval = watchedBackgroundRebuilds.get(absoluteCwd);
@@ -2325,6 +2440,7 @@ function watchBackgroundIndexBuild(pi: ExtensionAPI, cwd: string): void {
 			clearInterval(interval);
 			watchedBackgroundRebuilds.delete(absoluteCwd);
 		}
+		publishBackgroundRebuildComposerStatus(pi, ui, undefined);
 		if (status.notified) return;
 		const indexStatus = getIndexStatus(absoluteCwd);
 		pi.sendMessage?.({
@@ -2346,32 +2462,51 @@ function startBackgroundIndexBuild(cwd: string, options: { embeddingModel?: stri
 	const statusPath = getIndexRebuildStatusPath(absoluteCwd);
 	mkdirSync(dirname(logPath), { recursive: true });
 	const logFd = openSync(logPath, "a");
-	const parentStartedAt = new Date().toISOString();
+	const parentStartedAtMs = Date.now();
+	const parentStartedAt = new Date(parentStartedAtMs).toISOString();
+	const startingProgress = buildRebuildProgressSnapshot("background rebuild process started", parentStartedAtMs, parentStartedAtMs);
 	const code = [
 		`import { writeFileSync } from "node:fs";`,
-		`import { buildSearchIndexWithEmbeddings } from ${JSON.stringify(import.meta.url)};`,
+		`import { buildRebuildProgressSnapshot, buildSearchIndexWithEmbeddings } from ${JSON.stringify(import.meta.url)};`,
 		`const cwd = ${JSON.stringify(absoluteCwd)};`,
 		`const logPath = ${JSON.stringify(logPath)};`,
 		`const statusPath = ${JSON.stringify(statusPath)};`,
-		`const startedAt = new Date().toISOString();`,
+		`const startedAtMs = Date.now();`,
+		`const startedAt = new Date(startedAtMs).toISOString();`,
+		`let phaseStartedAtMs = startedAtMs;`,
+		`let currentPhase = "starting";`,
 		`const baseStatus = { status: "running", cwd, logPath, pid: process.pid, startedAt, embeddingModel: ${JSON.stringify(options.embeddingModel)}, summaryModel: ${JSON.stringify(options.summaryModel)}, summariesDisabled: ${JSON.stringify(options.summariesDisabled ?? false)} };`,
 		`const writeStatus = (updates = {}) => writeFileSync(statusPath, JSON.stringify({ ...baseStatus, ...updates }, null, 2), "utf8");`,
-		`writeStatus();`,
+		`const recordProgress = (message) => {`,
+		`  const nowMs = Date.now();`,
+		`  let progress = buildRebuildProgressSnapshot(message, phaseStartedAtMs, nowMs);`,
+		`  if (progress.phase !== currentPhase) {`,
+		`    currentPhase = progress.phase;`,
+		`    phaseStartedAtMs = nowMs;`,
+		`    progress = buildRebuildProgressSnapshot(message, phaseStartedAtMs, nowMs);`,
+		`  }`,
+		`  writeStatus({ message, progress });`,
+		`  console.error(\`[\${new Date(nowMs).toISOString()}] \${message}\`);`,
+		`};`,
+		`recordProgress("background rebuild process started");`,
 		`console.error(\`[\${startedAt}] semantic-search background rebuild started for \${cwd} (pid \${process.pid})\`);`,
 		`try {`,
 		`  const index = await buildSearchIndexWithEmbeddings(cwd, {`,
 		`    writeToDisk: true,`,
 		`    ollama: { model: ${JSON.stringify(options.embeddingModel ?? null)} ?? undefined },`,
 		`    summary: ${JSON.stringify(options.summariesDisabled ?? false)} ? false : { model: ${JSON.stringify(options.summaryModel ?? null)} ?? undefined },`,
-		`    onProgress: (message) => console.error(\`[\${new Date().toISOString()}] \${message}\`),`,
+		`    onProgress: recordProgress,`,
 		`  });`,
+		`  const finishedAtMs = Date.now();`,
+		`  const finishedAt = new Date(finishedAtMs).toISOString();`,
 		`  const message = \`semantic-search background rebuild finished: \${index.files.length} files / \${index.chunks.length} chunks / \${index.cards.length} semantic cards\`;`,
-		`  console.error(\`[\${new Date().toISOString()}] \${message}\`);`,
-		`  writeStatus({ status: "succeeded", finishedAt: new Date().toISOString(), message });`,
+		`  console.error(\`[\${finishedAt}] \${message}\`);`,
+		`  writeStatus({ status: "succeeded", finishedAt, message, progress: { phase: "finished", message, current: 1, total: 1, percent: 100, phaseStartedAt: startedAt, updatedAt: finishedAt, elapsedMs: finishedAtMs - startedAtMs } });`,
 		`} catch (error) {`,
+		`  const finishedAt = new Date().toISOString();`,
 		`  const errorMessage = error instanceof Error ? error.stack ?? error.message : String(error);`,
-		`  console.error(\`[\${new Date().toISOString()}] semantic-search background rebuild failed: \${errorMessage}\`);`,
-		`  writeStatus({ status: "failed", finishedAt: new Date().toISOString(), error: errorMessage });`,
+		`  console.error(\`[\${finishedAt}] semantic-search background rebuild failed: \${errorMessage}\`);`,
+		`  writeStatus({ status: "failed", finishedAt, error: errorMessage });`,
 		`  process.exitCode = 1;`,
 		`}`,
 	].join("\n");
@@ -2392,6 +2527,7 @@ function startBackgroundIndexBuild(cwd: string, options: { embeddingModel?: stri
 			embeddingModel: options.embeddingModel,
 			summaryModel: options.summaryModel,
 			summariesDisabled: options.summariesDisabled,
+			progress: startingProgress,
 			message: "background rebuild process started",
 		});
 		writeFileSync(logPath, `[${parentStartedAt}] semantic-search background rebuild spawned${child.pid ? ` pid ${child.pid}` : ""}\n`, { flag: "a" });
@@ -2409,9 +2545,78 @@ function flagValue(tokens: string[], flag: string): string | undefined {
 	return index >= 0 ? tokens[index + 1] : undefined;
 }
 
+type ParsedIndexCommandArgs = {
+	tokens: string[];
+	action: string;
+	lexicalOnly: boolean;
+	background: boolean;
+	summariesDisabled: boolean;
+	summaryModel?: string;
+	model?: string;
+	error?: string;
+};
+
+const INDEX_ACTIONS = ["status", "rebuild", "build", "lexical", "rebuild-status"] as const;
+
+function editDistance(a: string, b: string): number {
+	const previous = Array.from({ length: b.length + 1 }, (_value, index) => index);
+	for (let i = 1; i <= a.length; i++) {
+		let diagonal = previous[0];
+		previous[0] = i;
+		for (let j = 1; j <= b.length; j++) {
+			const beforeUpdate = previous[j];
+			previous[j] = a[i - 1] === b[j - 1]
+				? diagonal
+				: Math.min(previous[j] + 1, previous[j - 1] + 1, diagonal + 1);
+			diagonal = beforeUpdate;
+		}
+	}
+	return previous[b.length] ?? Math.max(a.length, b.length);
+}
+
+function closestIndexAction(token: string): string | undefined {
+	const normalized = token.toLowerCase();
+	let best: { action: string; distance: number } | undefined;
+	for (const action of INDEX_ACTIONS) {
+		const distance = editDistance(normalized, action);
+		if (!best || distance < best.distance) best = { action, distance };
+	}
+	return best && best.distance <= 2 ? best.action : undefined;
+}
+
+export function parseIndexCommandArgs(args: string): ParsedIndexCommandArgs {
+	const tokens = args.trim().split(/\s+/).filter(Boolean);
+	const action = tokens[0] ?? "rebuild";
+	const suggestedAction = tokens.length > 0 && !INDEX_ACTIONS.includes(action as (typeof INDEX_ACTIONS)[number]) && !action.startsWith("--")
+		? closestIndexAction(action)
+		: undefined;
+	if (suggestedAction) {
+		return {
+			tokens,
+			action,
+			lexicalOnly: false,
+			background: false,
+			summariesDisabled: false,
+			error: `Unknown /index action '${action}'. Did you mean '/index ${suggestedAction}'? Use '/index rebuild <model>' to pass an embedding model.`,
+		};
+	}
+	const lexicalOnly = tokens.includes("lexical") || tokens.includes("--lexical");
+	const foreground = tokens.includes("--foreground") || tokens.includes("foreground") || tokens.includes("fg");
+	const statusOnly = action === "status" || action === "rebuild-status" || tokens.includes("--status");
+	const background = !statusOnly && !lexicalOnly && !foreground;
+	const summariesDisabled = tokens.includes("--no-summaries") || tokens.includes("no-summaries");
+	const summaryModel = flagValue(tokens, "--summary-model");
+	const valueIndexesToSkip = new Set<number>();
+	const summaryFlagIndex = tokens.indexOf("--summary-model");
+	if (summaryFlagIndex >= 0) valueIndexesToSkip.add(summaryFlagIndex + 1);
+	const reserved = new Set(["rebuild", "build", "embeddings", "--embeddings", "--ollama", "lexical", "--lexical", "--background", "background", "bg", "--foreground", "foreground", "fg", "--no-summaries", "no-summaries", "--summary-model", "--status"]);
+	const model = tokens.find((token, index) => !valueIndexesToSkip.has(index) && !reserved.has(token) && !token.startsWith("--summary-model="));
+	return { tokens, action, lexicalOnly, background, summariesDisabled, summaryModel, model };
+}
+
 export default function semanticSearchExtension(pi: ExtensionAPI) {
 	pi.on?.("session_start", (_event, ctx) => {
-		watchBackgroundIndexBuild(pi, ctx.cwd);
+		watchBackgroundIndexBuild(pi, ctx.cwd, ctx.ui);
 	});
 	pi.on?.("session_shutdown", () => {
 		for (const interval of watchedBackgroundRebuilds.values()) clearInterval(interval);
@@ -2419,10 +2624,14 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("index", {
-		description: "Build, rebuild, or show status for the semantic code-search index. Default rebuild requires local Ollama summaries + embeddings. Usage: /index [status|rebuild|build|lexical] [ollama-model] [--summary-model model] [--background|--status]",
+		description: "Build, rebuild, or show status for the semantic code-search index. Default semantic rebuild runs in the background. Usage: /index [status|rebuild|build|lexical] [ollama-model] [--summary-model model] [--foreground|--status]",
 		handler: async (args, ctx) => {
-			const tokens = args.trim().split(/\s+/).filter(Boolean);
-			const action = tokens[0] ?? "rebuild";
+			const { tokens, action, lexicalOnly, background, summariesDisabled, summaryModel, model, error } = parseIndexCommandArgs(args);
+			if (error) {
+				ctx.ui.notify(error, "error");
+				pi.sendMessage?.({ customType: "semantic-search", content: `${error}\n\nUsage: /index [status|rebuild|build|lexical] [ollama-model] [--summary-model model] [--foreground|--status]`, display: true, details: { error: true } });
+				return;
+			}
 			if (action === "status") {
 				const status = getIndexStatus(ctx.cwd);
 				ctx.ui.notify(status.stale ? `Index stale: ${status.reason}` : `Index fresh: ${status.files} files / ${status.chunks} chunks / ${status.cards} semantic cards`, status.stale ? "warning" : "info");
@@ -2437,19 +2646,12 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 				return;
 			}
 
-			const lexicalOnly = tokens.includes("lexical") || tokens.includes("--lexical");
-			const background = tokens.includes("--background") || tokens.includes("background") || tokens.includes("bg");
-			const summariesDisabled = tokens.includes("--no-summaries") || tokens.includes("no-summaries");
-			const summaryModel = flagValue(tokens, "--summary-model");
-			const valueIndexesToSkip = new Set<number>();
-			const summaryFlagIndex = tokens.indexOf("--summary-model");
-			if (summaryFlagIndex >= 0) valueIndexesToSkip.add(summaryFlagIndex + 1);
-			const model = tokens.find((token, index) => !valueIndexesToSkip.has(index) && !["rebuild", "build", "embeddings", "--embeddings", "--ollama", "lexical", "--lexical", "--background", "background", "bg", "--no-summaries", "no-summaries", "--summary-model"].includes(token) && !token.startsWith("--summary-model="));
-			if (background && !lexicalOnly) {
+			if (background) {
 				const started = startBackgroundIndexBuild(ctx.cwd, { embeddingModel: model, summaryModel, summariesDisabled });
-				watchBackgroundIndexBuild(pi, ctx.cwd);
+				watchBackgroundIndexBuild(pi, ctx.cwd, ctx.ui);
+				publishBackgroundRebuildComposerStatus(pi, ctx.ui, currentBackgroundRebuildStatus(ctx.cwd));
 				ctx.ui.notify(`Started semantic index rebuild in background${started.pid ? ` (pid ${started.pid})` : ""}. Log: ${started.logPath}`, "info");
-				pi.sendMessage?.({ customType: "semantic-search", content: `Semantic index rebuild started in background${started.pid ? ` (pid ${started.pid})` : ""}.\nLog: ${started.logPath}\nStatus: ${started.statusPath}\nRun /index rebuild --status or use index_rebuild_status to monitor it. A follow-up message will appear when it finishes.`, display: true, details: started });
+				pi.sendMessage?.({ customType: "semantic-search", content: `Semantic index rebuild started in background by default${started.pid ? ` (pid ${started.pid})` : ""}.\nLog: ${started.logPath}\nStatus: ${started.statusPath}\nMonitor: /index rebuild --status or the index_rebuild_status tool.\nCompletion: a follow-up message appears when it finishes or fails.\nForeground escape hatch: /index rebuild --foreground.`, display: true, details: started });
 				return;
 			}
 			ctx.ui.setStatus?.("semantic-search", lexicalOnly ? "indexing…" : summariesDisabled ? "embedding…" : "summarizing…");

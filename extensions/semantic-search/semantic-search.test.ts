@@ -5,11 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import semanticSearchExtension, {
+	buildRebuildProgressSnapshot,
 	buildSearchIndex,
 	buildSearchIndexWithEmbeddings,
 	createRepoMap,
+	formatBackgroundRebuildIndicator,
 	formatRepoMap,
 	formatSearchResults,
+	parseIndexCommandArgs,
 	parseSearchIndexJson,
 	resolveOllamaEmbeddingConfig,
 	resolveOllamaSummaryConfig,
@@ -481,6 +484,64 @@ test("repo map clusters indexed files by reusable code concepts", () => {
 	}
 });
 
+test("index rebuild defaults to background and tracks progress estimates", () => {
+	assert.equal(parseIndexCommandArgs("rebuild").background, true);
+	assert.equal(parseIndexCommandArgs("build --foreground").background, false);
+	assert.equal(parseIndexCommandArgs("lexical").background, false);
+	assert.equal(parseIndexCommandArgs("rebuild --status").background, false);
+	assert.match(parseIndexCommandArgs("rebuiil").error ?? "", /Did you mean '\/index rebuild'/);
+	assert.equal(parseIndexCommandArgs("rebuiil").background, false);
+
+	const progress = buildRebuildProgressSnapshot(
+		"Summarized 25/100 semantic cards with qwen2.5-coder:7b",
+		Date.parse("2026-05-17T13:00:00.000Z"),
+		Date.parse("2026-05-17T13:01:00.000Z"),
+	);
+	assert.equal(progress.phase, "summarizing");
+	assert.equal(progress.current, 25);
+	assert.equal(progress.total, 100);
+	assert.equal(progress.percent, 25);
+	assert.equal(progress.estimatedRemainingMs, 180_000);
+	assert.equal(formatBackgroundRebuildIndicator({ status: "running", progress }), "idx: summarizing 25% · ~3m 0s");
+	assert.equal(formatBackgroundRebuildIndicator({ status: "succeeded", progress }), undefined);
+});
+
+test("index command refuses likely action typos instead of treating them as model names", async () => {
+	const commands = new Map<string, any>();
+	const messages: any[] = [];
+	const notifications: any[] = [];
+	semanticSearchExtension({
+		registerTool() {},
+		registerCommand(name: string, definition: any) {
+			commands.set(name, definition);
+		},
+		sendMessage(message: any) {
+			messages.push(message);
+		},
+	} as any);
+
+	const dir = makeProject({
+		"src/search/index.ts": "export function semanticSearch(query: string) { return vectorIndex.search(query); }\n",
+	});
+	try {
+		await commands.get("index").handler("rebuiil", {
+			cwd: dir,
+			ui: {
+				notify(message: string, level: string) {
+					notifications.push({ message, level });
+				},
+				setStatus() {},
+			},
+		} as any);
+
+		assert.match(messages[0]?.content ?? "", /Did you mean '\/index rebuild'/);
+		assert.deepEqual(notifications[0]?.level, "error");
+		assert.equal(existsSync(join(dir, ".pi", "semantic-search", "rebuild-status.json")), false);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("index command treats build as rebuild instead of an embedding model", async () => {
 	const commands = new Map<string, any>();
 	semanticSearchExtension({
@@ -517,7 +578,7 @@ test("index command treats build as rebuild instead of an embedding model", asyn
 	delete process.env.OLLAMA_EMBED_MODEL;
 
 	try {
-		await commands.get("index").handler("build", {
+		await commands.get("index").handler("build --foreground", {
 			cwd: dir,
 			ui: { notify() {}, setStatus() {} },
 		} as any);
@@ -528,7 +589,7 @@ test("index command treats build as rebuild instead of an embedding model", asyn
 		assert.ok(seenModels.includes("qwen2.5-coder:7b"));
 
 		seenModels.length = 0;
-		await commands.get("index").handler("build --summary-model qwen2.5-coder:32b", {
+		await commands.get("index").handler("build --foreground --summary-model qwen2.5-coder:32b", {
 			cwd: dir,
 			ui: { notify() {}, setStatus() {} },
 		} as any);
@@ -567,7 +628,7 @@ test("index rebuild writes a local index before Ollama failures", async () => {
 		headers: { "content-type": "application/json" },
 	})) as typeof fetch;
 	try {
-		await commands.get("index").handler("rebuild", {
+		await commands.get("index").handler("rebuild --foreground", {
 			cwd: dir,
 			ui: { notify() {}, setStatus() {} },
 		} as any);
@@ -632,6 +693,59 @@ test("background index rebuild sends a follow-up when it finishes", async () => 
 	}
 });
 
+test("session start publishes composer status while background rebuild is running", async () => {
+	const events = new Map<string, any>();
+	semanticSearchExtension({
+		on(name: string, handler: any) {
+			events.set(name, handler);
+		},
+		registerTool() {},
+		registerCommand() {},
+	} as any);
+
+	const dir = makeProject({
+		"src/search/index.ts": "export function semanticSearch(query: string) { return vectorIndex.search(query); }\n",
+	});
+	const statuses: Array<{ key: string; value: string | undefined }> = [];
+	try {
+		const statusDir = join(dir, ".pi", "semantic-search");
+		mkdirSync(statusDir, { recursive: true });
+		const logPath = join(statusDir, "rebuild.log");
+		writeFileSync(logPath, "", "utf8");
+		writeFileSync(join(statusDir, "rebuild-status.json"), JSON.stringify({
+			status: "running",
+			cwd: dir,
+			logPath,
+			pid: process.pid,
+			startedAt: "2026-05-17T13:09:44.855Z",
+			progress: {
+				phase: "summarizing",
+				message: "Summarized 25/100 semantic cards with qwen2.5-coder:14b",
+				current: 25,
+				total: 100,
+				percent: 25,
+				phaseStartedAt: "2026-05-17T13:09:44.855Z",
+				updatedAt: "2026-05-17T13:10:44.855Z",
+				elapsedMs: 60_000,
+				estimatedRemainingMs: 180_000,
+			},
+		}), "utf8");
+
+		events.get("session_start")?.({}, {
+			cwd: dir,
+			ui: {
+				setStatus(key: string, value: string | undefined) {
+					statuses.push({ key, value });
+				},
+			},
+		});
+		assert.deepEqual(statuses[0], { key: "semantic-search", value: "idx: summarizing 25% · ~3m 0s" });
+	} finally {
+		events.get("session_shutdown")?.();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("index rebuild status reports the last background rebuild state", async () => {
 	const commands = new Map<string, any>();
 	const messages: any[] = [];
@@ -661,6 +775,17 @@ test("index rebuild status reports the last background rebuild state", async () 
 			startedAt: "2026-05-17T13:09:44.855Z",
 			embeddingModel: "nomic-embed-text",
 			summaryModel: "qwen2.5-coder:14b",
+			progress: {
+				phase: "summarizing",
+				message: "Summarized 25/100 semantic cards with qwen2.5-coder:14b",
+				current: 25,
+				total: 100,
+				percent: 25,
+				phaseStartedAt: "2026-05-17T13:09:44.855Z",
+				updatedAt: "2026-05-17T13:10:44.855Z",
+				elapsedMs: 60_000,
+				estimatedRemainingMs: 180_000,
+			},
 		}), "utf8");
 
 		await commands.get("index").handler("rebuild --status", {
@@ -672,6 +797,8 @@ test("index rebuild status reports the last background rebuild state", async () 
 		assert.match(text, /Semantic index background rebuild status/);
 		assert.match(text, /State: running \(process active\)/);
 		assert.match(text, /Summary model: qwen2\.5-coder:14b/);
+		assert.match(text, /Progress: summarizing 25\/100 \(25%\)/);
+		assert.match(text, /ETA: ~3m 0s remaining \(best effort\)/);
 		assert.match(text, /Current index: stale/);
 		assert.match(text, /Recent log:/);
 	} finally {
