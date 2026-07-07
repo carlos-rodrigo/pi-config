@@ -503,7 +503,9 @@ test("index rebuild defaults to background and tracks progress estimates", () =>
 	assert.equal(progress.percent, 25);
 	assert.equal(progress.estimatedRemainingMs, 180_000);
 	assert.equal(formatBackgroundRebuildIndicator({ status: "running", progress }), "idx: summarizing 25% · ~3m 0s");
-	assert.equal(formatBackgroundRebuildIndicator({ status: "succeeded", progress }), undefined);
+	assert.equal(formatBackgroundRebuildIndicator({ status: "succeeded", progress }), "idx: done");
+	assert.equal(formatBackgroundRebuildIndicator({ status: "failed", progress }), "idx: failed");
+	assert.equal(formatBackgroundRebuildIndicator({ status: "succeeded", progress, notified: true }), undefined);
 });
 
 test("index command refuses likely action typos instead of treating them as model names", async () => {
@@ -740,6 +742,113 @@ test("session start publishes composer status while background rebuild is runnin
 			},
 		});
 		assert.deepEqual(statuses[0], { key: "semantic-search", value: "idx: summarizing 25% · ~3m 0s" });
+	} finally {
+		events.get("session_shutdown")?.();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("agent_end automatically starts a background index rebuild after successful file edits", async () => {
+	const events = new Map<string, any>();
+	const starts: Array<{ cwd: string }> = [];
+	const statuses: Array<{ key: string; value: string | undefined }> = [];
+	const notifications: Array<{ message: string; level?: string }> = [];
+	semanticSearchExtension({
+		on(name: string, handler: any) {
+			events.set(name, handler);
+		},
+		registerTool() {},
+		registerCommand() {},
+	} as any, {
+		startBackgroundIndexBuild(cwd: string) {
+			starts.push({ cwd });
+			const statusDir = join(cwd, ".pi", "semantic-search");
+			mkdirSync(statusDir, { recursive: true });
+			const logPath = join(statusDir, "rebuild.log");
+			const statusPath = join(statusDir, "rebuild-status.json");
+			writeFileSync(logPath, "", "utf8");
+			writeFileSync(statusPath, JSON.stringify({
+				status: "running",
+				cwd,
+				logPath,
+				pid: process.pid,
+				startedAt: "2026-05-17T13:09:44.855Z",
+				progress: {
+					phase: "starting",
+					message: "background rebuild process started",
+					phaseStartedAt: "2026-05-17T13:09:44.855Z",
+					updatedAt: "2026-05-17T13:09:44.855Z",
+					elapsedMs: 0,
+				},
+			}), "utf8");
+			return { pid: process.pid, logPath, statusPath };
+		},
+	});
+
+	const dir = makeProject({
+		"src/search/index.ts": "export function semanticSearch(query: string) { return vectorIndex.search(query); }\n",
+	});
+	try {
+		buildSearchIndex(dir, { writeToDisk: true });
+		writeFileSync(join(dir, "src", "search", "index.ts"), "export function semanticSearch(query: string) { return vectorIndex.search(query) + query.length; }\n", "utf8");
+
+		await events.get("tool_result")?.({ toolName: "write", input: { path: "src/search/index.ts" }, isError: false }, { cwd: dir });
+		await events.get("agent_end")?.({}, {
+			cwd: dir,
+			ui: {
+				setStatus(key: string, value: string | undefined) {
+					statuses.push({ key, value });
+				},
+				notify(message: string, level?: string) {
+					notifications.push({ message, level });
+				},
+			},
+		});
+		await new Promise((resolve) => setImmediate(resolve));
+
+		assert.equal(starts.length, 1);
+		assert.equal(starts[0]?.cwd, dir);
+		assert.ok(statuses.some((status) => status.key === "semantic-search" && status.value === "idx: starting"));
+		assert.match(notifications[0]?.message ?? "", /Semantic index stale after 1 changed file; rebuilding in background/);
+		assert.equal(notifications[0]?.level, "info");
+	} finally {
+		events.get("session_shutdown")?.();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("agent_end does not auto-rebuild stale indexes without a successful file-changing tool result", async () => {
+	const events = new Map<string, any>();
+	let starts = 0;
+	semanticSearchExtension({
+		on(name: string, handler: any) {
+			events.set(name, handler);
+		},
+		registerTool() {},
+		registerCommand() {},
+	} as any, {
+		startBackgroundIndexBuild(cwd: string) {
+			starts++;
+			const statusDir = join(cwd, ".pi", "semantic-search");
+			mkdirSync(statusDir, { recursive: true });
+			const logPath = join(statusDir, "rebuild.log");
+			const statusPath = join(statusDir, "rebuild-status.json");
+			return { pid: process.pid, logPath, statusPath };
+		},
+	});
+
+	const dir = makeProject({
+		"src/search/index.ts": "export function semanticSearch(query: string) { return vectorIndex.search(query); }\n",
+	});
+	try {
+		buildSearchIndex(dir, { writeToDisk: true });
+		writeFileSync(join(dir, "src", "search", "index.ts"), "export function semanticSearch(query: string) { return vectorIndex.search(query) + query.length; }\n", "utf8");
+
+		await events.get("agent_end")?.({}, { cwd: dir, ui: { setStatus() {}, notify() {} } });
+		await events.get("tool_result")?.({ toolName: "write", input: { path: "src/search/index.ts" }, isError: true }, { cwd: dir });
+		await events.get("agent_end")?.({}, { cwd: dir, ui: { setStatus() {}, notify() {} } });
+
+		assert.equal(starts, 0);
 	} finally {
 		events.get("session_shutdown")?.();
 		rmSync(dir, { recursive: true, force: true });

@@ -48,6 +48,7 @@ Configuration:
 - `PI_SEMANTIC_SEARCH_SUMMARY_MODEL` — generation model for semantic-card summaries, defaults to `qwen2.5-coder:7b`
 - `PI_SEMANTIC_SEARCH_SUMMARIES=false` — disables default summary generation and now causes the required default path to fail; prefer explicit lexical/debug commands when you intentionally want lower-quality local summaries
 - `PI_SEMANTIC_SEARCH_SUMMARY_CONCURRENCY` — parallel summary requests, defaults to `2`
+- `PI_SEMANTIC_SEARCH_AUTO_REBUILD=false` — disable the automatic background rebuild after successful `write`/`edit` tool changes leave the index stale
 - `PI_SEMANTIC_SEARCH_EMBED_MAX_CHARS` — max characters sent per Ollama embedding input before adaptive retries; defaults to `6000`
 - `PI_SEMANTIC_SEARCH_SUMMARY_MAX_CHARS` — max characters sent per Ollama summary prompt; defaults to `10000`
 
@@ -57,7 +58,8 @@ Configuration:
 - Default search/index rebuilds require Ollama summaries and embeddings; missing Ollama/models are treated as setup errors, not automatic lexical fallback.
 - Builds semantic cards for each file and detected symbols (classes, modules, methods, functions, markdown headings). Cards include path role, symbols, calls/references, comments, inferred concepts, and an Ollama-generated concise summary for meaning-oriented queries.
 - Summary generation runs in parallel during embedding index builds and caches unchanged card summaries under `.pi/semantic-search/summaries.json`.
-- `/index rebuild` starts the slower summary+embedding rebuild in a detached Node process by default, so the main session does not block. While it runs, the composer/footer status shows a compact `index: ...` indicator. Use `/index rebuild --foreground` only when you explicitly want to wait in-session.
+- `/index rebuild` starts the slower summary+embedding rebuild in a detached Node process by default, so the main session does not block. While it runs, the composer/footer status shows a compact `idx: ...` indicator. Use `/index rebuild --foreground` only when you explicitly want to wait in-session.
+- After successful `write`/`edit` tool changes, `agent_end` checks freshness and starts the same background rebuild automatically when the index is stale. The composer/footer indicator shows running progress and briefly shows `idx: done` or `idx: failed`; a follow-up message includes the final status/log path.
 - `/index rebuild --status` reports whether the last background rebuild is running, succeeded, failed, or unknown, plus progress phase/count/ETA when available, recent log lines, and current index freshness.
 - Caps and adaptively shrinks embedding inputs before retrying Ollama context-length failures, so one oversized code chunk or semantic card should not abort the whole index build.
 - Combines Ollama embedding similarity over raw chunks and semantic cards, lexical terms, paths, symbols, lightweight vector scoring, and code-concept expansion.

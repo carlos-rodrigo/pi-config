@@ -14,7 +14,9 @@ import {
 	basename,
 	dirname,
 	extname,
+	isAbsolute,
 	join,
+	relative,
 	resolve,
 	sep,
 } from "node:path";
@@ -524,6 +526,8 @@ type BackgroundRebuildStatus = {
 
 const memoryIndexes = new Map<string, SearchIndex>();
 const watchedBackgroundRebuilds = new Map<string, NodeJS.Timeout>();
+const terminalIndicatorTimers = new Map<string, NodeJS.Timeout>();
+const TERMINAL_REBUILD_INDICATOR_MS = 15_000;
 
 function normalizeRelativePath(path: string): string {
 	return path.split(sep).join("/").replace(/^\.\//, "");
@@ -2349,6 +2353,25 @@ function markBackgroundRebuildNotified(status: BackgroundRebuildStatus): void {
 	writeBackgroundRebuildStatus({ ...status, notified: true });
 }
 
+function clearTerminalIndicatorTimer(cwd: string): void {
+	const absoluteCwd = resolve(cwd);
+	const timer = terminalIndicatorTimers.get(absoluteCwd);
+	if (!timer) return;
+	clearTimeout(timer);
+	terminalIndicatorTimers.delete(absoluteCwd);
+}
+
+function scheduleTerminalIndicatorClear(pi: ExtensionAPI, ui: RebuildStatusUI | undefined, cwd: string): void {
+	const absoluteCwd = resolve(cwd);
+	clearTerminalIndicatorTimer(absoluteCwd);
+	const timer = setTimeout(() => {
+		terminalIndicatorTimers.delete(absoluteCwd);
+		publishBackgroundRebuildComposerStatus(pi, ui, undefined);
+	}, TERMINAL_REBUILD_INDICATOR_MS);
+	timer.unref?.();
+	terminalIndicatorTimers.set(absoluteCwd, timer);
+}
+
 function formatRebuildProgressLines(progress: RebuildProgress): string[] {
 	const count = typeof progress.current === "number" && typeof progress.total === "number" ? ` ${progress.current}/${progress.total}` : "";
 	const percent = typeof progress.percent === "number" ? ` (${progress.percent}%)` : "";
@@ -2359,8 +2382,11 @@ function formatRebuildProgressLines(progress: RebuildProgress): string[] {
 	return lines;
 }
 
-export function formatBackgroundRebuildIndicator(status: Pick<BackgroundRebuildStatus, "status" | "progress"> | undefined): string | undefined {
-	if (status?.status !== "running") return undefined;
+export function formatBackgroundRebuildIndicator(status: Pick<BackgroundRebuildStatus, "status" | "progress" | "notified"> | undefined): string | undefined {
+	if (!status || status.notified) return undefined;
+	if (status.status === "succeeded") return "idx: done";
+	if (status.status === "failed") return "idx: failed";
+	if (status.status === "unknown") return "idx: unknown";
 	const progress = status.progress;
 	if (!progress) return "idx: rebuilding…";
 	const percent = typeof progress.percent === "number" ? ` ${progress.percent}%` : "";
@@ -2428,6 +2454,7 @@ function watchBackgroundIndexBuild(pi: ExtensionAPI, cwd: string, ui?: RebuildSt
 		return;
 	}
 	const initialStatus = currentBackgroundRebuildStatus(absoluteCwd);
+	if (initialStatus?.status === "running") clearTerminalIndicatorTimer(absoluteCwd);
 	publishBackgroundRebuildComposerStatus(pi, ui, initialStatus);
 	if (!initialStatus || (initialStatus.status !== "running" && initialStatus.notified)) return;
 	const check = () => {
@@ -2440,7 +2467,6 @@ function watchBackgroundIndexBuild(pi: ExtensionAPI, cwd: string, ui?: RebuildSt
 			clearInterval(interval);
 			watchedBackgroundRebuilds.delete(absoluteCwd);
 		}
-		publishBackgroundRebuildComposerStatus(pi, ui, undefined);
 		if (status.notified) return;
 		const indexStatus = getIndexStatus(absoluteCwd);
 		pi.sendMessage?.({
@@ -2450,6 +2476,7 @@ function watchBackgroundIndexBuild(pi: ExtensionAPI, cwd: string, ui?: RebuildSt
 			details: { index: indexStatus, rebuild: status },
 		});
 		markBackgroundRebuildNotified(status);
+		scheduleTerminalIndicatorClear(pi, ui, absoluteCwd);
 	};
 	const interval = setInterval(check, 5000);
 	watchedBackgroundRebuilds.set(absoluteCwd, interval);
@@ -2537,6 +2564,30 @@ function startBackgroundIndexBuild(cwd: string, options: { embeddingModel?: stri
 	}
 }
 
+type BackgroundIndexBuildStarter = typeof startBackgroundIndexBuild;
+
+function normalizeToolPath(toolPath: string): string {
+	return toolPath.trim().replace(/^@/, "");
+}
+
+function pathIsInsideCwd(cwd: string, absolutePath: string): boolean {
+	const normalizedCwd = resolve(cwd);
+	const normalizedPath = resolve(absolutePath);
+	const pathFromCwd = relative(normalizedCwd, normalizedPath);
+	return pathFromCwd === "" || (!pathFromCwd.startsWith("..") && !isAbsolute(pathFromCwd));
+}
+
+function fileChangingToolPath(event: { toolName?: string; input?: unknown; isError?: boolean }): string | undefined {
+	if (event.isError || (event.toolName !== "write" && event.toolName !== "edit")) return undefined;
+	const input = event.input && typeof event.input === "object" ? event.input as { path?: unknown } : undefined;
+	return typeof input?.path === "string" && input.path.trim() ? input.path : undefined;
+}
+
+function formatAutoRebuildStartedNotification(changedPaths: string[], started: { pid?: number; logPath: string }): string {
+	const changed = changedPaths.length === 1 ? "1 changed file" : `${changedPaths.length} changed files`;
+	return `Semantic index stale after ${changed}; rebuilding in background${started.pid ? ` (pid ${started.pid})` : ""}. Log: ${started.logPath}`;
+}
+
 function flagValue(tokens: string[], flag: string): string | undefined {
 	const equals = `${flag}=`;
 	const inline = tokens.find((token) => token.startsWith(equals));
@@ -2614,13 +2665,72 @@ export function parseIndexCommandArgs(args: string): ParsedIndexCommandArgs {
 	return { tokens, action, lexicalOnly, background, summariesDisabled, summaryModel, model };
 }
 
-export default function semanticSearchExtension(pi: ExtensionAPI) {
+export type SemanticSearchExtensionOptions = {
+	autoRebuild?: boolean;
+	startBackgroundIndexBuild?: BackgroundIndexBuildStarter;
+};
+
+export default function semanticSearchExtension(pi: ExtensionAPI, options: SemanticSearchExtensionOptions = {}) {
+	const changedPathsByCwd = new Map<string, Set<string>>();
+	const autoRebuildEnabled = options.autoRebuild ?? envFlagEnabled(process.env.PI_SEMANTIC_SEARCH_AUTO_REBUILD, true);
+	const startIndexBuild = options.startBackgroundIndexBuild ?? startBackgroundIndexBuild;
+
+	function noteChangedPath(cwd: string, toolPath: string | undefined): void {
+		if (!toolPath) return;
+		const absoluteCwd = resolve(cwd);
+		const absolutePath = resolve(absoluteCwd, normalizeToolPath(toolPath));
+		if (!pathIsInsideCwd(absoluteCwd, absolutePath)) return;
+		const paths = changedPathsByCwd.get(absoluteCwd) ?? new Set<string>();
+		paths.add(absolutePath);
+		changedPathsByCwd.set(absoluteCwd, paths);
+	}
+
+	function tryStartAutoRebuild(cwd: string, ui?: RebuildStatusUI & { notify?: (message: string, level?: string) => void }): void {
+		if (!autoRebuildEnabled) return;
+		const absoluteCwd = resolve(cwd);
+		const changedPaths = changedPathsByCwd.get(absoluteCwd);
+		if (!changedPaths || changedPaths.size === 0) return;
+		const runningStatus = currentBackgroundRebuildStatus(absoluteCwd);
+		if (runningStatus?.status === "running") {
+			watchBackgroundIndexBuild(pi, absoluteCwd, ui);
+			return;
+		}
+		const status = getIndexStatus(absoluteCwd);
+		if (!status.stale) {
+			changedPathsByCwd.delete(absoluteCwd);
+			return;
+		}
+		try {
+			clearTerminalIndicatorTimer(absoluteCwd);
+			const changedSnapshot = Array.from(changedPaths);
+			const started = startIndexBuild(absoluteCwd);
+			changedPathsByCwd.delete(absoluteCwd);
+			watchBackgroundIndexBuild(pi, absoluteCwd, ui);
+			publishBackgroundRebuildComposerStatus(pi, ui, currentBackgroundRebuildStatus(absoluteCwd));
+			ui?.notify?.(formatAutoRebuildStartedNotification(changedSnapshot, started), "info");
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			ui?.notify?.(`Semantic index auto-rebuild failed to start: ${message}`, "error");
+		}
+	}
+
 	pi.on?.("session_start", (_event, ctx) => {
 		watchBackgroundIndexBuild(pi, ctx.cwd, ctx.ui);
 	});
 	pi.on?.("session_shutdown", () => {
 		for (const interval of watchedBackgroundRebuilds.values()) clearInterval(interval);
 		watchedBackgroundRebuilds.clear();
+		for (const timer of terminalIndicatorTimers.values()) clearTimeout(timer);
+		terminalIndicatorTimers.clear();
+		changedPathsByCwd.clear();
+	});
+
+	pi.on?.("tool_result", async (event, ctx) => {
+		noteChangedPath(ctx.cwd, fileChangingToolPath(event));
+	});
+
+	pi.on?.("agent_end", async (_event, ctx) => {
+		tryStartAutoRebuild(ctx.cwd, ctx.ui);
 	});
 
 	pi.registerCommand("index", {
@@ -2647,7 +2757,8 @@ export default function semanticSearchExtension(pi: ExtensionAPI) {
 			}
 
 			if (background) {
-				const started = startBackgroundIndexBuild(ctx.cwd, { embeddingModel: model, summaryModel, summariesDisabled });
+				clearTerminalIndicatorTimer(ctx.cwd);
+				const started = startIndexBuild(ctx.cwd, { embeddingModel: model, summaryModel, summariesDisabled });
 				watchBackgroundIndexBuild(pi, ctx.cwd, ctx.ui);
 				publishBackgroundRebuildComposerStatus(pi, ctx.ui, currentBackgroundRebuildStatus(ctx.cwd));
 				ctx.ui.notify(`Started semantic index rebuild in background${started.pid ? ` (pid ${started.pid})` : ""}. Log: ${started.logPath}`, "info");
