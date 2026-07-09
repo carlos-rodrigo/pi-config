@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pi Agent Memory Design</title>
+  <style data-tailwind-build="design.tailwind.css">
+    :root {
+      color-scheme: light;
+      --page: #fff;
+      --surface: #fff;
+      --surface-subtle: #fafafa;
+      --surface-raised: #f5f5f5;
+      --text: #0a0a0a;
+      --text-muted: #5f5f5f;
+      --text-subtle: #858585;
+      --border: #e7e7e7;
+      --border-strong: #d6d6d6;
+      --accent: #000;
+      --accent-soft: #f3f3f3;
+      --info: #006adc;
+      --info-soft: #eef6ff;
+      --success: #007a3d;
+      --success-soft: #eefaf3;
+      --warning: #9a4d00;
+      --warning-soft: #fff7ed;
+      --danger: #c50000;
+      --danger-soft: #fff1f1;
+      --focus: 0 0 0 3px rgba(0, 106, 220, .22);
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 20px;
+      --space-6: 24px;
+      --space-8: 32px;
+      --space-10: 40px;
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --content: 78ch;
+      --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; background: var(--page); color: var(--text); font-family: var(--sans); line-height: 1.55; text-rendering: optimizeLegibility; }
+    a { color: var(--accent); text-underline-offset: .18em; }
+    code, kbd { font-family: var(--mono); font-size: .92em; }
+    code { padding: .12rem .32rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-subtle); overflow-wrap: anywhere; }
+    pre { margin: 0; padding: var(--space-4); overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-lg); background: #0b1020; color: #e5eefc; font-family: var(--mono); font-size: .86rem; line-height: 1.5; }
+    pre code { padding: 0; border: 0; background: transparent; color: inherit; font-size: inherit; }
+    :where(a, button, summary):focus-visible { outline: none; box-shadow: var(--focus); }
+    .skip-link { position: fixed; top: var(--space-4); left: var(--space-4); z-index: 20; transform: translateY(-180%); padding: .65rem .9rem; border-radius: 999px; background: var(--text); color: var(--surface); text-decoration: none; }
+    .skip-link:focus { transform: translateY(0); }
+    .doc-shell { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: clamp(var(--space-6), 4vw, var(--space-10)); max-width: 1320px; margin: 0 auto; padding: var(--space-8) clamp(var(--space-4), 3vw, var(--space-8)) var(--space-10); align-items: start; }
+    .side-nav { position: sticky; top: var(--space-6); max-height: calc(100vh - var(--space-8)); overflow: auto; padding-right: var(--space-4); }
+    .index-details { margin: 0; padding: 0; border: 0; background: transparent; }
+    .index-details > summary { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); padding: .4rem .5rem; border-radius: var(--radius-md); cursor: pointer; list-style: none; }
+    .index-details > summary:hover { background: var(--surface-subtle); }
+    .index-details > summary::-webkit-details-marker { display: none; }
+    .index-details > summary::after { content: "⌄"; margin-left: auto; color: var(--text-subtle); }
+    .nav-title, .side-nav h2 { margin: 0 0 var(--space-3); color: var(--text-subtle); font-size: .75rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    .index-details > summary .nav-title { margin: 0; color: var(--text); }
+    .side-nav ol, .side-nav ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+    .side-nav a { display: block; padding: .36rem .5rem; border-radius: var(--radius-md); color: var(--text-muted); font-size: .9rem; text-decoration: none; }
+    .side-nav a:hover { background: var(--surface-subtle); color: var(--text); }
+    .nav-group { margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+    .doc-main { min-width: 0; max-width: 960px; }
+    .breadcrumbs { margin-bottom: var(--space-4); color: var(--text-subtle); font-size: .9rem; }
+    .breadcrumbs ol { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+    .breadcrumbs li:not(:last-child)::after { content: "/"; margin-left: var(--space-2); color: var(--text-subtle); }
+    .article-header { margin-bottom: var(--space-8); padding: var(--space-6) 0; border-bottom: 1px solid var(--border); }
+    .article-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
+    .pill, .id-chip, .review-label, .status-chip { display: inline-flex; align-items: center; border-radius: 999px; font-weight: 750; letter-spacing: .03em; }
+    .pill { min-height: 24px; padding: .12rem .5rem; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); font-size: .72rem; text-transform: uppercase; }
+    .pill.review { background: var(--warning-soft); color: var(--warning); }
+    .pill.recommended { background: var(--success-soft); color: var(--success); }
+    h1 { margin: 0; max-width: 900px; font-size: clamp(2rem, 4vw, 3.2rem); line-height: 1.05; letter-spacing: -.035em; }
+    h2, h3 { color: var(--text); line-height: 1.22; letter-spacing: -.015em; }
+    .subtitle { max-width: var(--content); margin: var(--space-4) 0 0; color: var(--text-muted); font-size: clamp(1rem, 1.2vw, 1.14rem); }
+    .takeaway-list, .checklist, .source-list, .step-list { display: grid; gap: var(--space-2); margin: var(--space-4) 0 0; padding-left: 1.15rem; color: var(--text-muted); }
+    .section-card { margin-bottom: var(--space-8); padding-bottom: var(--space-8); scroll-margin-top: var(--space-4); border-bottom: 1px solid var(--border); }
+    .section-kicker { display: inline-flex; margin-bottom: var(--space-2); color: var(--text-subtle); font-size: .76rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    .section-card h2 { margin: 0; font-size: clamp(1.45rem, 2.3vw, 2rem); }
+    .section-summary, .section-card > p { max-width: var(--content); color: var(--text-muted); }
+    .card-grid, .story-list, .slice-grid, .decision-grid, .example-pair, .example-list, .before-after, .contract-list { display: grid; gap: var(--space-4); margin-top: var(--space-4); }
+    .card-grid, .example-pair, .example-list, .before-after { grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+    .slice-grid, .decision-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+    .contract-list { grid-template-columns: 1fr; }
+    .story-card, .callout, .component-card, .decision-card, .decision-record-card, .slice-card, .slice-design-card, .example-card, .example-panel, .related-links, .feedback-widget, .prev-next, .contract-card, .domain-card, .evidence-card { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+    .story-card, .callout, .component-card, .decision-card, .decision-record-card, .slice-card, .slice-design-card, .example-card, .example-panel, .contract-card, .domain-card, .evidence-card { padding: var(--space-4); }
+    .story-card h3, .component-card h3, .decision-card h3, .decision-record-card h3, .slice-card h3, .slice-design-card h3, .example-card h3, .example-panel h3, .contract-card h3, .domain-card h3, .evidence-card h3 { margin: 0 0 var(--space-2); font-size: 1rem; }
+    .story-card p, .component-card p, .decision-card p, .decision-record-card p, .slice-card p, .slice-design-card p, .example-card p, .example-panel p, .contract-card p, .domain-card p, .evidence-card p, .callout p { margin: var(--space-2) 0 0; color: var(--text-muted); }
+    .callout { border-left: 4px solid var(--info); background: color-mix(in srgb, var(--info-soft) 42%, var(--surface)); }
+    .callout.success { border-left-color: var(--success); background: color-mix(in srgb, var(--success-soft) 45%, var(--surface)); }
+    .callout.warning { border-left-color: var(--warning); background: color-mix(in srgb, var(--warning-soft) 42%, var(--surface)); }
+    .callout.risk { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger-soft) 45%, var(--surface)); }
+    .id-chip { margin-right: .35rem; padding: .12rem .44rem; background: var(--accent-soft); color: var(--accent); font-family: var(--mono); font-size: .72rem; }
+    .status-chip { margin-left: .35rem; padding: .1rem .42rem; border: 1px solid var(--border); color: var(--text-muted); font-size: .72rem; }
+    .review-label { margin-top: var(--space-4); color: var(--text-subtle); font-size: .72rem; font-family: var(--mono); }
+    .mini-flow { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-3); color: var(--text-muted); }
+    .mini-flow span { padding: .35rem .5rem; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-subtle); font-size: .86rem; }
+    .mini-flow b { color: var(--text-subtle); }
+    .table-wrap { margin-top: var(--space-4); overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+    table { width: 100%; border-collapse: collapse; min-width: 780px; font-size: .92rem; }
+    caption { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); background: var(--surface-subtle); text-align: left; color: var(--text); font-weight: 750; caption-side: top; }
+    th, td { padding: .85rem 1rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { color: var(--text-muted); font-size: .74rem; letter-spacing: .06em; text-transform: uppercase; }
+    tbody tr:last-child td, tbody tr:last-child th { border-bottom: 0; }
+    .figure-card { margin-top: var(--space-4); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-subtle); overflow: auto; }
+    .figure-card svg { display: block; width: 100%; min-width: min(900px, 100%); height: auto; }
+    figcaption { margin-top: var(--space-3); color: var(--text-muted); font-size: .92rem; }
+    .legend { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); color: var(--text-muted); font-size: .9rem; }
+    .legend span { display: inline-flex; align-items: center; gap: var(--space-2); }
+    .swatch { width: 1.1rem; height: .7rem; border-radius: 3px; border: 2px solid currentColor; background: color-mix(in srgb, currentColor 16%, transparent); }
+    .schema-code { background: #0b1020; color: #e5eefc; border-color: #1f2a44; }
+    .code-key { color: #93c5fd; }
+    .code-type { color: #c4b5fd; }
+    .code-enum { color: #86efac; }
+    .code-string { color: #fbbf24; }
+    .code-punctuation { color: #94a3b8; }
+    .code-comment { color: #64748b; font-style: italic; }
+    .terminal { margin-top: var(--space-3); padding: var(--space-3); border-radius: var(--radius-md); background: #111; color: #f5f5f5; font-family: var(--mono); font-size: .86rem; overflow-x: auto; white-space: pre-wrap; }
+    .terminal .muted { color: #aaa; }
+    .diagram-bg { fill: #fff; }
+    .diagram-node-card { stroke-width: 2; }
+    .diagram-node-title { font-size: 15px; font-weight: 850; fill: var(--text); }
+    .diagram-node-subtitle { font-size: 13px; fill: var(--text-muted); }
+    .diagram-node-meta { font-size: 12px; fill: var(--text); font-family: var(--mono); opacity: .84; }
+    .diagram-arrow { fill: none; stroke: var(--text); stroke-width: 2.5; }
+    .diagram-arrow-boundary { fill: none; stroke: var(--info); stroke-width: 2.7; stroke-dasharray: 7 6; }
+    .diagram-label-bg { fill: color-mix(in srgb, var(--surface) 94%, transparent); stroke: var(--border-strong); stroke-width: 1.4; }
+    .diagram-arrow-label { font-size: 12px; fill: var(--text); font-weight: 780; }
+    .diagram-label-detail { font-size: 12px; fill: var(--text-muted); font-weight: 650; }
+    .path-draw { stroke-dasharray: 1; stroke-dashoffset: 0; }
+    .diagram-reveal { opacity: 1; transform: none; }
+    .js .path-draw { stroke-dashoffset: 1; transition: stroke-dashoffset .7s cubic-bezier(.2,.8,.2,1); transition-delay: var(--reveal-delay, 0ms); }
+    .js .is-visible .path-draw, .js .reveal.is-visible .path-draw { stroke-dashoffset: 0; }
+    .js .diagram-reveal { opacity: 0; transform: translateY(12px); transform-box: fill-box; transform-origin: center; transition: opacity .32s ease, transform .38s cubic-bezier(.2,.8,.2,1); transition-delay: var(--reveal-delay, 0ms); }
+    .js .is-visible .diagram-reveal, .js .reveal.is-visible .diagram-reveal { opacity: 1; transform: translateY(0); }
+    details { margin-top: var(--space-4); padding: .9rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+    summary { cursor: pointer; color: var(--text); font-weight: 750; }
+    .related-links, .feedback-widget, .prev-next { margin-top: var(--space-5); padding: var(--space-4); }
+    .related-links ul { display: grid; gap: var(--space-2); margin: var(--space-3) 0 0; padding-left: 1.1rem; color: var(--text-muted); }
+    .prev-next { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+    .prev-next a { padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); text-decoration: none; }
+    [data-review-id] { position: relative; }
+    [data-review-id]:target { outline: 3px solid var(--accent); outline-offset: 5px; }
+    .back-to-top { position: fixed; right: var(--space-5); bottom: var(--space-5); display: grid; place-items: center; width: 2.4rem; height: 2.4rem; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); text-decoration: none; }
+    footer { max-width: 1320px; margin: 0 auto; padding: 0 clamp(var(--space-4), 3vw, var(--space-8)) var(--space-8); color: var(--text-muted); font-size: .9rem; }
+    .reveal { opacity: 1; transform: none; }
+    .js .reveal { opacity: 0; transform: translateY(12px); transition: opacity .28s ease, transform .32s cubic-bezier(.2,.8,.2,1); }
+    .js .reveal.is-visible { opacity: 1; transform: translateY(0); }
+    @media (max-width: 960px) { .doc-shell { grid-template-columns: 1fr; } .side-nav { position: static; max-height: none; padding-right: 0; } .prev-next { grid-template-columns: 1fr; } }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; } .js .reveal { opacity: 1; transform: none; } .js .diagram-reveal { opacity: 1; transform: none; } .js .path-draw { stroke-dashoffset: 0; } }
+    @media print { body { background: #fff; color: #000; } .back-to-top, .feedback-widget, .side-nav { display: none; } .doc-shell { display: block; max-width: none; padding: 0; } .article-header, .section-card, .story-card, .component-card, .decision-card, .decision-record-card, .slice-card, .slice-design-card, .example-card, .example-panel, .domain-card, .callout { break-inside: avoid; } a { color: #000; text-decoration: none; } .reveal { opacity: 1 !important; transform: none !important; } }
+  </style>
+</head>
+<body data-visual-mode="vercel-docs-packet">
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <div class="doc-shell">
+    <aside class="side-nav" aria-label="Document navigation" data-review-id="chrome.side-nav">
+      <details class="index-details" open>
+        <summary><span class="nav-title">Design packet</span></summary>
+        <nav aria-label="Table of contents" data-review-id="chrome.index">
+          <ol>
+            <li><a href="#summary">Overview</a></li>
+            <li><a href="#review-path">Review path</a></li>
+            <li><a href="#examples">Examples</a></li>
+            <li><a href="#prd-story-inventory">PRD stories</a></li>
+            <li><a href="#prd-experience-contract">Experience</a></li>
+            <li><a href="#pattern-research">Research</a></li>
+            <li><a href="#design-thesis">Thesis</a></li>
+            <li><a href="#proposed-architecture">Proposal</a></li>
+            <li><a href="#technology-stack">Tech stack</a></li>
+            <li><a href="#interface-implementation">Interface</a></li>
+            <li><a href="#architecture-overview">Architecture</a></li>
+            <li><a href="#architecture-delta">Delta</a></li>
+            <li><a href="#slice-plan">Slice plan</a></li>
+            <li><a href="#component-communication">Boundaries</a></li>
+            <li><a href="#domain-model">Domain</a></li>
+            <li><a href="#domain-interactions">Interactions</a></li>
+            <li><a href="#data-contracts">Contracts</a></li>
+            <li><a href="#design-decisions">Decisions</a></li>
+            <li><a href="#tasks-and-feedback">Slice designs</a></li>
+            <li><a href="#story-coverage">Coverage</a></li>
+            <li><a href="#open-questions">Open questions</a></li>
+          </ol>
+        </nav>
+        <div class="nav-group">
+          <h2>Related</h2>
+          <ul>
+            <li><a href="prd.html">Agent Memory PRD</a></li>
+            <li><a href="../context-engineering/design.html">Context engineering design</a></li>
+            <li><a href="../../../extensions/semantic-search/README.md">Semantic search README</a></li>
+            <li><a href="../../playbooks/self-improvement.md">Self-improvement playbook</a></li>
+          </ul>
+        </div>
+      </details>
+    </aside>
+
+    <main id="main" class="doc-main">
+      <nav class="breadcrumbs" aria-label="Breadcrumbs" data-review-id="summary.breadcrumbs">
+        <ol>
+          <li><a href="../../README.md">Docs</a></li>
+          <li><a href="../README.md">Features</a></li>
+          <li><a href="prd.html">Agent Memory PRD</a></li>
+          <li aria-current="page">Design</li>
+        </ol>
+      </nav>
+
+      <article>
+        <header class="article-header" id="summary" data-review-id="summary">
+          <div class="article-meta">
+            <span class="pill review">Draft</span>
+            <span class="pill">Feature design</span>
+            <span class="pill">Updated 2026-07-08</span>
+            <span class="pill recommended">Default-on local memory</span>
+          </div>
+          <h1>Pi Agent Memory Design</h1>
+          <p class="subtitle">Agent Memory becomes a small Pi extension that recalls project and global lessons at prompt time, injects a bounded advisory memory pack for the current turn only, shows visible status, and learns cautiously from verification evidence.</p>
+          <ul class="takeaway-list" data-review-id="summary.takeaways">
+            <li data-review-id="summary.takeaway-1">Use <code>before_agent_start</code> as the recall boundary and append an ephemeral system-prompt pack; never persist recall packs as ordinary session messages.</li>
+            <li data-review-id="summary.takeaway-2">Persist inspectable memory under <code>.pi/agent-memory</code> and <code>$HOME/.pi/agent-memory</code>; project results outrank global results and global promotion is human-gated.</li>
+            <li data-review-id="summary.takeaway-3">Make trust visible through <code>ctx.ui.setStatus()</code>, <code>/agent-memory</code> commands, review logs, setup failure copy, and redaction/promotion gates.</li>
+            <li data-review-id="summary.takeaway-4">Reuse semantic-search’s local Ollama patterns by extracting shared embedding/vector helpers only as needed; memory owns lessons and recall logs, not code indexes.</li>
+          </ul>
+        </header>
+
+        <section class="section-card reveal" id="review-path" aria-labelledby="review-path-title" data-review-id="review-path">
+          <span class="section-kicker">Start here</span>
+          <h2 id="review-path-title">What reviewers should decide</h2>
+          <p class="section-summary">Review the boundaries rather than implementation details: where memory enters the agent, where it is stored, what the user sees, and how a small first slice proves trust.</p>
+          <ol class="step-list">
+            <li data-review-id="review-path.step-1"><strong>Approve the prompt boundary.</strong> Memory packs are advisory system-prompt additions for one turn, not durable chat messages and not higher priority than system, user, project, or task instructions.</li>
+            <li data-review-id="review-path.step-2"><strong>Approve the storage and retrieval boundary.</strong> Two file-backed stores plus local embeddings satisfy the PRD without a database, daemon, or cloud vector service.</li>
+            <li data-review-id="review-path.step-3"><strong>Approve the first slice.</strong> Ship visible status, commands, and settings before recall so the default-on feature is inspectable from the beginning.</li>
+          </ol>
+          <div class="callout warning" data-review-id="review-path.decision-needed"><strong>Non-blocking design knobs</strong><p>Exact status copy and recall budget remain configurable constants until review chooses final wording and limits.</p></div>
+          <span class="review-label">review: review-path</span>
+        </section>
+
+        <section class="section-card reveal" id="examples" aria-labelledby="examples-title" data-review-id="examples">
+          <span class="section-kicker">Example-first</span>
+          <h2 id="examples-title">Concrete system examples</h2>
+          <p class="section-summary">The architecture optimizes for one trusted remembered turn and one broken setup that must be obvious.</p>
+          <div class="example-pair">
+            <article class="example-panel" data-review-id="examples.main"><h3>Main scenario</h3><p>The user runs <code>/agent-memory add project "Use scripts/run_silent.sh for quiet verification."</code>. Later, a matching verification task starts. The extension embeds the prompt locally, ranks the project memory above global memories, appends a small memory pack to the system prompt, logs recalled IDs, and shows <code>mem: ready · project 1</code>.</p></article>
+            <article class="example-panel" data-review-id="examples.edge"><h3>Setup failure scenario</h3><p>Ollama or the required embedding model is unavailable. Memory does not silently skip and does not claim “no match.” It shows <code>mem: failed · embeddings unavailable</code>, writes a reviewable reason, injects no memory pack, and lets the user continue the task with clear recovery guidance.</p></article>
+          </div>
+          <div class="before-after" data-review-id="examples.before-after">
+            <article class="example-panel"><h3>Before</h3><p>Useful conventions live in chat history, feature docs, semantic indexes, archives, and the user’s memory. Agents rediscover them or miss them.</p></article>
+            <article class="example-panel"><h3>After</h3><p>Durable lessons are explicit, scoped, ranked, injected only when relevant, reviewed on demand, and visibly healthy or failed.</p></article>
+          </div>
+          <span class="review-label">review: examples</span>
+        </section>
+
+        <section class="section-card reveal" id="prd-story-inventory" aria-labelledby="prd-story-title" data-review-id="prd-story-inventory">
+          <span class="section-kicker">PRD extraction</span>
+          <h2 id="prd-story-title">PRD story and BDD inventory</h2>
+          <p class="section-summary">Only architecture-shaping PRD facts are repeated here; product wording remains in <a href="prd.html">prd.html</a>.</p>
+          <div class="story-list">
+            <article class="story-card" data-review-id="prd-story-inventory.story-001"><h3><span class="id-chip">STORY-001</span>Run by default with visible controls</h3><p><strong>Acceptance:</strong> AC-001 and AC-009.</p><p><strong>Design implication:</strong> memory status, command parsing, pause/disable semantics, settings storage, and setup copy must exist before retrieval is trusted.</p></article>
+            <article class="story-card" data-review-id="prd-story-inventory.story-002"><h3><span class="id-chip">STORY-002</span>Recall relevant context automatically</h3><p><strong>Acceptance:</strong> AC-002, AC-003, and AC-008.</p><p><strong>Design implication:</strong> recall needs project/global precedence, bounded budget, local embedding health, and distinct no-match versus failed states.</p></article>
+            <article class="story-card" data-review-id="prd-story-inventory.story-003"><h3><span class="id-chip">STORY-003</span>Learn from verified outcomes</h3><p><strong>Acceptance:</strong> AC-004.</p><p><strong>Design implication:</strong> verification feedback must reference recalled IDs from the same task and must not create hidden global memories.</p></article>
+            <article class="story-card" data-review-id="prd-story-inventory.story-004"><h3><span class="id-chip">STORY-004</span>Inspect and correct memory</h3><p><strong>Acceptance:</strong> AC-005, AC-006, and AC-010.</p><p><strong>Design implication:</strong> review logs, tombstones, candidate states, and restore/recreate paths are first-class domain behavior.</p></article>
+            <article class="story-card" data-review-id="prd-story-inventory.story-005"><h3><span class="id-chip">STORY-005</span>Create memories from the beginning</h3><p><strong>Acceptance:</strong> AC-007.</p><p><strong>Design implication:</strong> manual add must confirm scope, redaction, source, active/review state, and future recall proof.</p></article>
+          </div>
+          <div class="callout" data-review-id="prd-story-inventory.non-goals"><strong>Non-goals that constrain design</strong><p>No custom path scope, no cloud vector database, no raw transcript hoarding, no silent global learning, and no full review overlay as an MVP blocker.</p></div>
+          <span class="review-label">review: prd-story-inventory</span>
+        </section>
+
+        <section class="section-card reveal" id="prd-experience-contract" aria-labelledby="experience-contract-title" data-review-id="prd-experience-contract">
+          <span class="section-kicker">Product experience source of truth</span>
+          <h2 id="experience-contract-title">PRD experience contract</h2>
+          <p class="section-summary">The selected PRD UI direction is default-on assisted automatic recall with compact composer/status feedback and command-driven detail.</p>
+          <div class="card-grid">
+            <article class="decision-card" data-review-id="prd-experience-contract.selected-ui-option"><h3>Selected PRD UI option</h3><p><strong>UI-A:</strong> memory runs by default and reports state in Pi chrome. Commands handle add, review, status, pause, resume, disable, enable, reset, and recall debugging.</p></article>
+            <article class="decision-card" data-review-id="prd-experience-contract.user-flows"><h3>Post-story flows to preserve</h3><p>Normal prompts remain normal. Memory appears as a status/detail layer, not a chat interruption. Manual seed memory is available from day one.</p></article>
+            <article class="decision-card" data-review-id="prd-experience-contract.visible-states"><h3>Visible states</h3><p>Show running, recalling, ready, no match, failed, paused, and disabled. Failure is visually and textually different from empty recall.</p></article>
+            <article class="decision-card" data-review-id="prd-experience-contract.review-gaps"><h3>Remaining PRD gaps</h3><p>Only exact copy and recall budget remain open. They do not change the extension boundary or data model.</p></article>
+          </div>
+          <div class="terminal" data-review-id="prd-experience-contract.status-copy"><span class="muted">status examples</span>
+mem: running · project+global
+mem: recalling…
+mem: ready · project 3 · global 1
+mem: no match
+mem: failed · local embeddings unavailable · /agent-memory status
+mem: paused · /agent-memory resume</div>
+          <span class="review-label">review: prd-experience-contract</span>
+        </section>
+
+        <section class="section-card reveal" id="pattern-research" aria-labelledby="research-title" data-review-id="pattern-research">
+          <span class="section-kicker">Prior art</span>
+          <h2 id="research-title">Pattern research</h2>
+          <p class="section-summary">Repo and Pi docs already provide the needed primitives; no external service or new process is required.</p>
+          <div class="example-list">
+            <article class="evidence-card" data-review-id="pattern-research.pi-extensions"><h3>Pi extension docs and examples</h3><p><strong>Insight:</strong> lifecycle hooks can change prompt context and status examples use <code>ctx.ui.setStatus()</code>.</p><p><strong>Design impact:</strong> implement recall in <code>before_agent_start</code> and surface compact status without normal chat noise.</p></article>
+            <article class="evidence-card" data-review-id="pattern-research.semantic-search"><h3>semantic-search extension</h3><p><strong>Insight:</strong> local Ollama setup, embeddings, vector scoring, and setup-error patterns already exist.</p><p><strong>Design impact:</strong> extract reusable retrieval helpers only where duplication appears; do not couple memory to code indexing.</p></article>
+            <article class="evidence-card" data-review-id="pattern-research.verify"><h3>verify and self-improvement archive</h3><p><strong>Insight:</strong> verification outcomes already emit task evidence at agent end.</p><p><strong>Design impact:</strong> score recalled memories from the same task context instead of re-running verification or reading every archive entry.</p></article>
+          </div>
+          <span class="review-label">review: pattern-research</span>
+        </section>
+
+        <section class="section-card reveal" id="design-thesis" aria-labelledby="thesis-title" data-review-id="design-thesis">
+          <span class="section-kicker">Chosen shape</span>
+          <h2 id="thesis-title">Design thesis</h2>
+          <p class="section-summary">Agent Memory should be an event-driven Pi extension with a small domain core, local file-backed stores, local embedding retrieval, advisory prompt injection, and reviewable feedback loops.</p>
+          <div class="card-grid">
+            <article class="component-card" data-review-id="design-thesis.extension"><h3>Use a Pi extension</h3><p>Commands, lifecycle hooks, status, and verification event subscriptions are already extension concerns.</p></article>
+            <article class="component-card" data-review-id="design-thesis.ephemeral"><h3>Inject ephemerally</h3><p>Recall packs influence only the current turn and do not become durable chat/session state.</p></article>
+            <article class="component-card" data-review-id="design-thesis.files"><h3>Persist inspectably</h3><p>JSONL records and vector cache files under <code>.pi</code> satisfy local, reviewable, resettable memory.</p></article>
+          </div>
+          <span class="review-label">review: design-thesis</span>
+        </section>
+
+        <section class="section-card reveal" id="proposed-architecture" aria-labelledby="proposed-architecture-title" data-review-id="proposed-architecture">
+          <span class="section-kicker">System proposal</span>
+          <h2 id="proposed-architecture-title">Architecture proposal</h2>
+          <p class="section-summary">One extension coordinates delivery. Domain and storage code stay testable without Pi APIs, while embedding calls remain adapter-based.</p>
+          <div class="card-grid">
+            <article class="component-card" data-review-id="proposed-architecture.monorepo"><h3>Monorepo / package shape</h3><p>Add <code>extensions/agent-memory/</code> with tests and README. If implementation duplicates semantic-search embedding code, extract <code>extensions/lib/semantic-retrieval.ts</code> or equivalent.</p><p><strong>Boundary:</strong> semantic-search owns code indexes; agent-memory owns durable lessons and recall logs.</p></article>
+            <article class="component-card" data-review-id="proposed-architecture.layers"><h3>Layers</h3><p>Extension entrypoints call application services. Services call pure domain functions. Repositories and embedding adapters sit at the edge.</p><p><strong>Dependency rule:</strong> domain code imports no Pi APIs and no Ollama client.</p></article>
+            <article class="component-card" data-review-id="proposed-architecture.runtime"><h3>Runtime boundaries</h3><p>All MVP work runs in the Pi process through hooks, commands, and event subscriptions.</p><p><strong>Integration style:</strong> no daemon, background agent, local server, or cloud dependency.</p></article>
+            <article class="component-card" data-review-id="proposed-architecture.data-ownership"><h3>Data ownership</h3><p>Project and global stores are explicit scope roots. Settings, records, vector cache, and recall logs are written by the agent-memory extension only.</p><p><strong>Persistence model:</strong> append-only records plus atomic settings/cache writes.</p></article>
+          </div>
+          <span class="review-label">review: proposed-architecture</span>
+        </section>
+
+        <section class="section-card reveal" id="technology-stack" aria-labelledby="technology-title" data-review-id="technology-stack">
+          <span class="section-kicker">Implementation choices</span>
+          <h2 id="technology-title">Technology stack</h2>
+          <p class="section-summary">Stay inside existing project technology so memory can be tested with fake ports and verified with the repo gate.</p>
+          <div class="card-grid">
+            <article class="component-card" data-review-id="technology-stack.pi"><h3>Pi APIs</h3><p><code>before_agent_start</code>, <code>session_start</code>, command registration, <code>ctx.ui.setStatus()</code>, custom/session messages for review output, and the Pi event bus.</p></article>
+            <article class="component-card" data-review-id="technology-stack.node"><h3>Node filesystem</h3><p><code>fs/promises</code>, JSONL append files, atomic write-and-rename for settings and vector cache, and an in-process per-scope write queue.</p></article>
+            <article class="component-card" data-review-id="technology-stack.embeddings"><h3>User-controlled Ollama</h3><p>Use <code>extensions/agent-memory/config.json</code> defaults: a user-controlled remote Ollama server via SSH tunnel, <code>mxbai-embed-large</code> for atomic-memory recall, and <code>qwen2.5-coder:14b</code> for drafting/review helpers. No test should require a live model.</p></article>
+          </div>
+          <span class="review-label">review: technology-stack</span>
+        </section>
+
+        <section class="section-card reveal" id="interface-implementation" aria-labelledby="interface-title" data-review-id="interface-implementation">
+          <span class="section-kicker">Interface implementation</span>
+          <h2 id="interface-title">Commands, status, and review output</h2>
+          <p class="section-summary">The MVP interface is compact during normal work and detailed only when the user asks.</p>
+          <div class="card-grid">
+            <article class="component-card" data-review-id="interface-implementation.status"><h3>Composer/status component</h3><p>Publish <code>agent-memory</code> status at startup, recall start, recall result, failure, pause, resume, disable, enable, and reset.</p></article>
+            <article class="component-card" data-review-id="interface-implementation.commands"><h3><code>/agent-memory</code> command family</h3><p>One parser owns <code>status|add|recall|review|pause|resume|disable|enable|reset</code> so scope validation and help text stay consistent.</p></article>
+            <article class="component-card" data-review-id="interface-implementation.review"><h3>Review surface</h3><p>Use command output or a custom review message to list recent recalls, candidates, metadata, and correction commands before building any overlay.</p></article>
+            <article class="component-card" data-review-id="interface-implementation.accessibility"><h3>Accessibility and motion</h3><p>Status copy must not rely on color alone. Review output should be text-first, command-addressable, and readable in TUI and non-TUI flows.</p></article>
+          </div>
+          <span class="review-label">review: interface-implementation</span>
+        </section>
+
+        <section class="section-card reveal" id="architecture-overview" aria-labelledby="architecture-overview-title" data-review-id="architecture-overview">
+          <span class="section-kicker">Architecture overview</span>
+          <h2 id="architecture-overview-title">Prompt-time memory flow</h2>
+          <p class="section-summary">Read left to right: a normal prompt triggers recall, local stores and embeddings produce a bounded pack, status remains visible, and verification later scores only recalled memories.</p>
+          <figure class="figure-card reveal" data-review-id="architecture-overview.figure">
+<svg viewBox="0 0 1860 489" role="img" aria-labelledby="agent-memory-architecture-regenerated-title agent-memory-architecture-regenerated-desc" xmlns="http://www.w3.org/2000/svg" data-review-id="architecture-overview.svg">
+  <title id="agent-memory-architecture-regenerated-title">Agent Memory Prompt-Time Architecture</title>
+  <desc id="agent-memory-architecture-regenerated-desc">A normal Pi turn flows through the agent-memory extension, local stores, local embeddings, retrieval ranking, ephemeral prompt injection, visible status, and verification feedback.</desc>
+  <defs>
+    <marker id="agent-memory-architecture-regenerated-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--text)" /></marker>
+    <marker id="agent-memory-architecture-regenerated-boundary-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--info)" /></marker>
+  </defs>
+  <rect class="diagram-bg" x="0" y="0" width="1860" height="489" />
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 120ms" data-review-id="architecture-overview.edge.route-to-endpoint"><path class="diagram-arrow path-draw" pathLength="1" d="M250 192 L330 192" marker-end="url(#agent-memory-architecture-regenerated-arrow)"/></g>
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 360ms" data-review-id="architecture-overview.edge.load-stores"><path class="diagram-arrow path-draw" pathLength="1" d="M560 221 L570 221 L570 333 L640 333" marker-end="url(#agent-memory-architecture-regenerated-arrow)"/></g>
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 600ms" data-review-id="architecture-overview.edge.check-embeddings"><path class="diagram-arrow-boundary path-draw" pathLength="1" d="M560 192 L645 192" marker-end="url(#agent-memory-architecture-regenerated-boundary-arrow)"/></g>
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 840ms" data-review-id="architecture-overview.edge.records-to-retrieval"><path class="diagram-arrow path-draw" pathLength="1" d="M880 352 L890 352 L890 230 L960 230" marker-end="url(#agent-memory-architecture-regenerated-arrow)"/></g>
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 1080ms" data-review-id="architecture-overview.edge.vectors-to-retrieval"><path class="diagram-arrow path-draw" pathLength="1" d="M875 192 L960 192" marker-end="url(#agent-memory-architecture-regenerated-arrow)"/></g>
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 1320ms" data-review-id="architecture-overview.edge.rank-to-pack"><path class="diagram-arrow path-draw" pathLength="1" d="M1180 211 L1260 211" marker-end="url(#agent-memory-architecture-regenerated-arrow)"/></g>
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 1560ms" data-review-id="architecture-overview.edge.publish-status"><path class="diagram-arrow path-draw" pathLength="1" d="M560 163 L570 163 L570 99 L1570 99" marker-end="url(#agent-memory-architecture-regenerated-arrow)"/></g>
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 1800ms" data-review-id="architecture-overview.edge.pack-to-status"><path class="diagram-arrow path-draw" pathLength="1" d="M1490 211 L1500 211 L1500 137 L1570 137" marker-end="url(#agent-memory-architecture-regenerated-arrow)"/></g>
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 2040ms" data-review-id="architecture-overview.edge.verify-to-stores"><path class="diagram-arrow path-draw" pathLength="1" d="M560 371 L640 371" marker-end="url(#agent-memory-architecture-regenerated-arrow)"/></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 0ms" data-review-id="architecture-overview.node.prompt"><rect class="diagram-node-card" x="60" y="138" width="190" height="108" rx="16" fill="var(--info-soft)" stroke="var(--info)"/><text class="diagram-node-title" x="155" y="170" text-anchor="middle">User Prompt</text><text class="diagram-node-subtitle" x="155" y="197" text-anchor="middle">normal Pi turn</text><text class="diagram-node-meta" x="155" y="225" text-anchor="middle">cwd + task</text></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 240ms" data-review-id="architecture-overview.node.extension"><rect class="diagram-node-card" x="330" y="134" width="230" height="116" rx="16" fill="var(--surface)" stroke="var(--border-strong)"/><text class="diagram-node-title" x="445" y="158" text-anchor="middle">agent-memory</text><text class="diagram-node-title" x="445" y="175" text-anchor="middle">Extension</text><text class="diagram-node-subtitle" x="445" y="202" text-anchor="middle">hooks + commands + status</text><text class="diagram-node-meta" x="445" y="230" text-anchor="middle">extensions/agent-memory</text></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 480ms" data-review-id="architecture-overview.node.stores"><rect class="diagram-node-card" x="640" y="294" width="240" height="116" rx="16" fill="var(--warning-soft)" stroke="var(--warning)"/><text class="diagram-node-title" x="760" y="326" text-anchor="middle">Scoped Memory Stores</text><text class="diagram-node-subtitle" x="760" y="353" text-anchor="middle">project outranks global</text><text class="diagram-node-meta" x="760" y="381" text-anchor="middle">.pi + $HOME/.pi</text></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 720ms" data-review-id="architecture-overview.node.embeddings"><rect class="diagram-node-card" x="645" y="134" width="230" height="116" rx="16" fill="var(--surface)" stroke="var(--border-strong)"/><text class="diagram-node-title" x="760" y="158" text-anchor="middle">Local Embedding</text><text class="diagram-node-title" x="760" y="175" text-anchor="middle">Adapter</text><text class="diagram-node-subtitle" x="760" y="202" text-anchor="middle">Ollama health + vectors</text><text class="diagram-node-meta" x="760" y="230" text-anchor="middle">fail visibly</text></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 960ms" data-review-id="architecture-overview.node.retrieval"><rect class="diagram-node-card" x="960" y="153" width="220" height="116" rx="16" fill="var(--success-soft)" stroke="var(--success)"/><text class="diagram-node-title" x="1070" y="185" text-anchor="middle">Recall Service</text><text class="diagram-node-subtitle" x="1070" y="212" text-anchor="middle">hybrid score + budget</text><text class="diagram-node-meta" x="1070" y="240" text-anchor="middle">project &gt; global</text></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 1200ms" data-review-id="architecture-overview.node.pack"><rect class="diagram-node-card" x="1260" y="153" width="230" height="116" rx="16" fill="var(--success-soft)" stroke="var(--success)"/><text class="diagram-node-title" x="1375" y="185" text-anchor="middle">Ephemeral Memory Pack</text><text class="diagram-node-subtitle" x="1375" y="212" text-anchor="middle">system-prompt hint</text><text class="diagram-node-meta" x="1375" y="240" text-anchor="middle">not session state</text></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 1440ms" data-review-id="architecture-overview.node.status"><rect class="diagram-node-card" x="1570" y="60" width="230" height="116" rx="16" fill="var(--info-soft)" stroke="var(--info)"/><text class="diagram-node-title" x="1685" y="84" text-anchor="middle">Composer Status +</text><text class="diagram-node-title" x="1685" y="101" text-anchor="middle">Review</text><text class="diagram-node-subtitle" x="1685" y="128" text-anchor="middle">running / ready / failed</text><text class="diagram-node-meta" x="1685" y="156" text-anchor="middle">ctx.ui.setStatus</text></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 1680ms" data-review-id="architecture-overview.node.verify"><rect class="diagram-node-card" x="340" y="313" width="220" height="116" rx="16" fill="var(--accent-soft)" stroke="var(--border-strong)"/><text class="diagram-node-title" x="450" y="345" text-anchor="middle">Verification Feedback</text><text class="diagram-node-subtitle" x="450" y="372" text-anchor="middle">score recalled IDs</text><text class="diagram-node-meta" x="450" y="400" text-anchor="middle">agent_end event</text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 186ms" data-review-id="architecture-overview.edge-label.route-to-endpoint"><rect class="diagram-label-bg" x="196" y="58" width="188" height="48" rx="12"/><text class="diagram-arrow-label" x="290" y="78" text-anchor="middle"><tspan>starts recall</tspan><tspan class="diagram-label-detail" x="290" dy="16">before_agent_start</tspan></text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 426ms" data-review-id="architecture-overview.edge-label.load-stores"><rect class="diagram-label-bg" x="396" y="269" width="156" height="48" rx="12"/><text class="diagram-arrow-label" x="474" y="289" text-anchor="middle"><tspan>loads</tspan><tspan class="diagram-label-detail" x="474" dy="16">active records</tspan></text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 666ms" data-review-id="architecture-overview.edge-label.check-embeddings"><rect class="diagram-label-bg" x="536.5" y="58" width="132" height="48" rx="12"/><text class="diagram-arrow-label" x="602.5" y="78" text-anchor="middle"><tspan>checks</tspan><tspan class="diagram-label-detail" x="602.5" dy="16">local setup</tspan></text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 906ms" data-review-id="architecture-overview.edge-label.records-to-retrieval"><rect class="diagram-label-bg" x="740" y="283" width="132" height="48" rx="12"/><text class="diagram-arrow-label" x="806" y="303" text-anchor="middle"><tspan>provides</tspan><tspan class="diagram-label-detail" x="806" dy="16">candidates</tspan></text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 1146ms" data-review-id="architecture-overview.edge-label.vectors-to-retrieval"><rect class="diagram-label-bg" x="847.5" y="58" width="140" height="48" rx="12"/><text class="diagram-arrow-label" x="917.5" y="78" text-anchor="middle"><tspan>embeds</tspan><tspan class="diagram-label-detail" x="917.5" dy="16">query vector</tspan></text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 1386ms" data-review-id="architecture-overview.edge-label.rank-to-pack"><rect class="diagram-label-bg" x="1150" y="77" width="140" height="48" rx="12"/><text class="diagram-arrow-label" x="1220" y="97" text-anchor="middle"><tspan>builds</tspan><tspan class="diagram-label-detail" x="1220" dy="16">bounded pack</tspan></text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 1626ms" data-review-id="architecture-overview.edge-label.publish-status"><rect class="diagram-label-bg" x="996" y="8" width="148" height="48" rx="12"/><text class="diagram-arrow-label" x="1070" y="28" text-anchor="middle"><tspan>publishes</tspan><tspan class="diagram-label-detail" x="1070" dy="16">no chat noise</tspan></text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 1866ms" data-review-id="architecture-overview.edge-label.pack-to-status"><rect class="diagram-label-bg" x="1342" y="166" width="140" height="48" rx="12"/><text class="diagram-arrow-label" x="1412" y="186" text-anchor="middle"><tspan>logs</tspan><tspan class="diagram-label-detail" x="1412" dy="16">recalled IDs</tspan></text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 2106ms" data-review-id="architecture-overview.edge-label.verify-to-stores"><rect class="diagram-label-bg" x="522" y="237" width="156" height="48" rx="12"/><text class="diagram-arrow-label" x="600" y="257" text-anchor="middle"><tspan>scores</tspan><tspan class="diagram-label-detail" x="600" dy="16">same task only</tspan></text></g>
+</svg>
+            <figcaption>Blue is user/Pi chrome, green is memory domain logic, yellow is file-backed memory state, and dashed blue is the local embedding dependency.</figcaption>
+          </figure>
+          <span class="review-label">review: architecture-overview</span>
+        </section>
+
+        <section class="section-card reveal" id="architecture-delta" aria-labelledby="delta-title" data-review-id="architecture-delta">
+          <span class="section-kicker">Architecture delta</span>
+          <h2 id="delta-title">What changes in the repo</h2>
+          <p class="section-summary">The intended delta is narrow: one extension, optional shared retrieval helpers, status integration, and verification feedback consumption.</p>
+          <div class="card-grid">
+            <article class="component-card" data-review-id="architecture-delta.extension"><h3>New extension</h3><p><code>extensions/agent-memory/</code> owns entrypoints, services, domain rules, repositories, commands, status, and tests.</p></article>
+            <article class="component-card" data-review-id="architecture-delta.shared-lib"><h3>Optional shared helper</h3><p>Extract Ollama health, embedding, vector scoring, truncation, and setup-error formatting only if memory and semantic-search would otherwise duplicate code.</p></article>
+            <article class="component-card" data-review-id="architecture-delta.bordered-editor"><h3>Status priority</h3><p>Update bordered-editor priority if necessary so <code>mem: failed</code> is not hidden behind lower-value statuses.</p></article>
+            <article class="component-card" data-review-id="architecture-delta.verify"><h3>Verification consumer</h3><p>Subscribe to verification events; do not fork verification execution or archive logic.</p></article>
+          </div>
+          <span class="review-label">review: architecture-delta</span>
+        </section>
+
+        <section class="section-card reveal" id="slice-plan" aria-labelledby="slice-plan-title" data-review-id="slice-plan">
+          <span class="section-kicker">Outside-in slices</span>
+          <h2 id="slice-plan-title">Slice plan</h2>
+          <p class="section-summary">Build in vertical slices from visible trust to retrieval and learning.</p>
+          <div class="slice-grid">
+            <article class="slice-card" data-review-id="slice-plan.slice-001"><h3><span class="id-chip">SLICE-001</span>Status and controls shell</h3><p><strong>Need:</strong> memory is visibly running by default and can be paused or disabled.</p><p><strong>Feedback:</strong> command parser, settings, and status tests.</p></article>
+            <article class="slice-card" data-review-id="slice-plan.slice-002"><h3><span class="id-chip">SLICE-002</span>Manual seed memory</h3><p><strong>Need:</strong> user creates a known project/global lesson from day one.</p><p><strong>Feedback:</strong> add command writes atomic redacted record and confirmation.</p></article>
+            <article class="slice-card" data-review-id="slice-plan.slice-003"><h3><span class="id-chip">SLICE-003</span>Recall and injection</h3><p><strong>Need:</strong> matching prompts receive scoped memory without chat noise.</p><p><strong>Feedback:</strong> hook test asserts prompt patch and review log.</p></article>
+            <article class="slice-card" data-review-id="slice-plan.slice-004"><h3><span class="id-chip">SLICE-004</span>Visible setup failure</h3><p><strong>Need:</strong> broken embeddings are clearly failed, not empty recall.</p><p><strong>Feedback:</strong> fake adapter failure asserts status and no pack.</p></article>
+            <article class="slice-card" data-review-id="slice-plan.slice-005"><h3><span class="id-chip">SLICE-005</span>Review corrections</h3><p><strong>Need:</strong> user archives, edits, deletes, resets, rejects, or promotes memory.</p><p><strong>Feedback:</strong> tombstone and promotion tests.</p></article>
+            <article class="slice-card" data-review-id="slice-plan.slice-006"><h3><span class="id-chip">SLICE-006</span>Verification feedback</h3><p><strong>Need:</strong> outcomes update usefulness for recalled memories only.</p><p><strong>Feedback:</strong> event-bus scoring tests.</p></article>
+          </div>
+          <span class="review-label">review: slice-plan</span>
+        </section>
+
+        <section class="section-card reveal" id="component-communication" aria-labelledby="component-title" data-review-id="component-communication">
+          <span class="section-kicker">Boundary rules</span>
+          <h2 id="component-title">Component communication boundaries</h2>
+          <p class="section-summary">These rules keep the implementation small and testable.</p>
+          <div class="card-grid">
+            <article class="component-card" data-review-id="component-communication.hooks"><h3>Hooks and commands</h3><p>Parse external Pi events and commands, then delegate to services. They should not rank memories or mutate record state directly.</p></article>
+            <article class="component-card" data-review-id="component-communication.services"><h3>Services</h3><p>Coordinate status, stores, embedding adapter, recall service, prompt pack builder, and review output.</p></article>
+            <article class="component-card" data-review-id="component-communication.domain"><h3>Domain</h3><p>Owns precedence, eligibility, status transitions, safety gates, scoring rules, and promotion invariants.</p></article>
+            <article class="component-card" data-review-id="component-communication.adapters"><h3>Adapters</h3><p>Filesystem and embedding adapters convert domain requests into local I/O. Tests replace them with fakes.</p></article>
+          </div>
+          <span class="review-label">review: component-communication</span>
+        </section>
+
+        <section class="section-card reveal" id="domain-model" aria-labelledby="domain-model-title" data-review-id="domain-model">
+          <span class="section-kicker">Domain model</span>
+          <h2 id="domain-model-title">Core memory concepts</h2>
+          <p class="section-summary">The domain is about which lessons may influence a future prompt, not just storing text.</p>
+          <div class="card-grid">
+            <article class="domain-card" data-review-id="domain-model.memory"><h3>Memory record</h3><p>An atomic lesson with scope, status, type, source reference, safety metadata, vector cache key, and usefulness evidence.</p></article>
+            <article class="domain-card" data-review-id="domain-model.scope"><h3>Scope store</h3><p>Project and global stores own records and vectors. Project outranks global. Path scope is not modeled in MVP.</p></article>
+            <article class="domain-card" data-review-id="domain-model.recall"><h3>Recall event</h3><p>Per-turn log of query summary, matched IDs, injected IDs, status, and setup/no-match/failure reason.</p></article>
+            <article class="domain-card" data-review-id="domain-model.review"><h3>Review decision</h3><p>User authority to activate, archive, edit, delete, reset, reject, restore, or promote memory.</p></article>
+          </div>
+          <span class="review-label">review: domain-model</span>
+        </section>
+
+        <section class="section-card reveal" id="domain-interactions" aria-labelledby="domain-title" data-review-id="domain-interactions">
+          <span class="section-kicker">Domain interactions</span>
+          <h2 id="domain-title">Memory entities and state transitions</h2>
+          <p class="section-summary">Source events create candidate or active memories, recall events explain prompt influence, and review decisions are the authority for correction or global promotion.</p>
+          <figure class="figure-card reveal" data-review-id="domain-interactions.figure">
+<svg viewBox="0 0 1164 301" role="img" aria-labelledby="agent-memory-domain-title agent-memory-domain-desc" xmlns="http://www.w3.org/2000/svg" data-review-id="domain-interactions.svg">
+  <title id="agent-memory-domain-title">Agent Memory Domain Interactions</title>
+  <desc id="agent-memory-domain-desc">Memory is created, recalled, scored, reviewed, and sometimes promoted by explicit user authority.</desc>
+  <defs>
+    <marker id="agent-memory-domain-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--text)" /></marker>
+    <marker id="agent-memory-domain-boundary-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--info)" /></marker>
+  </defs>
+  <rect class="diagram-bg" x="0" y="0" width="1164" height="301" />
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 120ms" data-review-id="domain-interactions.edge.create"><path class="diagram-arrow path-draw" pathLength="1" d="M270 185 L338 185" marker-end="url(#agent-memory-domain-arrow)"/></g>
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 360ms" data-review-id="domain-interactions.edge.recalls"><path class="diagram-arrow path-draw" pathLength="1" d="M548 166 L558 166 L558 116 L616 116" marker-end="url(#agent-memory-domain-arrow)"/></g>
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 840ms" data-review-id="domain-interactions.edge.corrects"><path class="diagram-arrow path-draw" pathLength="1" d="M894 204 L548 204" marker-end="url(#agent-memory-domain-arrow)"/></g>
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 840ms" data-review-id="domain-interactions.edge.audits"><path class="diagram-arrow path-draw" pathLength="1" d="M826 116 L836 116 L836 166 L894 166" marker-end="url(#agent-memory-domain-arrow)"/></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 0ms" data-review-id="domain-interactions.node.source"><rect class="diagram-node-card" x="60" y="129" width="210" height="112" rx="16" fill="var(--info-soft)" stroke="var(--info)"/><text class="diagram-node-title" x="165" y="161" text-anchor="middle">Source Event</text><text class="diagram-node-subtitle" x="165" y="188" text-anchor="middle">manual add or verification</text><text class="diagram-node-meta" x="165" y="216" text-anchor="middle">user/task</text></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 240ms" data-review-id="domain-interactions.node.memory"><rect class="diagram-node-card" x="338" y="129" width="210" height="112" rx="16" fill="var(--success-soft)" stroke="var(--success)"/><text class="diagram-node-title" x="443" y="161" text-anchor="middle">Memory Record</text><text class="diagram-node-subtitle" x="443" y="188" text-anchor="middle">active or candidate</text><text class="diagram-node-meta" x="443" y="216" text-anchor="middle">scope + status</text></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 480ms" data-review-id="domain-interactions.node.recall"><rect class="diagram-node-card" x="616" y="60" width="210" height="112" rx="16" fill="var(--success-soft)" stroke="var(--success)"/><text class="diagram-node-title" x="721" y="92" text-anchor="middle">Recall Event</text><text class="diagram-node-subtitle" x="721" y="119" text-anchor="middle">uses active memory</text><text class="diagram-node-meta" x="721" y="147" text-anchor="middle">IDs logged</text></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 720ms" data-review-id="domain-interactions.node.review"><rect class="diagram-node-card" x="894" y="129" width="210" height="112" rx="16" fill="var(--warning-soft)" stroke="var(--warning)"/><text class="diagram-node-title" x="999" y="161" text-anchor="middle">User Review</text><text class="diagram-node-subtitle" x="999" y="188" text-anchor="middle">edit/archive/promote</text><text class="diagram-node-meta" x="999" y="216" text-anchor="middle">authority</text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 186ms" data-review-id="domain-interactions.edge-label.create"><rect class="diagram-label-bg" x="230" y="51" width="148" height="48" rx="12"/><text class="diagram-arrow-label" x="304" y="71" text-anchor="middle"><tspan>creates</tspan><tspan class="diagram-label-detail" x="304" dy="16">atomic lesson</tspan></text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 426ms" data-review-id="domain-interactions.edge-label.recalls"><rect class="diagram-label-bg" x="517" y="8" width="140" height="48" rx="12"/><text class="diagram-arrow-label" x="587" y="28" text-anchor="middle"><tspan>influences</tspan><tspan class="diagram-label-detail" x="587" dy="16">bounded pack</tspan></text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 906ms" data-review-id="domain-interactions.edge-label.corrects"><rect class="diagram-label-bg" x="647" y="70" width="148" height="48" rx="12"/><text class="diagram-arrow-label" x="721" y="90" text-anchor="middle"><tspan>corrects</tspan><tspan class="diagram-label-detail" x="721" dy="16">state changes</tspan></text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 906ms" data-review-id="domain-interactions.edge-label.audits"><rect class="diagram-label-bg" x="783" y="32" width="164" height="48" rx="12"/><text class="diagram-arrow-label" x="865" y="52" text-anchor="middle"><tspan>explains</tspan><tspan class="diagram-label-detail" x="865" dy="16">what influenced</tspan></text></g>
+</svg>
+            <figcaption>Review authority is intentionally separate from recall. A recalled memory can explain itself, but only the user can approve promotion or corrections.</figcaption>
+          </figure>
+          <div class="story-list">
+            <article class="domain-card" data-review-id="domain-interactions.interaction-001"><h3><span class="id-chip">DOMAIN-001</span>Prompt recalls scoped memories</h3><div class="mini-flow"><span>Prompt + cwd</span><b>recalls</b><span>project first</span><b>then</b><span>global</span><b>produces</b><span>bounded pack</span></div><p><strong>Invariant:</strong> archived, rejected, deleted, reset, paused, or disabled memories do not affect recall.</p></article>
+            <article class="domain-card" data-review-id="domain-interactions.interaction-002"><h3><span class="id-chip">DOMAIN-002</span>User creates atomic memory</h3><div class="mini-flow"><span>/agent-memory add</span><b>redacts</b><span>lesson</span><b>embeds</b><span>active or candidate memory</span></div><p><strong>Invariant:</strong> scope, source, redaction, and active/review state are visible before the user trusts the memory.</p></article>
+            <article class="domain-card" data-review-id="domain-interactions.interaction-003"><h3><span class="id-chip">DOMAIN-003</span>Verification scores recalled memory</h3><div class="mini-flow"><span>Verification</span><b>scores</b><span>same-task recalled IDs</span><b>may draft</b><span>project candidate</span></div><p><strong>Invariant:</strong> automatic score changes are limited to memories recalled in the same task context.</p></article>
+            <article class="domain-card" data-review-id="domain-interactions.interaction-004"><h3><span class="id-chip">DOMAIN-004</span>Project promotes to global by approval</h3><div class="mini-flow"><span>Project lesson</span><b>proposes</b><span>global candidate</span><b>user approves</b><span>active global memory</span></div><p><strong>Invariant:</strong> project-specific facts, sensitive/client details, raw excerpts, preferences, and failure-only lessons are review-gated.</p></article>
+          </div>
+          <span class="review-label">review: domain-interactions</span>
+        </section>
+
+        <section class="section-card reveal" id="data-contracts" aria-labelledby="contracts-title" data-review-id="data-contracts">
+          <span class="section-kicker">Conceptual contracts</span>
+          <h2 id="contracts-title">Storage and prompt contracts</h2>
+          <p class="section-summary">These shapes are conceptual contracts for tests and task briefs, not final TypeScript interfaces.</p>
+          <div class="contract-list" data-review-id="data-contracts.list">
+            <article class="contract-card" data-review-id="data-contracts.memory-record"><h3>Memory record</h3><pre class="schema-code"><code>{
+  <span class="code-key">schemaVersion</span>: 1,
+  <span class="code-key">id</span>: <span class="code-string">"mem_..."</span>,
+  <span class="code-key">scope</span>: <span class="code-enum">"project"</span> | <span class="code-enum">"global"</span>,
+  <span class="code-key">type</span>: <span class="code-enum">"workflow"</span> | <span class="code-enum">"gotcha"</span> | <span class="code-enum">"preference"</span>,
+  <span class="code-key">status</span>: <span class="code-enum">"active"</span> | <span class="code-enum">"candidate"</span> | <span class="code-enum">"archived"</span>,
+  <span class="code-key">lesson</span>: <span class="code-string">"one atomic lesson"</span>,
+  <span class="code-key">sourceKind</span>: <span class="code-enum">"manual"</span> | <span class="code-enum">"verification"</span> | <span class="code-enum">"review"</span>,
+  <span class="code-key">sourceRef</span>: <span class="code-string">"session or command reference"</span>,
+  <span class="code-key">redacted</span>: true,
+  <span class="code-key">reviewOnlyReason</span>: <span class="code-string">"optional reason"</span>,
+  <span class="code-key">recalled</span>: 0,
+  <span class="code-key">passed</span>: 0,
+  <span class="code-key">failed</span>: 0,
+  <span class="code-key">confidence</span>: 0.0,
+  <span class="code-key">createdAt</span>: <span class="code-string">"ISO"</span>,
+  <span class="code-key">updatedAt</span>: <span class="code-string">"ISO"</span>,
+  <span class="code-key">lastRecalledAt</span>: <span class="code-string">"ISO"</span>
+}</code></pre></article>
+            <article class="contract-card" data-review-id="data-contracts.scope-files"><h3>Scope files</h3><pre class="schema-code"><code><span class="code-key">projectRoot</span>: <span class="code-string">"&lt;cwd&gt;/.pi/agent-memory/"</span>
+<span class="code-key">globalRoot</span>: <span class="code-string">"$HOME/.pi/agent-memory/"</span>
+<span class="code-key">memoriesFile</span>: <span class="code-string">"memories.jsonl"</span>
+<span class="code-key">vectorsFile</span>: <span class="code-string">"vectors.json"</span>
+<span class="code-key">recallLogFile</span>: <span class="code-string">"recall-log.jsonl"</span>
+<span class="code-key">settingsFile</span>: <span class="code-string">"settings.json"</span>
+<span class="code-key">owner</span>: <span class="code-string">"agent-memory extension"</span></code></pre></article>
+            <article class="contract-card" data-review-id="data-contracts.runtime-config"><h3>Runtime model config</h3><pre class="schema-code"><code><span class="code-key">configFile</span>: <span class="code-string">"extensions/agent-memory/config.json"</span>
+<span class="code-key">modelHost</span>: <span class="code-string">"user-controlled remote Ollama via SSH tunnel"</span>
+<span class="code-key">sshTarget</span>: <span class="code-string">"charleshippo@otto"</span>
+<span class="code-key">embeddingModel</span>: <span class="code-string">"mxbai-embed-large"</span>
+<span class="code-key">generationModel</span>: <span class="code-string">"qwen2.5-coder:14b"</span>
+<span class="code-key">embeddingUnavailable</span>: <span class="code-string">"visible-failure-no-recall"</span>
+<span class="code-key">generationUnavailable</span>: <span class="code-string">"visible-failure-for-generation"</span>
+<span class="code-key">cloudFallback</span>: <span class="code-string">"disabled"</span></code></pre></article>
+            <article class="contract-card" data-review-id="data-contracts.memory-pack"><h3>Ephemeral prompt pack</h3><pre class="schema-code"><code><span class="code-key">header</span>: <span class="code-string">"Agent Memory"</span>
+<span class="code-key">priorityRule</span>: <span class="code-string">"memory is advisory"</span>
+<span class="code-key">conflictRule</span>: <span class="code-string">"follow higher priority context"</span>
+<span class="code-key">itemScope</span>: <span class="code-enum">"project"</span> | <span class="code-enum">"global"</span>
+<span class="code-key">itemType</span>: <span class="code-string">"workflow or gotcha"</span>
+<span class="code-key">itemId</span>: <span class="code-string">"mem_123"</span>
+<span class="code-key">itemLesson</span>: <span class="code-string">"Use scripts/run_silent.sh"</span>
+<span class="code-key">sourceRef</span>: <span class="code-string">"manual"</span>
+<span class="code-key">budget</span>: <span class="code-string">"bounded by config"</span></code></pre></article>
+          </div>
+          <span class="review-label">review: data-contracts</span>
+        </section>
+
+        <section class="section-card reveal" id="design-decisions" aria-labelledby="decisions-title" data-review-id="design-decisions">
+          <span class="section-kicker">Decisions</span>
+          <h2 id="decisions-title">Design decisions and risks</h2>
+          <p class="section-summary">The highest-risk choices are prompt influence, setup trust, and persistence. Each has an explicit boundary.</p>
+          <div class="decision-grid">
+            <article class="decision-record-card" data-review-id="design-decisions.ephemeral"><h3><span class="id-chip">D1</span>Ephemeral prompt patch</h3><p><strong>Chosen:</strong> append memory to the current system prompt in <code>before_agent_start</code>.</p><p><strong>Rejected:</strong> hidden session messages that accumulate across turns.</p></article>
+            <article class="decision-record-card" data-review-id="design-decisions.local-only"><h3><span class="id-chip">D2</span>Local embeddings required</h3><p><strong>Chosen:</strong> local adapter failures produce visible memory failure.</p><p><strong>Rejected:</strong> cloud fallback or silent skip.</p></article>
+            <article class="decision-record-card" data-review-id="design-decisions.files"><h3><span class="id-chip">D3</span>File-backed stores</h3><p><strong>Chosen:</strong> JSONL and vector cache files under scope roots.</p><p><strong>Rejected:</strong> database or daemon for MVP volume.</p></article>
+            <article class="decision-record-card" data-review-id="design-decisions.review-gates"><h3><span class="id-chip">D4</span>Human-gated promotion</h3><p><strong>Chosen:</strong> only explicit user action creates active global memories from project lessons.</p><p><strong>Rejected:</strong> automatic cross-project learning.</p></article>
+          </div>
+          <div class="callout risk" data-review-id="design-decisions.prompt-injection-risk"><strong>Prompt influence risk</strong><p>Memory text must be presented as advisory. If memory conflicts with the user request, system instructions, AGENTS.md, PRD/design, or task brief, the higher-priority source wins and the conflict should be reviewable.</p></div>
+          <span class="review-label">review: design-decisions</span>
+        </section>
+
+        <section class="section-card reveal" id="tasks-and-feedback" aria-labelledby="tasks-feedback-title" data-review-id="tasks-and-feedback">
+          <span class="section-kicker">Slice designs</span>
+          <h2 id="tasks-feedback-title">Outside-in task design and feedback hooks</h2>
+          <p class="section-summary">Task briefs can be generated from these slice designs after design review. The first slice proves visible trust without retrieval complexity.</p>
+          <article class="slice-design-card" data-review-id="slice-designs.slice-001">
+            <h3><span class="id-chip">SLICE-001</span>Status and controls shell</h3>
+            <p><strong>External need:</strong> the user sees memory running by default and can pause or disable it before any recall implementation ships.</p>
+            <figure class="figure-card reveal" data-review-id="slice-designs.slice-001.diagram">
+<svg viewBox="0 0 1172 232" role="img" aria-labelledby="agent-memory-slice-001-title agent-memory-slice-001-desc" xmlns="http://www.w3.org/2000/svg" data-review-id="slice-designs.slice-001.svg">
+  <title id="agent-memory-slice-001-title">SLICE-001 Status And Controls</title>
+  <desc id="agent-memory-slice-001-desc">The first slice wires the slash command and session start status through a service, domain state transitions, and settings persistence.</desc>
+  <defs>
+    <marker id="agent-memory-slice-001-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--text)" /></marker>
+    <marker id="agent-memory-slice-001-boundary-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--info)" /></marker>
+  </defs>
+  <rect class="diagram-bg" x="0" y="0" width="1172" height="232" />
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 120ms" data-review-id="slice-designs.slice-001.edge.api"><path class="diagram-arrow path-draw" pathLength="1" d="M270 116 L334 116" marker-end="url(#agent-memory-slice-001-arrow)"/></g>
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 360ms" data-review-id="slice-designs.slice-001.edge.state"><path class="diagram-arrow path-draw" pathLength="1" d="M554 116 L618 116" marker-end="url(#agent-memory-slice-001-arrow)"/></g>
+  <g class="diagram-edge diagram-reveal" style="--reveal-delay: 600ms" data-review-id="slice-designs.slice-001.edge.persist"><path class="diagram-arrow path-draw" pathLength="1" d="M838 116 L902 116" marker-end="url(#agent-memory-slice-001-arrow)"/></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 0ms" data-review-id="slice-designs.slice-001.node-endpoint"><rect class="diagram-node-card" x="60" y="60" width="210" height="112" rx="16" fill="var(--info-soft)" stroke="var(--info)"/><text class="diagram-node-title" x="165" y="92" text-anchor="middle">Delivery Surface</text><text class="diagram-node-subtitle" x="165" y="119" text-anchor="middle">session_start + command</text><text class="diagram-node-meta" x="165" y="147" text-anchor="middle">/agent-memory</text></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 240ms" data-review-id="slice-designs.slice-001.node-service"><rect class="diagram-node-card" x="334" y="60" width="220" height="112" rx="16" fill="var(--surface)" stroke="var(--border-strong)"/><text class="diagram-node-title" x="444" y="84" text-anchor="middle">Memory Control</text><text class="diagram-node-title" x="444" y="101" text-anchor="middle">Service</text><text class="diagram-node-subtitle" x="444" y="128" text-anchor="middle">formats status + help</text><text class="diagram-node-meta" x="444" y="156" text-anchor="middle">application seam</text></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 480ms" data-review-id="slice-designs.slice-001.node-domain"><rect class="diagram-node-card" x="618" y="60" width="220" height="112" rx="16" fill="var(--success-soft)" stroke="var(--success)"/><text class="diagram-node-title" x="728" y="92" text-anchor="middle">Control State</text><text class="diagram-node-subtitle" x="728" y="119" text-anchor="middle">running / paused / disabled</text><text class="diagram-node-meta" x="728" y="147" text-anchor="middle">domain rule</text></g>
+  <g class="diagram-node diagram-reveal" style="--reveal-delay: 720ms" data-review-id="slice-designs.slice-001.node-repository"><rect class="diagram-node-card" x="902" y="60" width="210" height="112" rx="16" fill="var(--warning-soft)" stroke="var(--warning)"/><text class="diagram-node-title" x="1007" y="92" text-anchor="middle">Settings Repository</text><text class="diagram-node-subtitle" x="1007" y="119" text-anchor="middle">persistent enablement</text><text class="diagram-node-meta" x="1007" y="147" text-anchor="middle">settings.json</text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 186ms" data-review-id="slice-designs.slice-001.edge-label-api"><rect class="diagram-label-bg" x="236" y="8" width="132" height="48" rx="12"/><text class="diagram-arrow-label" x="302" y="28" text-anchor="middle"><tspan>calls</tspan><tspan class="diagram-label-detail" x="302" dy="16">intent</tspan></text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 426ms" data-review-id="slice-designs.slice-001.edge-label.state"><rect class="diagram-label-bg" x="512" y="8" width="148" height="48" rx="12"/><text class="diagram-arrow-label" x="586" y="28" text-anchor="middle"><tspan>transitions</tspan><tspan class="diagram-label-detail" x="586" dy="16">pause/disable</tspan></text></g>
+  <g class="diagram-edge-label diagram-reveal" style="--reveal-delay: 666ms" data-review-id="slice-designs.slice-001.edge-label.persist"><rect class="diagram-label-bg" x="800" y="8" width="140" height="48" rx="12"/><text class="diagram-arrow-label" x="870" y="28" text-anchor="middle"><tspan>persists</tspan><tspan class="diagram-label-detail" x="870" dy="16">disable only</tspan></text></g>
+</svg>
+              <figcaption>Slice 001 stops at settings and status. Retrieval starts only after controls are testable.</figcaption>
+            </figure>
+            <div class="card-grid">
+              <article class="example-card" data-review-id="slice-designs.slice-001.delivery-surface"><h3>Delivery surface</h3><p><code>session_start</code> publishes <code>mem: running</code>. <code>/agent-memory status|pause|resume|disable|enable|reset</code> return visible feedback.</p></article>
+              <article class="example-card" data-review-id="slice-designs.slice-001.service-domain"><h3>Service/domain</h3><p>The service turns command intent into domain state transitions: running to paused for the current session and enabled to disabled for persisted settings.</p></article>
+              <article class="example-card" data-review-id="slice-designs.slice-001.persistence-model"><h3>Persistence model</h3><p>Disable/enable writes <code>settings.json</code>. Pause is session-local unless a later product decision changes that behavior.</p></article>
+            </div>
+            <p><strong>Feedback hook:</strong> <code>npm run test:agent-memory</code> with fake Pi context verifies parser behavior, settings writes, and status labels.</p>
+          </article>
+          <details data-review-id="tasks-and-feedback.remaining-slices">
+            <summary>Remaining slice design notes</summary>
+            <ul class="checklist">
+              <li><strong>SLICE-002:</strong> command-driven add writes a redacted scoped memory and asks the embedding adapter to cache a vector.</li>
+              <li><strong>SLICE-003:</strong> prompt-time recall ranks project before global and appends an advisory memory pack.</li>
+              <li><strong>SLICE-004:</strong> fake embedding failure proves visible failed state and no prompt injection.</li>
+              <li><strong>SLICE-005:</strong> review commands write tombstones or approved promotion records.</li>
+              <li><strong>SLICE-006:</strong> verification events update evidence only for same-task recalled IDs.</li>
+            </ul>
+          </details>
+          <span class="review-label">review: tasks-and-feedback</span>
+        </section>
+
+        <section class="section-card reveal" id="story-coverage" aria-labelledby="coverage-title" data-review-id="story-coverage">
+          <span class="section-kicker">Traceability</span>
+          <h2 id="coverage-title">Story coverage matrix</h2>
+          <p class="section-summary">This is the single traceability matrix; all other details stay in cards.</p>
+          <div class="table-wrap">
+            <table>
+              <caption>PRD behavior to architecture and feedback</caption>
+              <thead><tr><th scope="col">PRD behavior</th><th scope="col">Design seam</th><th scope="col">Slices</th><th scope="col">Proof</th></tr></thead>
+              <tbody>
+                <tr data-review-id="story-coverage.story-001"><th scope="row">STORY-001 / AC-001 / AC-009</th><td>Status publisher, settings store, command parser</td><td>SLICE-001</td><td>Parser, settings, and status tests</td></tr>
+                <tr data-review-id="story-coverage.story-002"><th scope="row">STORY-002 / AC-002 / AC-003 / AC-008</th><td>Embedding adapter, retrieval service, prompt pack builder</td><td>SLICE-003, SLICE-004</td><td>Prompt injection and setup-failure tests</td></tr>
+                <tr data-review-id="story-coverage.story-003"><th scope="row">STORY-003 / AC-004</th><td>Verification event consumer and recall ledger</td><td>SLICE-006</td><td>Same-task scoring tests</td></tr>
+                <tr data-review-id="story-coverage.story-004"><th scope="row">STORY-004 / AC-005 / AC-006 / AC-010</th><td>Review log, tombstones, promotion workflow</td><td>SLICE-005</td><td>Review correction and recall-exclusion tests</td></tr>
+                <tr data-review-id="story-coverage.story-005"><th scope="row">STORY-005 / AC-007</th><td>Manual add command, redaction, memory store</td><td>SLICE-002</td><td>Create, review, and later recall tests</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <span class="review-label">review: story-coverage</span>
+        </section>
+
+        <section class="section-card reveal" id="open-questions" aria-labelledby="open-questions-title" data-review-id="open-questions">
+          <span class="section-kicker">Remaining questions</span>
+          <h2 id="open-questions-title">Open questions</h2>
+          <p class="section-summary">No architecture blocker remains. These decisions refine copy and configuration.</p>
+          <ul class="checklist">
+            <li data-review-id="open-questions.copy"><strong>Q-001 copy:</strong> choose final wording for running, ready, no-match, failed, paused, and disabled states.</li>
+            <li data-review-id="open-questions.budget"><strong>Q-002 budget:</strong> choose the default memory pack size; until then use a configurable cap and test enforcement.</li>
+            <li data-review-id="open-questions.naming"><strong>Q-003 naming:</strong> defer any top-layer profile/persona terminology until a later feature packet.</li>
+          </ul>
+          <details data-review-id="open-questions.sources">
+            <summary>Sources reviewed</summary>
+            <ul class="source-list">
+              <li><code>docs/features/agent-memory/prd.html</code></li>
+              <li><code>docs/playbooks/pi-extension.md</code> and Pi extension docs/examples for hooks, status, commands, and UI output</li>
+              <li><code>extensions/semantic-search/README.md</code> and <code>extensions/semantic-search/index.ts</code></li>
+              <li><code>extensions/verify/index.ts</code> and <code>extensions/self-improvement-archive/index.ts</code></li>
+              <li><code>extensions/bordered-editor/index.ts</code></li>
+            </ul>
+          </details>
+          <span class="review-label">review: open-questions</span>
+        </section>
+
+        <nav class="prev-next" aria-label="Previous and next documents" data-review-id="chrome.prev-next">
+          <a href="prd.html">← Agent Memory PRD</a>
+          <a href="../../../extensions/semantic-search/README.md">Semantic search README →</a>
+        </nav>
+
+        <section class="related-links" aria-labelledby="related-title" data-review-id="chrome.related-links">
+          <h2 id="related-title">Related artifacts</h2>
+          <ul>
+            <li><a href="prd.html">Agent Memory PRD</a></li>
+            <li><a href="../context-engineering/design.html">Context engineering design</a></li>
+            <li><a href="../../../extensions/README.md">Extension inventory</a></li>
+          </ul>
+        </section>
+
+        <section class="feedback-widget" aria-labelledby="feedback-title" data-review-id="chrome.feedback">
+          <h2 id="feedback-title">Feedback</h2>
+          <p>Review first: the ephemeral prompt patch, file-backed project/global store, visible failure posture, and SLICE-001 task boundary.</p>
+        </section>
+      </article>
+    </main>
+  </div>
+
+  <a class="back-to-top" href="#main" aria-label="Back to top">↑</a>
+  <footer data-review-id="chrome.footer">Generated for Pi Agent Memory planning. Status: Draft design. Preserve <code>data-review-id</code> anchors when editing.</footer>
+
+  <script>
+    document.documentElement.classList.add('js');
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const items = document.querySelectorAll('.reveal');
+    if (reduce || !('IntersectionObserver' in window)) {
+      items.forEach((el) => el.classList.add('is-visible'));
+    } else {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+      items.forEach((el) => observer.observe(el));
+    }
+  </script>
+</body>
+</html>

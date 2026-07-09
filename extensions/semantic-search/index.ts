@@ -44,6 +44,7 @@ const MAX_CARD_CALLS = 18;
 const MAX_CARD_COMMENTS = 6;
 const MAX_CARD_TERMS = 28;
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
+const DEFAULT_OLLAMA_SSH_TARGET = "";
 const DEFAULT_OLLAMA_TUNNEL_HOST = "127.0.0.1";
 const DEFAULT_OLLAMA_TUNNEL_PORT = 11434;
 const DEFAULT_OLLAMA_EMBED_MODEL = "nomic-embed-text";
@@ -60,6 +61,69 @@ const MIN_OLLAMA_SUMMARY_INPUT_CHARS = 512;
 const MAX_OLLAMA_SUMMARY_INPUT_CHARS = 100_000;
 const EMBEDDING_TRUNCATION_MARKER = "\n\n[...semantic-search input truncated...]\n\n";
 const EMBEDDING_VECTOR_JSON_ENCODING = "base64-f32";
+
+export type SemanticSearchConfig = {
+	excludePaths?: string[];
+	ollama?: {
+		baseUrl?: string;
+		embeddingModel?: string;
+		summaryModel?: string;
+		embeddingMaxChars?: number;
+		summaryMaxChars?: number;
+		summaryConcurrency?: number;
+		summaries?: boolean;
+	};
+	tunnel?: {
+		sshTarget?: string;
+		localHost?: string;
+		localPort?: number;
+		remoteHost?: string;
+		remotePort?: number;
+	};
+};
+
+const EXTENSION_CONFIG_URL = new URL("./config.json", import.meta.url);
+let cachedSemanticSearchConfig: { key: string; value: SemanticSearchConfig } | undefined;
+
+function stringConfigValue(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readSemanticSearchConfig(env: Record<string, string | undefined> = process.env): SemanticSearchConfig {
+	const configuredPath = env.PI_SEMANTIC_SEARCH_CONFIG?.trim();
+	const key = configuredPath || EXTENSION_CONFIG_URL.href;
+	if (cachedSemanticSearchConfig?.key === key) return cachedSemanticSearchConfig.value;
+	try {
+		const raw = configuredPath ? readFileSync(resolve(configuredPath), "utf8") : readFileSync(EXTENSION_CONFIG_URL, "utf8");
+		const parsed = JSON.parse(raw) as unknown;
+		const value = parsed && typeof parsed === "object" ? parsed as SemanticSearchConfig : {};
+		cachedSemanticSearchConfig = { key, value };
+		return value;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+			console.warn?.(`semantic-search: failed to read config ${key}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+		cachedSemanticSearchConfig = { key, value: {} };
+		return {};
+	}
+}
+
+function configuredDefaultEmbeddingModel(config: SemanticSearchConfig = readSemanticSearchConfig()): string {
+	return stringConfigValue(config.ollama?.embeddingModel) ?? DEFAULT_OLLAMA_EMBED_MODEL;
+}
+
+function configuredDefaultSummaryModel(config: SemanticSearchConfig = readSemanticSearchConfig()): string {
+	return stringConfigValue(config.ollama?.summaryModel) ?? DEFAULT_OLLAMA_SUMMARY_MODEL;
+}
+
+function configuredDefaultSshTarget(config: SemanticSearchConfig = readSemanticSearchConfig()): string {
+	return stringConfigValue(config.tunnel?.sshTarget) ?? DEFAULT_OLLAMA_SSH_TARGET;
+}
+
+function tunnelCommandHint(config: SemanticSearchConfig = readSemanticSearchConfig()): string {
+	const target = configuredDefaultSshTarget(config);
+	return target ? `/ollama-tunnel  # defaults to ${target}` : "/ollama-tunnel user@remote-host";
+}
 
 const SKIP_DIRS = new Set([
 	".git",
@@ -584,17 +648,53 @@ function isLikelyBinary(buffer: Buffer): boolean {
 	return sample.length > 0 && suspicious / sample.length > 0.08;
 }
 
-function shouldSkipPath(relativePath: string): boolean {
+function escapeRegExp(value: string): string {
+	return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+}
+
+function globToRegExp(pattern: string): RegExp {
+	const normalized = normalizeRelativePath(pattern.trim());
+	let source = "";
+	for (let index = 0; index < normalized.length; index++) {
+		const char = normalized[index];
+		if (char === "*") {
+			if (normalized[index + 1] === "*") {
+				const slashAfterGlobstar = normalized[index + 2] === "/";
+				source += slashAfterGlobstar ? "(?:.*/)?" : ".*";
+				index += slashAfterGlobstar ? 2 : 1;
+			} else {
+				source += "[^/]*";
+			}
+			continue;
+		}
+		if (char === "?") {
+			source += "[^/]";
+			continue;
+		}
+		source += escapeRegExp(char);
+	}
+	return new RegExp(`^${source}$`);
+}
+
+function configExcludePatterns(config: SemanticSearchConfig): RegExp[] {
+	return (Array.isArray(config.excludePaths) ? config.excludePaths : [])
+		.filter((pattern): pattern is string => typeof pattern === "string" && pattern.trim().length > 0)
+		.map(globToRegExp);
+}
+
+function shouldSkipPath(relativePath: string, excludePatterns: readonly RegExp[] = []): boolean {
 	const normalized = normalizeRelativePath(relativePath);
 	const parts = normalized.split("/");
 	if (parts.some((part) => SKIP_DIRS.has(part))) return true;
 	if (basename(normalized).startsWith(".DS_Store")) return true;
 	if (SKIP_EXTENSIONS.has(extname(normalized).toLowerCase())) return true;
+	if (excludePatterns.some((pattern) => pattern.test(normalized))) return true;
 	return false;
 }
 
-function discoverProjectFiles(cwd: string): string[] {
+function discoverProjectFiles(cwd: string, config: SemanticSearchConfig = readSemanticSearchConfig()): string[] {
 	const files = new Set<string>();
+	const excludePatterns = configExcludePatterns(config);
 	try {
 		const output = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
 			cwd,
@@ -603,20 +703,20 @@ function discoverProjectFiles(cwd: string): string[] {
 		});
 		for (const raw of output.split("\0")) {
 			const file = normalizeRelativePath(raw.trim());
-			if (file && !shouldSkipPath(file)) files.add(file);
+			if (file && !shouldSkipPath(file, excludePatterns)) files.add(file);
 		}
 	} catch {
 		// Not a git checkout or git unavailable. Fall back to a conservative recursive walk.
 	}
 
 	if (files.size === 0) {
-		for (const file of walkFiles(cwd)) files.add(file);
+		for (const file of walkFiles(cwd, "", excludePatterns)) files.add(file);
 	}
 
 	return [...files].sort((a, b) => a.localeCompare(b));
 }
 
-function walkFiles(cwd: string, current = ""): string[] {
+function walkFiles(cwd: string, current = "", excludePatterns: readonly RegExp[] = []): string[] {
 	const directory = current ? join(cwd, current) : cwd;
 	const out: string[] = [];
 	let entries: ReturnType<typeof readdirSync>;
@@ -628,9 +728,9 @@ function walkFiles(cwd: string, current = ""): string[] {
 
 	for (const entry of entries) {
 		const relativePath = normalizeRelativePath(current ? join(current, entry.name) : entry.name);
-		if (shouldSkipPath(relativePath)) continue;
+		if (shouldSkipPath(relativePath, excludePatterns)) continue;
 		if (entry.isDirectory()) {
-			out.push(...walkFiles(cwd, relativePath));
+			out.push(...walkFiles(cwd, relativePath, excludePatterns));
 		} else if (entry.isFile()) {
 			out.push(relativePath);
 		}
@@ -804,13 +904,14 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
 export function resolveOllamaEmbeddingConfig(
 	input: Partial<OllamaEmbeddingConfig> = {},
 	env: Record<string, string | undefined> = process.env,
+	config: SemanticSearchConfig = readSemanticSearchConfig(env),
 ): OllamaEmbeddingConfig {
 	return {
-		model: input.model ?? env.PI_SEMANTIC_SEARCH_EMBED_MODEL ?? env.OLLAMA_EMBED_MODEL ?? DEFAULT_OLLAMA_EMBED_MODEL,
-		baseUrl: normalizeOllamaBaseUrl(input.baseUrl ?? env.OLLAMA_BASE_URL ?? env.OLLAMA_HOST ?? DEFAULT_OLLAMA_BASE_URL),
+		model: input.model ?? env.PI_SEMANTIC_SEARCH_EMBED_MODEL ?? env.OLLAMA_EMBED_MODEL ?? stringConfigValue(config.ollama?.embeddingModel) ?? DEFAULT_OLLAMA_EMBED_MODEL,
+		baseUrl: normalizeOllamaBaseUrl(input.baseUrl ?? env.OLLAMA_BASE_URL ?? env.OLLAMA_HOST ?? stringConfigValue(config.ollama?.baseUrl) ?? DEFAULT_OLLAMA_BASE_URL),
 		batchSize: clampInteger(input.batchSize, DEFAULT_OLLAMA_BATCH_SIZE, 1, 64),
 		timeoutMs: clampInteger(input.timeoutMs, DEFAULT_OLLAMA_TIMEOUT_MS, 1_000, 300_000),
-		maxInputChars: clampInteger(input.maxInputChars ?? env.PI_SEMANTIC_SEARCH_EMBED_MAX_CHARS, DEFAULT_OLLAMA_EMBED_INPUT_MAX_CHARS, MIN_OLLAMA_EMBED_INPUT_CHARS, MAX_OLLAMA_EMBED_INPUT_MAX_CHARS),
+		maxInputChars: clampInteger(input.maxInputChars ?? env.PI_SEMANTIC_SEARCH_EMBED_MAX_CHARS ?? config.ollama?.embeddingMaxChars, DEFAULT_OLLAMA_EMBED_INPUT_MAX_CHARS, MIN_OLLAMA_EMBED_INPUT_CHARS, MAX_OLLAMA_EMBED_INPUT_MAX_CHARS),
 	};
 }
 
@@ -822,14 +923,16 @@ function envFlagEnabled(value: string | undefined, fallback: boolean): boolean {
 export function resolveOllamaSummaryConfig(
 	input: Partial<OllamaSummaryConfig> = {},
 	env: Record<string, string | undefined> = process.env,
+	config: SemanticSearchConfig = readSemanticSearchConfig(env),
 ): OllamaSummaryConfig {
+	const configSummaries = typeof config.ollama?.summaries === "boolean" ? config.ollama.summaries : true;
 	return {
-		model: input.model ?? env.PI_SEMANTIC_SEARCH_SUMMARY_MODEL ?? DEFAULT_OLLAMA_SUMMARY_MODEL,
-		baseUrl: normalizeOllamaBaseUrl(input.baseUrl ?? env.OLLAMA_BASE_URL ?? env.OLLAMA_HOST ?? DEFAULT_OLLAMA_BASE_URL),
+		model: input.model ?? env.PI_SEMANTIC_SEARCH_SUMMARY_MODEL ?? stringConfigValue(config.ollama?.summaryModel) ?? DEFAULT_OLLAMA_SUMMARY_MODEL,
+		baseUrl: normalizeOllamaBaseUrl(input.baseUrl ?? env.OLLAMA_BASE_URL ?? env.OLLAMA_HOST ?? stringConfigValue(config.ollama?.baseUrl) ?? DEFAULT_OLLAMA_BASE_URL),
 		timeoutMs: clampInteger(input.timeoutMs ?? env.PI_SEMANTIC_SEARCH_SUMMARY_TIMEOUT_MS, DEFAULT_OLLAMA_SUMMARY_TIMEOUT_MS, 1_000, 600_000),
-		maxInputChars: clampInteger(input.maxInputChars ?? env.PI_SEMANTIC_SEARCH_SUMMARY_MAX_CHARS, DEFAULT_OLLAMA_SUMMARY_INPUT_MAX_CHARS, MIN_OLLAMA_SUMMARY_INPUT_CHARS, MAX_OLLAMA_SUMMARY_INPUT_CHARS),
-		concurrency: clampInteger(input.concurrency ?? env.PI_SEMANTIC_SEARCH_SUMMARY_CONCURRENCY, DEFAULT_OLLAMA_SUMMARY_CONCURRENCY, 1, 8),
-		enabled: input.enabled ?? envFlagEnabled(env.PI_SEMANTIC_SEARCH_SUMMARIES, true),
+		maxInputChars: clampInteger(input.maxInputChars ?? env.PI_SEMANTIC_SEARCH_SUMMARY_MAX_CHARS ?? config.ollama?.summaryMaxChars, DEFAULT_OLLAMA_SUMMARY_INPUT_MAX_CHARS, MIN_OLLAMA_SUMMARY_INPUT_CHARS, MAX_OLLAMA_SUMMARY_INPUT_CHARS),
+		concurrency: clampInteger(input.concurrency ?? env.PI_SEMANTIC_SEARCH_SUMMARY_CONCURRENCY ?? config.ollama?.summaryConcurrency, DEFAULT_OLLAMA_SUMMARY_CONCURRENCY, 1, 8),
+		enabled: input.enabled ?? (env.PI_SEMANTIC_SEARCH_SUMMARIES === undefined ? configSummaries : envFlagEnabled(env.PI_SEMANTIC_SEARCH_SUMMARIES, true)),
 	};
 }
 
@@ -2206,7 +2309,7 @@ function formatOllamaRequirementFailure(
 		"  /index rebuild",
 		"",
 		"Remote machine option over SSH tunnel:",
-		"  /ollama-tunnel user@remote-host",
+		`  ${tunnelCommandHint()}`,
 		"  /index rebuild",
 		"",
 		"Explicit lower-quality escape hatches remain available for diagnostics: /index lexical, /index rebuild --no-summaries, or semantic_search with useEmbeddings=false/useSummaries=false.",
@@ -2671,7 +2774,7 @@ export function parseIndexCommandArgs(args: string): ParsedIndexCommandArgs {
 	return { tokens, action, lexicalOnly, background, summariesDisabled, summaryModel, model };
 }
 
-type OllamaTunnelAction = "start" | "status" | "help";
+type OllamaTunnelAction = "start" | "status" | "stop" | "local" | "help";
 
 export type OllamaTunnelConfig = {
 	sshTarget: string;
@@ -2685,6 +2788,7 @@ type ParsedOllamaTunnelCommandArgs = OllamaTunnelConfig & {
 	tokens: string[];
 	action: OllamaTunnelAction;
 	printOnly: boolean;
+	localPortExplicit: boolean;
 	error?: string;
 };
 
@@ -2696,19 +2800,27 @@ type OllamaTunnelStartResult = {
 	error?: string;
 };
 
+type OllamaTunnelStopResult = {
+	killedPids: number[];
+	attemptedPorts: number[];
+	error?: string;
+};
+
 type OllamaTunnelStarter = (config: OllamaTunnelConfig) => OllamaTunnelStartResult | Promise<OllamaTunnelStartResult>;
+type OllamaTunnelStopper = (config: ParsedOllamaTunnelCommandArgs) => OllamaTunnelStopResult | Promise<OllamaTunnelStopResult>;
 
-const OLLAMA_TUNNEL_ACTIONS = new Set<string>(["start", "status", "help"]);
+const OLLAMA_TUNNEL_ACTIONS = new Set<string>(["start", "status", "stop", "local", "help"]);
 
-function parsePort(value: string | undefined, fallback: number, label: string): { value: number; error?: string } {
-	if (value === undefined || value.trim() === "") return { value: fallback };
-	const parsed = Number(value);
+function parsePort(value: unknown, fallback: number, label: string): { value: number; error?: string } {
+	if (value === undefined || value === null) return { value: fallback };
+	if (typeof value === "string" && value.trim() === "") return { value: fallback };
+	const parsed = typeof value === "number" ? value : Number(value);
 	if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535) return { value: fallback, error: `${label} must be an integer between 1 and 65535.` };
 	return { value: parsed };
 }
 
 function firstPositionalToken(tokens: string[], valueIndexesToSkip: Set<number>): string | undefined {
-	const reserved = new Set(["start", "status", "help", "--help", "-h", "--print", "--dry-run", "--host", "--local-port", "--remote-port", "--remote-host", "--local-host"]);
+	const reserved = new Set(["start", "status", "stop", "local", "help", "--help", "-h", "--print", "--dry-run", "--host", "--local-port", "--remote-port", "--remote-host", "--local-host"]);
 	return tokens.find((token, index) => !valueIndexesToSkip.has(index) && !reserved.has(token) && !token.startsWith("--"));
 }
 
@@ -2716,21 +2828,22 @@ function isLoopbackHost(value: string): boolean {
 	return ["127.0.0.1", "localhost"].includes(value.trim().toLowerCase());
 }
 
-export function parseOllamaTunnelCommandArgs(args: string, env: Record<string, string | undefined> = process.env): ParsedOllamaTunnelCommandArgs {
+export function parseOllamaTunnelCommandArgs(args: string, env: Record<string, string | undefined> = process.env, config: SemanticSearchConfig = readSemanticSearchConfig(env)): ParsedOllamaTunnelCommandArgs {
 	const tokens = args.trim().split(/\s+/).filter(Boolean);
 	const first = tokens[0]?.toLowerCase();
-	const action: OllamaTunnelAction = first === "status" ? "status" : first === "help" || first === "--help" || first === "-h" ? "help" : "start";
+	const action: OllamaTunnelAction = first === "status" ? "status" : first === "stop" ? "stop" : first === "local" ? "local" : first === "help" || first === "--help" || first === "-h" ? "help" : "start";
 	const valueIndexesToSkip = new Set<number>();
 	for (const flag of ["--host", "--local-port", "--remote-port", "--remote-host", "--local-host"]) {
 		const index = tokens.indexOf(flag);
 		if (index >= 0) valueIndexesToSkip.add(index + 1);
 	}
 	const positionalHost = firstPositionalToken(tokens, valueIndexesToSkip);
-	const sshTarget = flagValue(tokens, "--host") ?? env.PI_OLLAMA_SSH_HOST ?? positionalHost ?? "";
-	const localHost = flagValue(tokens, "--local-host") ?? env.PI_OLLAMA_TUNNEL_LOCAL_HOST ?? DEFAULT_OLLAMA_TUNNEL_HOST;
-	const remoteHost = flagValue(tokens, "--remote-host") ?? env.PI_OLLAMA_TUNNEL_REMOTE_HOST ?? DEFAULT_OLLAMA_TUNNEL_HOST;
-	const localPort = parsePort(flagValue(tokens, "--local-port") ?? env.PI_OLLAMA_TUNNEL_LOCAL_PORT, DEFAULT_OLLAMA_TUNNEL_PORT, "Local port");
-	const remotePort = parsePort(flagValue(tokens, "--remote-port") ?? env.PI_OLLAMA_TUNNEL_REMOTE_PORT, DEFAULT_OLLAMA_TUNNEL_PORT, "Remote port");
+	const sshTarget = flagValue(tokens, "--host") ?? positionalHost ?? env.PI_OLLAMA_SSH_HOST ?? stringConfigValue(config.tunnel?.sshTarget) ?? DEFAULT_OLLAMA_SSH_TARGET;
+	const localHost = flagValue(tokens, "--local-host") ?? env.PI_OLLAMA_TUNNEL_LOCAL_HOST ?? stringConfigValue(config.tunnel?.localHost) ?? DEFAULT_OLLAMA_TUNNEL_HOST;
+	const remoteHost = flagValue(tokens, "--remote-host") ?? env.PI_OLLAMA_TUNNEL_REMOTE_HOST ?? stringConfigValue(config.tunnel?.remoteHost) ?? DEFAULT_OLLAMA_TUNNEL_HOST;
+	const localPortExplicit = tokens.includes("--local-port") || tokens.some((token) => token.startsWith("--local-port="));
+	const localPort = parsePort(flagValue(tokens, "--local-port") ?? env.PI_OLLAMA_TUNNEL_LOCAL_PORT ?? config.tunnel?.localPort, DEFAULT_OLLAMA_TUNNEL_PORT, "Local port");
+	const remotePort = parsePort(flagValue(tokens, "--remote-port") ?? env.PI_OLLAMA_TUNNEL_REMOTE_PORT ?? config.tunnel?.remotePort, DEFAULT_OLLAMA_TUNNEL_PORT, "Remote port");
 	const printOnly = tokens.includes("--print") || tokens.includes("--dry-run");
 	const base: ParsedOllamaTunnelCommandArgs = {
 		tokens,
@@ -2741,13 +2854,14 @@ export function parseOllamaTunnelCommandArgs(args: string, env: Record<string, s
 		remoteHost,
 		remotePort: remotePort.value,
 		printOnly,
+		localPortExplicit,
 	};
 	const knownOptions = ["--help", "-h", "--print", "--dry-run", "--host", "--local-port", "--remote-port", "--remote-host", "--local-host"];
 	if (!OLLAMA_TUNNEL_ACTIONS.has(first ?? "start") && first?.startsWith("-") && !knownOptions.some((option) => first === option || first.startsWith(`${option}=`))) return { ...base, error: `Unknown /ollama-tunnel option '${first}'.` };
 	if (localPort.error) return { ...base, error: localPort.error };
 	if (remotePort.error) return { ...base, error: remotePort.error };
 	if (!isLoopbackHost(localHost)) return { ...base, error: "Local tunnel host must be localhost or 127.0.0.1." };
-	if (action === "start" && !sshTarget.trim()) return { ...base, error: "Missing SSH target. Usage: /ollama-tunnel user@remote-host" };
+	if ((action === "start" || action === "stop") && !sshTarget.trim()) return { ...base, error: "Missing SSH target. Usage: /ollama-tunnel user@remote-host" };
 	if (sshTarget.trim().startsWith("-")) return { ...base, error: "SSH target must not start with '-'." };
 	return base;
 }
@@ -2795,6 +2909,40 @@ function startOllamaTunnel(config: OllamaTunnelConfig): OllamaTunnelStartResult 
 	}
 }
 
+function sshTunnelForwardSpec(config: OllamaTunnelConfig, localPort = config.localPort): string {
+	return `${config.localHost}:${localPort}:${config.remoteHost}:${config.remotePort}`;
+}
+
+function tunnelStopPorts(config: ParsedOllamaTunnelCommandArgs): number[] {
+	return config.localPortExplicit ? [config.localPort] : fallbackTunnelPorts(config.localPort);
+}
+
+function findOllamaTunnelPids(config: ParsedOllamaTunnelCommandArgs): { pids: number[]; attemptedPorts: number[] } {
+	const attemptedPorts = tunnelStopPorts(config);
+	const output = execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+	const pids: number[] = [];
+	for (const line of output.split("\n")) {
+		const match = line.match(/^\s*(\d+)\s+(.+)$/);
+		if (!match) continue;
+		const pid = Number(match[1]);
+		const command = match[2] ?? "";
+		if (!Number.isFinite(pid) || !/\bssh\b/.test(command) || !command.includes(config.sshTarget)) continue;
+		if (!attemptedPorts.some((port) => command.includes(sshTunnelForwardSpec(config, port)))) continue;
+		pids.push(pid);
+	}
+	return { pids: unique(pids), attemptedPorts };
+}
+
+function stopOllamaTunnel(config: ParsedOllamaTunnelCommandArgs): OllamaTunnelStopResult {
+	try {
+		const { pids, attemptedPorts } = findOllamaTunnelPids(config);
+		for (const pid of pids) process.kill(pid, "TERM");
+		return { killedPids: pids, attemptedPorts };
+	} catch (error) {
+		return { killedPids: [], attemptedPorts: tunnelStopPorts(config), error: error instanceof Error ? error.message : String(error) };
+	}
+}
+
 function formatOllamaTunnelInstructions(config: OllamaTunnelConfig): string {
 	return [
 		"Remote Ollama over SSH tunnel:",
@@ -2806,18 +2954,20 @@ function formatOllamaTunnelInstructions(config: OllamaTunnelConfig): string {
 		"",
 		"Remote setup if needed:",
 		"  ollama serve",
-		`  ollama pull ${DEFAULT_OLLAMA_EMBED_MODEL}`,
-		`  ollama pull ${DEFAULT_OLLAMA_SUMMARY_MODEL}`,
+		`  ollama pull ${configuredDefaultEmbeddingModel()}`,
+		`  ollama pull ${configuredDefaultSummaryModel()}`,
 		"",
 		"Then rebuild:",
 		"  /index rebuild",
 	].join("\n");
 }
 
-function formatOllamaTunnelStarted(result: OllamaTunnelStartResult): string {
+function formatOllamaTunnelStarted(result: OllamaTunnelStartResult, attemptedPorts: number[] = []): string {
+	const fallbackNote = attemptedPorts.length > 1 ? ["", `Note: local port ${attemptedPorts[0]} was busy; used ${attemptedPorts[attemptedPorts.length - 1]} instead.`] : [];
 	return [
 		"Ollama SSH tunnel is ready.",
 		`Ollama URL for this Pi session: ${result.ollamaUrl}`,
+		...fallbackNote,
 		"",
 		"Next:",
 		"  /index rebuild",
@@ -2826,6 +2976,55 @@ function formatOllamaTunnelStarted(result: OllamaTunnelStartResult): string {
 		"Command used:",
 		`  ${result.command}`,
 	].join("\n");
+}
+
+function useLocalOllama(): string {
+	process.env.OLLAMA_BASE_URL = DEFAULT_OLLAMA_BASE_URL;
+	return DEFAULT_OLLAMA_BASE_URL;
+}
+
+function formatOllamaTunnelStopped(result: OllamaTunnelStopResult, localUrl: string): string {
+	return [
+		result.killedPids.length > 0 ? `Stopped Ollama SSH tunnel process${result.killedPids.length === 1 ? "" : "es"}: ${result.killedPids.join(", ")}` : "No matching Ollama SSH tunnel process was found.",
+		`Pi now uses local Ollama: ${localUrl}`,
+		`Checked local ports: ${result.attemptedPorts.join(", ")}`,
+		result.error ? `Warning: ${result.error}` : undefined,
+		"",
+		"Next:",
+		"  /index rebuild",
+	].filter((line): line is string => typeof line === "string").join("\n");
+}
+
+function formatOllamaTunnelLocal(localUrl: string): string {
+	return [`Pi now uses local Ollama: ${localUrl}`, "", "This does not kill an existing SSH tunnel. Use /ollama-tunnel stop to stop matching tunnel processes."].join("\n");
+}
+
+function localPortUnavailable(error: string | undefined): boolean {
+	return /Address already in use|cannot listen to port/i.test(error ?? "");
+}
+
+function fallbackTunnelPorts(preferredPort: number): number[] {
+	const ports = [preferredPort];
+	for (let port = 11435; port <= 11444; port++) {
+		if (!ports.includes(port)) ports.push(port);
+	}
+	return ports;
+}
+
+async function startOllamaTunnelWithFallback(starter: OllamaTunnelStarter, config: ParsedOllamaTunnelCommandArgs): Promise<{ result: OllamaTunnelStartResult; config: OllamaTunnelConfig; attemptedPorts: number[] }> {
+	let currentConfig: OllamaTunnelConfig = config;
+	let result = await starter(currentConfig);
+	const attemptedPorts = [currentConfig.localPort];
+	if (result.ok || config.localPortExplicit || !localPortUnavailable(result.error)) return { result, config: currentConfig, attemptedPorts };
+
+	for (const port of fallbackTunnelPorts(config.localPort).slice(1)) {
+		currentConfig = { ...config, localPort: port };
+		result = await starter(currentConfig);
+		attemptedPorts.push(port);
+		if (result.ok || !localPortUnavailable(result.error)) break;
+	}
+
+	return { result, config: currentConfig, attemptedPorts };
 }
 
 async function formatOllamaTunnelStatus(config: Pick<OllamaTunnelConfig, "localHost" | "localPort">): Promise<string> {
@@ -2837,7 +3036,7 @@ async function formatOllamaTunnelStatus(config: Pick<OllamaTunnelConfig, "localH
 			: [];
 		return [`Ollama tunnel/status check succeeded: ${ollamaUrl}`, models.length > 0 ? `Models: ${models.join(", ")}` : "Models: none reported"].join("\n");
 	} catch (error) {
-		return [`Ollama tunnel/status check failed: ${ollamaUrl}`, `Error: ${error instanceof Error ? error.message : String(error)}`, "", "If you want the SSH tunnel path, run:", "  /ollama-tunnel user@remote-host"].join("\n");
+		return [`Ollama tunnel/status check failed: ${ollamaUrl}`, `Error: ${error instanceof Error ? error.message : String(error)}`, "", "If you want the SSH tunnel path, run:", `  ${tunnelCommandHint()}`].join("\n");
 	}
 }
 
@@ -2845,13 +3044,19 @@ export type SemanticSearchExtensionOptions = {
 	autoRebuild?: boolean;
 	startBackgroundIndexBuild?: BackgroundIndexBuildStarter;
 	startOllamaTunnel?: OllamaTunnelStarter;
+	stopOllamaTunnel?: OllamaTunnelStopper;
 };
 
 export default function semanticSearchExtension(pi: ExtensionAPI, options: SemanticSearchExtensionOptions = {}) {
+	const config = readSemanticSearchConfig();
+	const configuredEmbeddingModel = configuredDefaultEmbeddingModel(config);
+	const configuredSummaryModel = configuredDefaultSummaryModel(config);
+	const configuredSshTarget = configuredDefaultSshTarget(config);
 	const changedPathsByCwd = new Map<string, Set<string>>();
 	const autoRebuildEnabled = options.autoRebuild ?? envFlagEnabled(process.env.PI_SEMANTIC_SEARCH_AUTO_REBUILD, true);
 	const startIndexBuild = options.startBackgroundIndexBuild ?? startBackgroundIndexBuild;
 	const startTunnel = options.startOllamaTunnel ?? startOllamaTunnel;
+	const stopTunnel = options.stopOllamaTunnel ?? stopOllamaTunnel;
 
 	function noteChangedPath(cwd: string, toolPath: string | undefined): void {
 		if (!toolPath) return;
@@ -3027,9 +3232,9 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 	});
 
 	pi.registerCommand("ollama-tunnel", {
-		description: "Start or check a localhost SSH tunnel to remote Ollama. Usage: /ollama-tunnel user@host [--local-port 11434] [--remote-port 11434] [--print]",
+		description: `Start, stop, reset, or check a localhost SSH tunnel to remote Ollama. Usage: /ollama-tunnel [user@host|stop|local|status] [--local-port 11434] [--remote-port 11434] [--print]${configuredSshTarget ? `. Default host: ${configuredSshTarget}` : ""}`,
 		handler: async (args, ctx) => {
-			const parsed = parseOllamaTunnelCommandArgs(args);
+			const parsed = parseOllamaTunnelCommandArgs(args, process.env, config);
 			if (parsed.error) {
 				ctx.ui.notify(parsed.error, "error");
 				pi.sendMessage?.({ customType: "semantic-search", content: `${parsed.error}\n\n${formatOllamaTunnelInstructions({ ...parsed, sshTarget: parsed.sshTarget || "user@remote-host" })}`, display: true, details: { error: true } });
@@ -3037,6 +3242,19 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 			}
 			if (parsed.action === "help") {
 				pi.sendMessage?.({ customType: "semantic-search", content: formatOllamaTunnelInstructions({ ...parsed, sshTarget: parsed.sshTarget || "user@remote-host" }), display: true, details: parsed });
+				return;
+			}
+			if (parsed.action === "local") {
+				const localUrl = useLocalOllama();
+				ctx.ui.notify(`Using local Ollama at ${localUrl}`, "info");
+				pi.sendMessage?.({ customType: "semantic-search", content: formatOllamaTunnelLocal(localUrl), display: true, details: { ...parsed, ollamaUrl: localUrl } });
+				return;
+			}
+			if (parsed.action === "stop") {
+				const result = await stopTunnel(parsed);
+				const localUrl = useLocalOllama();
+				ctx.ui.notify(result.killedPids.length > 0 ? "Ollama SSH tunnel stopped" : "Using local Ollama; no tunnel process found", result.error ? "warning" : "info");
+				pi.sendMessage?.({ customType: "semantic-search", content: formatOllamaTunnelStopped(result, localUrl), display: true, details: { ...parsed, ...result, ollamaUrl: localUrl } });
 				return;
 			}
 			if (parsed.action === "status") {
@@ -3050,16 +3268,16 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 				return;
 			}
 
-			const result = await startTunnel(parsed);
+			const { result, config: tunnelConfig, attemptedPorts } = await startOllamaTunnelWithFallback(startTunnel, parsed);
 			if (!result.ok) {
 				ctx.ui.notify("Ollama SSH tunnel failed to start", "error");
-				pi.sendMessage?.({ customType: "semantic-search", content: [`Failed to start Ollama SSH tunnel.`, `Error: ${result.error ?? "unknown error"}`, "", "Command:", `  ${result.command}`, "", "Notes:", "  Requires SSH key/agent auth because the command uses BatchMode=yes.", "  If local port 11434 is busy, retry with --local-port 11435 and keep this Pi session open."].join("\n"), display: true, details: { ...parsed, error: result.error } });
+				pi.sendMessage?.({ customType: "semantic-search", content: [`Failed to start Ollama SSH tunnel.`, `Error: ${result.error ?? "unknown error"}`, "", "Command:", `  ${result.command}`, "", `Attempted local ports: ${attemptedPorts.join(", ")}`, "", "Notes:", "  Requires SSH key/agent auth because the command uses BatchMode=yes.", parsed.localPortExplicit ? "  The requested --local-port is busy or unavailable; choose another port." : "  Default port 11434 can be busy when local Ollama is running; Pi will auto-try 11435-11444."].join("\n"), display: true, details: { ...parsed, localPort: tunnelConfig.localPort, attemptedPorts, error: result.error } });
 				return;
 			}
 
 			process.env.OLLAMA_BASE_URL = result.ollamaUrl;
 			ctx.ui.notify(`Ollama SSH tunnel ready at ${result.ollamaUrl}`, "info");
-			pi.sendMessage?.({ customType: "semantic-search", content: formatOllamaTunnelStarted(result), display: true, details: { ...parsed, ollamaUrl: result.ollamaUrl } });
+			pi.sendMessage?.({ customType: "semantic-search", content: formatOllamaTunnelStarted(result, attemptedPorts), display: true, details: { ...parsed, localPort: tunnelConfig.localPort, attemptedPorts, ollamaUrl: result.ollamaUrl } });
 		},
 	});
 
@@ -3082,8 +3300,8 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 			refresh: Type.Optional(Type.Boolean({ description: "Refresh a missing/stale index before searching. Defaults to true." })),
 			useEmbeddings: Type.Optional(Type.Boolean({ description: "Use required local Ollama embeddings. Defaults to true; set false only for explicit lower-quality lexical/debug search." })),
 			useSummaries: Type.Optional(Type.Boolean({ description: "Generate required Ollama summaries for semantic cards when rebuilding an embedding index. Defaults to true; set false only for explicit lower-quality/debug rebuilds." })),
-			embeddingModel: Type.Optional(Type.String({ description: `Ollama embedding model to use. Defaults to ${DEFAULT_OLLAMA_EMBED_MODEL} or OLLAMA_EMBED_MODEL.` })),
-			summaryModel: Type.Optional(Type.String({ description: `Ollama generation model for semantic-card summaries. Defaults to ${DEFAULT_OLLAMA_SUMMARY_MODEL} or PI_SEMANTIC_SEARCH_SUMMARY_MODEL.` })),
+			embeddingModel: Type.Optional(Type.String({ description: `Ollama embedding model to use. Defaults to ${configuredEmbeddingModel} from config or OLLAMA_EMBED_MODEL.` })),
+			summaryModel: Type.Optional(Type.String({ description: `Ollama generation model for semantic-card summaries. Defaults to ${configuredSummaryModel} from config or PI_SEMANTIC_SEARCH_SUMMARY_MODEL.` })),
 			embeddingMaxChars: Type.Optional(Type.Number({ description: `Maximum characters sent to Ollama per embedding input before adaptive retries (default ${DEFAULT_OLLAMA_EMBED_INPUT_MAX_CHARS}).`, minimum: MIN_OLLAMA_EMBED_INPUT_CHARS, maximum: MAX_OLLAMA_EMBED_INPUT_MAX_CHARS })),
 			ollamaUrl: Type.Optional(Type.String({ description: `Ollama base URL. Defaults to OLLAMA_BASE_URL/OLLAMA_HOST or ${DEFAULT_OLLAMA_BASE_URL}.` })),
 		}),

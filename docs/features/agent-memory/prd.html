@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pi Agent Memory PRD</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #fff;
+      --surface: #fff;
+      --surface-subtle: #fafafa;
+      --surface-raised: #f5f5f5;
+      --text: #0a0a0a;
+      --text-muted: #5f5f5f;
+      --text-subtle: #858585;
+      --border: #e7e7e7;
+      --border-strong: #d6d6d6;
+      --accent: #000;
+      --accent-soft: #f3f3f3;
+      --info: #006adc;
+      --info-soft: #eef6ff;
+      --success: #007a3d;
+      --success-soft: #eefaf3;
+      --warning: #9a4d00;
+      --warning-soft: #fff7ed;
+      --danger: #c50000;
+      --danger-soft: #fff1f1;
+      --focus: 0 0 0 3px rgba(0, 106, 220, .22);
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 20px;
+      --space-6: 24px;
+      --space-8: 32px;
+      --space-10: 40px;
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --content: 78ch;
+      --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; background: var(--page); color: var(--text); font-family: var(--sans); line-height: 1.55; text-rendering: optimizeLegibility; }
+    a { color: var(--accent); text-underline-offset: .18em; }
+    code { padding: .12rem .32rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-subtle); font-family: var(--mono); font-size: .92em; overflow-wrap: anywhere; }
+    :where(a, button, summary):focus-visible { outline: none; box-shadow: var(--focus); }
+    .skip-link { position: fixed; top: var(--space-4); left: var(--space-4); z-index: 20; transform: translateY(-180%); padding: .65rem .9rem; border-radius: 999px; background: var(--text); color: var(--surface); text-decoration: none; }
+    .skip-link:focus { transform: translateY(0); }
+    .doc-shell { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: clamp(var(--space-6), 4vw, var(--space-10)); max-width: 1280px; margin: 0 auto; padding: var(--space-8) clamp(var(--space-4), 3vw, var(--space-8)) var(--space-10); align-items: start; }
+    .side-nav { position: sticky; top: var(--space-6); max-height: calc(100vh - var(--space-8)); overflow: auto; padding-right: var(--space-4); }
+    .index-details { margin: 0; padding: 0; border: 0; background: transparent; }
+    .index-details > summary { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); padding: .4rem .5rem; border-radius: var(--radius-md); cursor: pointer; list-style: none; }
+    .index-details > summary:hover { background: var(--surface-subtle); }
+    .index-details > summary::-webkit-details-marker { display: none; }
+    .index-details > summary::after { content: "⌄"; margin-left: auto; color: var(--text-subtle); }
+    .nav-title, .side-nav h2 { margin: 0 0 var(--space-3); color: var(--text-subtle); font-size: .75rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    .index-details > summary .nav-title { margin: 0; color: var(--text); }
+    .side-nav ol, .side-nav ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+    .side-nav a { display: block; padding: .36rem .5rem; border-radius: var(--radius-md); color: var(--text-muted); font-size: .9rem; text-decoration: none; }
+    .side-nav a:hover { background: var(--surface-subtle); color: var(--text); }
+    .nav-group { margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+    .doc-main { min-width: 0; max-width: 920px; }
+    .breadcrumbs { margin-bottom: var(--space-4); color: var(--text-subtle); font-size: .9rem; }
+    .breadcrumbs ol { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+    .breadcrumbs li:not(:last-child)::after { content: "/"; margin-left: var(--space-2); color: var(--text-subtle); }
+    .article-header { margin-bottom: var(--space-8); padding: var(--space-6) 0; border-bottom: 1px solid var(--border); }
+    .article-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
+    .pill { display: inline-flex; align-items: center; min-height: 24px; padding: .12rem .5rem; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text-muted); font-size: .72rem; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+    .pill.review { background: var(--warning-soft); color: var(--warning); }
+    .pill.recommended { background: var(--success-soft); color: var(--success); }
+    .pill.rejected { background: var(--danger-soft); color: var(--danger); }
+    h1 { margin: 0; max-width: 900px; font-size: clamp(2rem, 4vw, 3.2rem); line-height: 1.05; letter-spacing: -.035em; }
+    h2, h3 { color: var(--text); line-height: 1.22; letter-spacing: -.015em; }
+    .subtitle { max-width: var(--content); margin: var(--space-4) 0 0; color: var(--text-muted); font-size: clamp(1rem, 1.2vw, 1.14rem); }
+    .takeaway-list { display: grid; gap: var(--space-2); margin: var(--space-4) 0 0; padding-left: 1.15rem; color: var(--text-muted); }
+    .section-card { margin-bottom: var(--space-8); padding-bottom: var(--space-8); scroll-margin-top: var(--space-4); border-bottom: 1px solid var(--border); }
+    .section-kicker { display: inline-flex; margin-bottom: var(--space-2); color: var(--text-subtle); font-size: .76rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    .section-card h2 { margin: 0; font-size: clamp(1.45rem, 2.3vw, 2rem); }
+    .section-summary, .section-card > p { max-width: var(--content); color: var(--text-muted); }
+    .card-grid, .story-list, .ui-option-grid, .gap-list, .acceptance-list { display: grid; gap: var(--space-4); margin-top: var(--space-4); }
+    .card-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+    .story-card, .callout, .ui-option-card, .review-gap-card, .flow-step, .acceptance-card, .domain-card, .example-card, .related-links, .feedback-widget, .prev-next { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+    .story-card, .callout, .ui-option-card, .review-gap-card, .acceptance-card, .domain-card, .example-card { padding: var(--space-4); }
+    .story-card h3, .ui-option-card h3, .review-gap-card h3, .acceptance-card h3, .domain-card h3, .example-card h3 { margin: 0 0 var(--space-2); font-size: 1rem; }
+    .story-card p, .ui-option-card p, .review-gap-card p, .domain-card p, .example-card p, .callout p { margin: var(--space-2) 0 0; color: var(--text-muted); }
+    .checklist { display: grid; gap: var(--space-2); margin: var(--space-3) 0 0; padding-left: 1.2rem; color: var(--text-muted); }
+    .scope-in { border-left: 4px solid var(--success); background: color-mix(in srgb, var(--success-soft) 48%, var(--surface)); }
+    .scope-out { border-left: 4px solid var(--warning); background: color-mix(in srgb, var(--warning-soft) 44%, var(--surface)); }
+    .id-chip, .review-label { display: inline-flex; align-items: center; border-radius: 999px; font-family: var(--mono); font-size: .72rem; font-weight: 750; letter-spacing: .02em; }
+    .id-chip { margin-right: .35rem; padding: .12rem .44rem; background: var(--accent-soft); color: var(--accent); }
+    .review-label { margin-top: var(--space-4); color: var(--text-subtle); }
+    .flow-timeline { display: grid; gap: var(--space-3); margin: var(--space-4) 0 0; padding: 0; list-style: none; }
+    .flow-step { position: relative; padding: var(--space-4) var(--space-4) var(--space-4) 3.35rem; background: var(--surface-subtle); }
+    .flow-step::before { content: attr(data-step); position: absolute; left: var(--space-4); top: var(--space-4); display: grid; place-items: center; width: 1.65rem; height: 1.65rem; border-radius: 999px; background: var(--accent); color: var(--surface); font-family: var(--mono); font-size: .78rem; font-weight: 800; }
+    .domain-card { background: var(--surface-subtle); }
+    .domain-arrow { margin: var(--space-3) 0; padding: var(--space-3); border: 1px dashed var(--border-strong); border-radius: var(--radius-md); color: var(--text); font-family: var(--mono); overflow-wrap: anywhere; }
+    .ui-option-card.recommended { border-color: color-mix(in srgb, var(--success) 35%, var(--border)); background: color-mix(in srgb, var(--success-soft) 42%, var(--surface)); }
+    .ui-option-card.rejected { border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); background: color-mix(in srgb, var(--danger-soft) 42%, var(--surface)); }
+    .wireframe { margin-top: var(--space-3); overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+    .wireframe-chrome { display: flex; align-items: center; gap: 6px; min-height: 2.35rem; padding: .55rem .7rem; border-bottom: 1px solid var(--border); background: var(--surface-subtle); }
+    .wireframe-dot { width: .48rem; height: .48rem; border-radius: 999px; background: var(--border-strong); }
+    .wireframe-title { margin-left: auto; color: var(--text-subtle); font-size: .72rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+    .wireframe-body { display: grid; gap: var(--space-3); padding: var(--space-3); }
+    .terminal { padding: var(--space-3); border-radius: var(--radius-md); background: #111; color: #f5f5f5; font-family: var(--mono); font-size: .86rem; overflow-x: auto; }
+    .terminal .muted { color: #aaa; }
+    .wireframe-panel { padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-subtle); }
+    .wireframe-panel strong { display: block; margin-bottom: var(--space-1); }
+    .option-use-flow { margin-top: var(--space-4); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-subtle); }
+    .option-use-flow h4 { margin: 0 0 var(--space-3); font-size: .96rem; }
+    .option-use-flow ol { display: grid; gap: var(--space-2); margin: 0; padding-left: 1.25rem; color: var(--text-muted); }
+    .review-gap-card { border-left: 4px solid var(--warning); background: color-mix(in srgb, var(--warning-soft) 36%, var(--surface)); }
+    .acceptance-card { border-left: 4px solid var(--info); }
+    .callout.warning { border-left: 4px solid var(--warning); background: color-mix(in srgb, var(--warning-soft) 42%, var(--surface)); }
+    .callout.success { border-left: 4px solid var(--success); background: color-mix(in srgb, var(--success-soft) 45%, var(--surface)); }
+    details { margin-top: var(--space-4); padding: .9rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+    summary { cursor: pointer; color: var(--text); font-weight: 750; }
+    .related-links, .feedback-widget, .prev-next { margin-top: var(--space-5); padding: var(--space-4); }
+    .related-links ul { display: grid; gap: var(--space-2); margin: var(--space-3) 0 0; padding-left: 1.1rem; color: var(--text-muted); }
+    .prev-next { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+    .prev-next a { padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); text-decoration: none; }
+    [data-review-id] { position: relative; }
+    [data-review-id]:target { outline: 3px solid var(--accent); outline-offset: 5px; }
+    .back-to-top { position: fixed; right: var(--space-5); bottom: var(--space-5); display: grid; place-items: center; width: 2.4rem; height: 2.4rem; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); text-decoration: none; }
+    footer { max-width: 1280px; margin: 0 auto; padding: 0 clamp(var(--space-4), 3vw, var(--space-8)) var(--space-8); color: var(--text-muted); font-size: .9rem; }
+    .reveal { opacity: 1; transform: none; }
+    .js .reveal { opacity: 0; transform: translateY(12px); transition: opacity .28s ease, transform .32s cubic-bezier(.2,.8,.2,1); }
+    .js .reveal.is-visible { opacity: 1; transform: translateY(0); }
+    @media (max-width: 960px) { .doc-shell { grid-template-columns: 1fr; } .side-nav { position: static; max-height: none; padding-right: 0; } .prev-next { grid-template-columns: 1fr; } }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; } .js .reveal { opacity: 1; transform: none; } }
+    @media print { body { background: #fff; color: #000; } .back-to-top, .feedback-widget, .side-nav { display: none; } .doc-shell { display: block; max-width: none; padding: 0; } .article-header, .section-card, .story-card, .ui-option-card, .review-gap-card, .acceptance-card, .domain-card, .callout { break-inside: avoid; } a { color: #000; text-decoration: none; } .reveal { opacity: 1 !important; transform: none !important; } }
+  </style>
+</head>
+<body data-visual-mode="vercel-docs-packet">
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <div class="doc-shell">
+    <aside class="side-nav" aria-label="Document navigation" data-review-id="chrome.side-nav">
+      <details class="index-details" open>
+        <summary><span class="nav-title">Product requirements</span></summary>
+        <nav aria-label="Table of contents" data-review-id="chrome.index">
+          <ol>
+            <li><a href="#summary">Overview</a></li>
+            <li><a href="#what">What</a></li>
+            <li><a href="#why">Why</a></li>
+            <li><a href="#how">How</a></li>
+            <li><a href="#user-flows">User flows</a></li>
+            <li><a href="#domain-interactions">Domain interactions</a></li>
+            <li><a href="#ui-options">UI options</a></li>
+            <li><a href="#review-gaps">Review gaps</a></li>
+            <li><a href="#acceptance">Acceptance</a></li>
+            <li><a href="#open-questions">Open questions</a></li>
+            <li><a href="#ready-for-design">Ready for design</a></li>
+          </ol>
+        </nav>
+        <div class="nav-group">
+          <h2>Related</h2>
+          <ul>
+            <li><a href="../context-engineering/design.html">Context engineering design</a></li>
+            <li><a href="../../playbooks/self-improvement.md">Self-improvement playbook</a></li>
+            <li><a href="../../../extensions/semantic-search/README.md">Semantic search README</a></li>
+          </ul>
+        </div>
+      </details>
+    </aside>
+
+    <main id="main" class="doc-main">
+      <nav class="breadcrumbs" aria-label="Breadcrumbs" data-review-id="summary.breadcrumbs">
+        <ol>
+          <li><a href="../../README.md">Docs</a></li>
+          <li><a href="../README.md">Features</a></li>
+          <li aria-current="page">Pi Agent Memory PRD</li>
+        </ol>
+      </nav>
+
+      <article>
+        <header class="article-header" id="summary" data-review-id="summary">
+          <div class="article-meta">
+            <span class="pill review">Draft</span>
+            <span class="pill">Product requirements</span>
+            <span class="pill">Updated 2026-07-07</span>
+            <span class="pill recommended">Default: automatic + visible</span>
+          </div>
+          <h1>Pi Agent Memory PRD</h1>
+          <p class="subtitle">We want Pi to remember durable project and cross-project lessons by default, so agents can reuse verified context while the user can see whether memory is running, ready, paused, or failed.</p>
+          <ul class="takeaway-list" data-review-id="summary.takeaways">
+            <li data-review-id="summary.takeaway-1">Default experience is automatic and visible: memory runs by default, the composer/status component reports running/ready/failed states, and <code>/agent-memory</code> commands support pause/resume, disable/enable, review, reset, and manual creation.</li>
+            <li data-review-id="summary.takeaway-2">Memory has two scopes: project memory in <code>.pi/agent-memory</code> outranks global memory under <code>$HOME/.pi/agent-memory</code>; project-to-global promotion requires explicit approval.</li>
+            <li data-review-id="summary.takeaway-3">The product stores atomic lessons with source references, not raw transcripts; local embeddings are required, and broken setup fails visibly instead of being silently skipped.</li>
+          </ul>
+        </header>
+
+        <section class="section-card reveal" id="what" aria-labelledby="what-title" data-review-id="what">
+          <span class="section-kicker">What we want to build</span>
+          <h2 id="what-title">What</h2>
+          <p class="section-summary">Pi Agent Memory is a local, inspectable memory layer for Pi sessions that recalls relevant project/global lessons automatically, can be seeded from day one, and learns cautiously from verified outcomes.</p>
+          <div class="card-grid">
+            <article class="callout scope-in" data-review-id="what.capability-001"><strong>Automatic composer/status recall</strong><p>By default, Pi retrieves a small bounded memory pack before a turn, uses it for the agent, and shows a compact composer/status indicator. Detailed recalled items are saved for review instead of being posted as a normal conversation message.</p></article>
+            <article class="callout scope-in" data-review-id="what.capability.layered-memory"><strong>Atomic memory</strong><p>Memory should progress from source references to atomic lessons, recurring scenarios, and profile-level preferences without losing traceability or storing raw transcripts.</p></article>
+            <article class="callout scope-in" data-review-id="what.capability.feedback"><strong>Outcome feedback</strong><p>Verification pass/fail and warning signals should strengthen or weaken recalled memories, so useful context gets more likely and misleading context fades.</p></article>
+            <article class="callout scope-in" data-review-id="what.capability.review"><strong>Human review controls</strong><p>The user can inspect, pause, disable, archive, edit, delete, reset, and promote memories. Project memories never become global automatically.</p></article>
+          </div>
+          <div class="card-grid" aria-label="Scope and non-goals">
+            <div class="callout scope-in" data-review-id="what.scope.in"><strong>In scope</strong><ul class="checklist"><li>Default-on assisted automatic memory with visible pause/resume, disable/enable, and status controls.</li><li>Project and global memory scopes with clear labels and visible data locations.</li><li>User-created seed memories from the beginning via <code>/agent-memory add</code>.</li><li>Local-only recall using current semantic-search-style embeddings and lexical ranking.</li><li>Visible memory status, review, archive, reset, and promotion affordances.</li></ul></div>
+            <div class="callout scope-out" data-review-id="what.scope.out"><strong>Out of scope / non-goals</strong><ul class="checklist"><li>No custom path-scoped memory in the first release.</li><li>No external memory server, cloud vector database, or hidden third-party API dependency.</li><li>No silent global learning or autonomous self-modification.</li><li>No full raw transcript hoarding by default.</li><li>No short-term tool-log offload/Mermaid canvas in the first release.</li></ul></div>
+          </div>
+          <span class="review-label">review: what</span>
+        </section>
+
+        <section class="section-card reveal" id="why" aria-labelledby="why-title" data-review-id="why">
+          <span class="section-kicker">Need and opportunity</span>
+          <h2 id="why-title">Why</h2>
+          <p class="section-summary">The user has many Pi commands, extensions, and project conventions. Manual memory commands would add friction, while no memory forces repeated explanations and missed lessons.</p>
+          <ul class="checklist">
+            <li data-review-id="why.need"><strong>Need:</strong> Pi should remember verified workflows, decisions, gotchas, and preferences across sessions without daily user effort.</li>
+            <li data-review-id="why.current-pain"><strong>Current pain:</strong> Useful knowledge lives across chat history, feature docs, semantic-search indexes, archive records, and the user's head; agents must rediscover or ask again.</li>
+            <li data-review-id="why.opportunity"><strong>Opportunity:</strong> Use existing local semantic-search infrastructure plus Pi lifecycle events to make memory automatic, local, auditable, and feedback-weighted.</li>
+          </ul>
+          <div class="callout success" data-review-id="why.success-signals"><strong>Success signals</strong><p>Agents should naturally recall repo-specific test commands, known gotchas, and user preferences; the user should see less repeated explanation and still be able to inspect or correct memory.</p></div>
+          <span class="review-label">review: why</span>
+        </section>
+
+        <section class="section-card reveal" id="how" aria-labelledby="how-title" data-review-id="how">
+          <span class="section-kicker">Requirements and workflows</span>
+          <h2 id="how-title">How</h2>
+          <p class="section-summary">The product starts with default-on assisted automatic recall, explicit manual seeding for trust-building, and cautious learning from verified outcomes. Stories are intentionally framed around visible user/system behavior, not storage implementation.</p>
+          <div class="story-list">
+            <article class="story-card" data-review-id="how.story-001">
+              <h3><span class="id-chip">STORY-001</span>Run by default with visible controls</h3>
+              <p>As the Pi user, I want memory to be running by default while clearly showing its state, so that I can benefit immediately and trust what happened.</p>
+              <ul class="checklist"><li data-review-id="how.req-001">REQ-001: The system must start with project and global memory enabled by default. The first visible notice must explain active scopes, data locations, the local embedding requirement, and controls such as <code>/agent-memory pause</code>, <code>/agent-memory resume</code>, <code>/agent-memory disable</code>, <code>/agent-memory enable</code>, <code>/agent-memory status</code>, <code>/agent-memory review</code>, and <code>/agent-memory reset</code>.</li><li data-review-id="how.req-002">REQ-002: The system must show a concise composer/status indicator indicating whether memory is running, recalling, ready, failed, paused, or disabled.</li></ul>
+            </article>
+            <article class="story-card" data-review-id="how.story-002">
+              <h3><span class="id-chip">STORY-002</span>Recall relevant context automatically</h3>
+              <p>As an agent working in Pi, I want relevant project and global memory before I act, so that I can follow proven local conventions and cross-project lessons.</p>
+              <ul class="checklist"><li data-review-id="how.req-003">REQ-003: The system must recall from project memory before global memory and label each recalled item by scope. Custom path-scoped memory is not part of the MVP.</li><li data-review-id="how.req-004">REQ-004: The system must use a bounded memory budget. No relevant memories should produce a visible empty/none state; unavailable local embeddings or recall setup failures must produce a visible memory failure rather than a silent skip.</li></ul>
+            </article>
+            <article class="story-card" data-review-id="how.story-003">
+              <h3><span class="id-chip">STORY-003</span>Learn from verified outcomes</h3>
+              <p>As the Pi user, I want memory usefulness to be reinforced by real task outcomes, so that repeated successes become more available and bad memories lose influence.</p>
+              <ul class="checklist"><li data-review-id="how.req-005">REQ-005: Passing verification may boost recalled memories; failing verification may weaken them and propose a candidate gotcha.</li><li data-review-id="how.req-006">REQ-006: Project-safe atomic lessons may be created from verified outcomes from the beginning; global memories, preferences, sensitive/client-specific details, raw excerpts, and failure-only lessons must require review before affecting future work.</li></ul>
+            </article>
+            <article class="story-card" data-review-id="how.story-004">
+              <h3><span class="id-chip">STORY-004</span>Inspect and correct memory</h3>
+              <p>As the Pi user, I want lightweight review controls when memory is wrong or noisy, so that I can archive, edit, delete, reset, or promote memories without digging through hidden state.</p>
+              <ul class="checklist"><li data-review-id="how.req-007">REQ-007: The system must provide a visible review surface for recent recalls, candidates, global promotion requests, metadata, and correction actions.</li><li data-review-id="how.req-008">REQ-008: Archived, deleted, rejected, or reset memories must not be recalled or scored again unless the user restores or recreates them.</li></ul>
+            </article>
+            <article class="story-card" data-review-id="how.story-005">
+              <h3><span class="id-chip">STORY-005</span>Create memories from the beginning</h3>
+              <p>As the Pi user, I want to seed memory explicitly while I test the feature, so that I can build trust by seeing a memory I created get recalled later.</p>
+              <ul class="checklist"><li data-review-id="how.req-009">REQ-009: The user must be able to create an atomic project or global memory manually with a command such as <code>/agent-memory add project "..."</code> or <code>/agent-memory add global "..."</code>.</li><li data-review-id="how.req-010">REQ-010: Memory must store atomic lessons and source references, not full prompt/session transcripts or raw tool output.</li><li data-review-id="how.req-011">REQ-011: Memory creation must redact secret-like values such as API keys, tokens, passwords, and Authorization headers; sensitive/client-specific content becomes review-only unless the user explicitly approves the final text and scope.</li></ul>
+            </article>
+          </div>
+          <div class="story-list" aria-label="Product workflows">
+            <article class="example-card" data-review-id="how.workflow-001"><h3><span class="id-chip">WF-001</span>Main workflow</h3><p><strong>Given</strong> memory is running by default and a project has stored lessons. <strong>When</strong> the user sends a normal task prompt. <strong>Then</strong> Pi shows a compact composer/status recall state, injects the bounded scoped memory pack for the agent, and verification later updates usefulness.</p></article>
+            <article class="example-card" data-review-id="how.workflow-002"><h3><span class="id-chip">WF-002</span>Bootstrap workflow</h3><p><strong>Given</strong> a new project or install has no useful memories yet. <strong>When</strong> the user runs <code>/agent-memory add project "..."</code> or approves a project-safe candidate. <strong>Then</strong> Pi stores an atomic memory, confirms the scope, and can recall it on a later matching turn.</p></article>
+            <article class="example-card" data-review-id="how.workflow-003"><h3><span class="id-chip">WF-003</span>Setup failure workflow</h3><p><strong>Given</strong> local embeddings are unavailable or recall setup is broken. <strong>When</strong> a turn starts. <strong>Then</strong> Pi shows a visible memory failed state with a reviewable reason and recovery path instead of silently skipping memory.</p></article>
+          </div>
+          <span class="review-label">review: how</span>
+        </section>
+
+        <section class="section-card reveal" id="user-flows" aria-labelledby="user-flows-title" data-review-id="user-flows">
+          <span class="section-kicker">After every story</span>
+          <h2 id="user-flows-title">Post-Story User Flows</h2>
+          <p class="section-summary">Each story keeps the normal Pi workflow intact: the user types a task, sees compact memory behavior in the composer/status area, can seed memory deliberately, and can inspect or correct memory later.</p>
+          <div class="story-list">
+            <article class="story-card" data-review-id="user-flows.story-001">
+              <h3><span class="id-chip">FLOW-001</span>Default-on memory, then work normally</h3>
+              <ol class="flow-timeline">
+                <li class="flow-step" data-step="1" data-review-id="user-flows.story-001.entry"><strong>Entry</strong><p>The user starts in Pi after installing or updating the memory extension.</p></li>
+                <li class="flow-step" data-step="2" data-review-id="user-flows.story-001.action"><strong>Action</strong><p>Pi starts memory automatically for project and global scopes and shows the composer/status component.</p></li>
+                <li class="flow-step" data-step="3" data-review-id="user-flows.story-001.response"><strong>Visible response</strong><p>Pi shows memory mode, active scopes, data locations, local-only policy, setup health, and how to pause/resume, disable/enable, review, or reset memory.</p></li>
+                <li class="flow-step" data-step="4" data-review-id="user-flows.story-001.next"><strong>Next decision</strong><p>The user returns to normal prompts, pauses with <code>/agent-memory pause</code>, or opens details/review if the status looks wrong.</p></li>
+                <li class="flow-step" data-step="5" data-review-id="user-flows.story-001.gap"><strong>Resolved decision</strong><p>Memory is enabled by default and uses two scopes: project and global.</p></li>
+              </ol>
+            </article>
+            <article class="story-card" data-review-id="user-flows.story-002">
+              <h3><span class="id-chip">FLOW-002</span>Automatic status recall</h3>
+              <ol class="flow-timeline">
+                <li class="flow-step" data-step="1" data-review-id="user-flows.story-002.entry"><strong>Entry</strong><p>The user asks Pi to change or investigate a feature.</p></li>
+                <li class="flow-step" data-step="2" data-review-id="user-flows.story-002.action"><strong>Action</strong><p>Pi searches project and global memory using the prompt and current working directory.</p></li>
+                <li class="flow-step" data-step="3" data-review-id="user-flows.story-002.response"><strong>Visible response</strong><p>A composer/status indicator shows “memory running”, “recalling”, “memory ready”, “no memory matched”, or “memory failed”. Detailed scoped bullets are saved in the memory/review log instead of appearing as a normal conversation message.</p></li>
+                <li class="flow-step" data-step="4" data-review-id="user-flows.story-002.next"><strong>Next decision</strong><p>The user can ignore a ready/empty state, open details, pause memory, or fix setup when the component reports failure.</p></li>
+                <li class="flow-step" data-step="5" data-review-id="user-flows.story-002.gap"><strong>Remaining choice</strong><p>Choose the default memory budget and exact composer/status copy.</p></li>
+              </ol>
+            </article>
+            <article class="story-card" data-review-id="user-flows.story-003">
+              <h3><span class="id-chip">FLOW-003</span>Verified learning</h3>
+              <ol class="flow-timeline">
+                <li class="flow-step" data-step="1" data-review-id="user-flows.story-003.entry"><strong>Entry</strong><p>A task finishes and verification emits pass/fail evidence.</p></li>
+                <li class="flow-step" data-step="2" data-review-id="user-flows.story-003.action"><strong>Action</strong><p>Pi updates the usefulness of recalled memories and may create or draft a project-safe atomic lesson from verified failure/success patterns.</p></li>
+                <li class="flow-step" data-step="3" data-review-id="user-flows.story-003.response"><strong>Visible response</strong><p>Scoring updates stay quiet; newly saved project lessons and review-only candidates appear in the memory/review log instead of silently becoming global.</p></li>
+                <li class="flow-step" data-step="4" data-review-id="user-flows.story-003.next"><strong>Next decision</strong><p>The user can approve, edit, reject, delete, ignore, or promote a candidate later.</p></li>
+                <li class="flow-step" data-step="5" data-review-id="user-flows.story-003.gap"><strong>Resolved decision</strong><p>Project-safe atomic lessons may be created from the beginning; global, sensitive, preference, raw-excerpt, and failure-only lessons wait for review.</p></li>
+              </ol>
+            </article>
+            <article class="story-card" data-review-id="user-flows.story-004">
+              <h3><span class="id-chip">FLOW-004</span>Memory review</h3>
+              <ol class="flow-timeline">
+                <li class="flow-step" data-step="1" data-review-id="user-flows.story-004.entry"><strong>Entry</strong><p>The user notices a bad recall, sees memory noise, or wants to promote a useful project lesson.</p></li>
+                <li class="flow-step" data-step="2" data-review-id="user-flows.story-004.action"><strong>Action</strong><p>The user opens memory review with <code>/agent-memory review</code> or the composer/status details affordance.</p></li>
+                <li class="flow-step" data-step="3" data-review-id="user-flows.story-004.response"><strong>Visible response</strong><p>Pi lists recent recalls, candidates, scopes, source evidence references, timestamps, confidence/usefulness evidence, and actions.</p></li>
+                <li class="flow-step" data-step="4" data-review-id="user-flows.story-004.next"><strong>Next decision</strong><p>The user archives, edits, deletes, resets, promotes, rejects, or leaves memory unchanged.</p></li>
+                <li class="flow-step" data-step="5" data-review-id="user-flows.story-004.gap"><strong>Resolved decision</strong><p>MVP review uses <code>/agent-memory review</code> plus composer/status details; a fuller TUI overlay can come later.</p></li>
+              </ol>
+            </article>
+            <article class="story-card" data-review-id="user-flows.story-005">
+              <h3><span class="id-chip">FLOW-005</span>Manual seed memory</h3>
+              <ol class="flow-timeline">
+                <li class="flow-step" data-step="1" data-review-id="user-flows.story-005.entry"><strong>Entry</strong><p>The user wants to test memory with a known lesson before enough verification history exists.</p></li>
+                <li class="flow-step" data-step="2" data-review-id="user-flows.story-005.action"><strong>Action</strong><p>The user runs <code>/agent-memory add project "Use scripts/run_silent.sh for verification output"</code> or chooses <code>global</code> for a cross-project lesson.</p></li>
+                <li class="flow-step" data-step="3" data-review-id="user-flows.story-005.response"><strong>Visible response</strong><p>Pi confirms the atomic lesson, scope, source reference, redaction status, and whether it is active or waiting for review.</p></li>
+                <li class="flow-step" data-step="4" data-review-id="user-flows.story-005.next"><strong>Next decision</strong><p>The user can run a matching prompt to see it recalled, edit it, or delete/reset it if the recall is noisy.</p></li>
+              </ol>
+            </article>
+          </div>
+          <span class="review-label">review: user-flows</span>
+        </section>
+
+        <section class="section-card reveal" id="domain-interactions" aria-labelledby="domain-interactions-title" data-review-id="domain-interactions">
+          <span class="section-kicker">Domain behavior</span>
+          <h2 id="domain-interactions-title">How Memory Concepts Interact</h2>
+          <p class="section-summary">The product domain is memory formation and recall, not code search itself. Memory should be useful because it is scoped, ranked, traceable, and visibly healthy.</p>
+          <div class="story-list">
+            <article class="domain-card" data-review-id="domain-interactions.interaction-001">
+              <h3><span class="id-chip">DOMAIN-INT-001</span>Prompt recalls scoped memories</h3>
+              <div class="domain-arrow">User prompt + cwd → recalls → project/global memory pack</div>
+              <p><strong>Rule / authority:</strong> Project memory from <code>.pi/agent-memory</code> outranks global memory from <code>$HOME/.pi/agent-memory</code>. No custom path scope is included in the MVP.</p>
+              <p><strong>Vocabulary gap:</strong> Confirm whether the top layer is called “profile”, “persona”, or “agent profile” in Pi.</p>
+            </article>
+            <article class="domain-card" data-review-id="domain-interactions.verification-feedback">
+              <h3><span class="id-chip">DOMAIN-INT-002</span>Outcome updates usefulness</h3>
+              <div class="domain-arrow">Verification outcome → scores → recalled memory salience and confidence</div>
+              <p><strong>Rule / authority:</strong> Scoring can update automatically only for memories that were recalled in the same task context.</p>
+              <p><strong>Vocabulary gap:</strong> Choose whether user-facing copy says “boost/weaken”, “trusted/less trusted”, or “hit/miss”.</p>
+            </article>
+            <article class="domain-card" data-review-id="domain-interactions.promotion">
+              <h3><span class="id-chip">DOMAIN-INT-003</span>Project memory promotes to global only by approval</h3>
+              <div class="domain-arrow">Project lesson → candidate → user approval → generalized global memory</div>
+              <p><strong>Rule / authority:</strong> No project-specific fact, file path, client detail, or sensitive data becomes global without a visible approval step.</p>
+              <p><strong>Vocabulary gap:</strong> Decide whether “promote global” is a standalone action or part of candidate review.</p>
+            </article>
+            <article class="domain-card" data-review-id="domain-interactions.creation">
+              <h3><span class="id-chip">DOMAIN-INT-004</span>User creates atomic memory</h3>
+              <div class="domain-arrow">User-authored lesson → redacts + scopes → active project/global memory or review candidate</div>
+              <p><strong>Rule / authority:</strong> The user can seed memory manually from day one. Project memories can become active for the current project; global memories require either explicit global creation or approved promotion.</p>
+              <p><strong>Visible metadata:</strong> scope, type, atomic lesson, source reference, status, usefulness/confidence evidence, created/updated timestamps, and last recalled time.</p>
+            </article>
+          </div>
+          <span class="review-label">review: domain-interactions</span>
+        </section>
+
+        <section class="section-card reveal" id="ui-options" aria-labelledby="ui-options-title" data-review-id="ui-options">
+          <span class="section-kicker">Choose the product shape</span>
+          <h2 id="ui-options-title">UI Options To Review</h2>
+          <p class="section-summary">The feature is mostly invisible while working, but it needs trust points in Pi chrome. The selected direction is default-on assisted automatic memory: composer/status recall, explicit running/ready/failed states, manual seeding, quiet scoring, and explicit review for new global memory.</p>
+          <div class="ui-option-grid">
+            <article class="ui-option-card recommended" data-review-id="ui-options.option-a">
+              <h3><span class="id-chip">UI-A</span>Default-On Assisted Automatic Recall</h3>
+              <p><strong>Best for:</strong> The user's stated goal: get value immediately, test memory by creating lessons directly, and keep memory auditable.</p>
+              <p><strong>Tradeoff:</strong> Requires clear composer/status states so “no match” differs from “setup failed” and memory never feels spooky or silent.</p>
+              <p><strong>Decision:</strong> Selected.</p>
+              <div class="wireframe" role="img" aria-label="Default-on assisted automatic memory recall wireframe" data-review-id="ui-options.option-a.wireframe">
+                <div class="wireframe-chrome"><span class="wireframe-dot"></span><span class="wireframe-dot"></span><span class="wireframe-dot"></span><span class="wireframe-title">Pi turn with memory</span></div>
+                <div class="wireframe-body">
+                  <div class="terminal"><span class="muted">composer</span> Update semantic-search to reuse memory embeddings.
+
+[🧠 memory running · project + global]
+[🧠 recalling project + global memory…]
+[🧠 memory ready · project 3 · global 1 · details saved]
+<span class="muted">open details · /agent-memory pause · /agent-memory review</span>
+
+<span class="muted">failure example</span>
+[🧠 memory failed · local embeddings unavailable · open setup details]</div>
+                  <div class="wireframe-panel"><strong>Expected state</strong><p>Memory appears in the composer/status area, not as a normal conversation message. The agent receives the bounded memory pack only when recall succeeds; setup failures are visible and reviewable.</p></div>
+                </div>
+              </div>
+              <div class="option-use-flow" data-review-id="ui-options.option-a.steps">
+                <h4>How it is used and expected outcomes</h4>
+                <ol><li data-review-id="ui-options.option-a.step-1"><strong>User starts Pi.</strong><br />Outcome: Pi shows memory is running by default, selected scopes, data locations, and local-only behavior.</li><li data-review-id="ui-options.option-a.step-2"><strong>User sends any normal task prompt.</strong><br />Outcome: Pi shows composer/status recall progress, then “memory ready”, “no memory matched”, or “memory failed”; detailed bullets are saved for review.</li><li data-review-id="ui-options.option-a.step-3"><strong>User seeds a test memory.</strong><br />Outcome: <code>/agent-memory add project "..."</code> creates an atomic scoped lesson that can be recalled on a later matching prompt.</li><li data-review-id="ui-options.option-a.step-4"><strong>Agent finishes and verification runs.</strong><br />Outcome: Recalled memory scores update quietly; safe project lessons may be saved, while global/sensitive/failure-only candidates wait for review.</li><li data-review-id="ui-options.option-a.step-5"><strong>User opens review only when needed.</strong><br />Outcome: User can correct, delete, reset, or promote memory without managing it every turn.</li></ol>
+              </div>
+            </article>
+
+            <article class="ui-option-card" data-review-id="ui-options.option-b">
+              <h3><span class="id-chip">UI-B</span>Manual Command-First Memory</h3>
+              <p><strong>Best for:</strong> Explicit audits, manual seeding, and debugging.</p>
+              <p><strong>Tradeoff:</strong> If this were the default, memory would likely be underused because the user would need to remember extra commands before normal work.</p>
+              <p><strong>Decision:</strong> Rejected as the default; keep command subflows for add/review/status/pause/disable/debug.</p>
+              <div class="wireframe" role="img" aria-label="Manual memory command wireframe" data-review-id="ui-options.option-b.wireframe">
+                <div class="wireframe-chrome"><span class="wireframe-dot"></span><span class="wireframe-dot"></span><span class="wireframe-dot"></span><span class="wireframe-title">Manual memory</span></div>
+                <div class="wireframe-body">
+                  <div class="terminal"><span class="muted">user</span> /agent-memory recall semantic-search embeddings
+<span class="muted">user</span> /agent-memory add project "Use scripts/run_silent.sh for quiet verification."
+
+🧠 Memory search results
+1. [project/decision] semantic-search requires local Ollama summaries...
+2. [global/gotcha] Prefer exact replacements with small unique oldText...</div>
+                  <div class="wireframe-panel"><strong>Expected state</strong><p>Useful for explicit audits and seed memories, but too much friction as the primary daily path.</p></div>
+                </div>
+              </div>
+              <div class="option-use-flow" data-review-id="ui-options.option-b.steps">
+                <h4>How it is used and expected outcomes</h4>
+                <ol><li><strong>User calls memory manually.</strong><br />Outcome: Pi returns relevant memories on demand or creates a seed memory.</li><li><strong>User copies context into the task mentally or asks the agent to use it.</strong><br />Outcome: Control is high, but friction is high.</li><li><strong>User forgets manual recall.</strong><br />Outcome: Automatic default recall still protects daily use; command-first alone would not.</li></ol>
+              </div>
+            </article>
+
+            <article class="ui-option-card rejected" data-review-id="ui-options.option-c">
+              <h3><span class="id-chip">UI-C</span>Silent Background Memory</h3>
+              <p><strong>Best for:</strong> Lowest visual noise.</p>
+              <p><strong>Tradeoff:</strong> Hidden prompt shaping undermines trust and makes bad recalls hard to debug.</p>
+              <p><strong>Decision:</strong> Rejected.</p>
+              <div class="wireframe" role="img" aria-label="Silent background memory wireframe" data-review-id="ui-options.option-c.wireframe">
+                <div class="wireframe-chrome"><span class="wireframe-dot"></span><span class="wireframe-dot"></span><span class="wireframe-dot"></span><span class="wireframe-title">Silent mode</span></div>
+                <div class="wireframe-body">
+                  <div class="terminal"><span class="muted">user</span> Update semantic-search.
+<span class="muted">assistant</span> I will use prior memory... <span class="muted">(memory not shown)</span></div>
+                  <div class="wireframe-panel"><strong>Expected state</strong><p>The user cannot tell what influenced the agent, so correction and trust suffer.</p></div>
+                </div>
+              </div>
+              <div class="option-use-flow" data-review-id="ui-options.option-c.steps">
+                <h4>How it is used and expected outcomes</h4>
+                <ol><li><strong>Memory runs invisibly.</strong><br />Outcome: Fewer UI elements appear.</li><li><strong>Memory is wrong or stale.</strong><br />Outcome: The user cannot easily diagnose or correct the cause.</li><li><strong>User asks why the agent assumed something.</strong><br />Outcome: The product lacks a clear answer.</li></ol>
+              </div>
+            </article>
+          </div>
+          <span class="review-label">review: ui-options</span>
+        </section>
+
+        <section class="section-card reveal" id="review-gaps" aria-labelledby="review-gaps-title" data-review-id="review-gaps">
+          <span class="section-kicker">Reviewer choices</span>
+          <h2 id="review-gaps-title">Review Gaps</h2>
+          <p class="section-summary">The blocking product choices from review have been resolved. Remaining gaps are naming/copy polish that should not block architecture design.</p>
+          <div class="gap-list">
+            <article class="review-gap-card" data-review-id="review-gaps.gap-001"><h3><span class="id-chip">DEC-001</span>Default-on scopes and storage visibility</h3><p><strong>Decision:</strong> Memory runs by default with two scopes: project memory in <code>.pi/agent-memory</code> for the current workspace and global memory under <code>$HOME/.pi/agent-memory</code> for this Pi install. Project memory outranks global memory.</p><p><strong>Impact:</strong> Startup/status copy must show active scopes, data locations, and pause/resume, disable/enable, review, and reset controls.</p><p><strong>Owner/status:</strong> User reviewed; resolved for design.</p></article>
+            <article class="review-gap-card" data-review-id="review-gaps.gap-002"><h3><span class="id-chip">DEC-002</span>Memory creation from the beginning</h3><p><strong>Decision:</strong> The user can create seed memories immediately with <code>/agent-memory add project "..."</code> or <code>/agent-memory add global "..."</code>. Project-safe atomic lessons may also be saved from verified outcomes; global promotion, personal/user preferences, sensitive or client-specific details, raw transcript excerpts, large code snippets, and failure-only lessons require review before recall.</p><p><strong>Impact:</strong> Design must include manual add, redaction, review-only candidate states, and visible confirmation of active scope.</p><p><strong>Owner/status:</strong> User reviewed; resolved for design.</p></article>
+            <article class="review-gap-card" data-review-id="review-gaps.gap-003"><h3><span class="id-chip">DEC-003</span>Visibility and failure posture</h3><p><strong>Decision:</strong> Recall should not appear as a normal conversation message. Show a composer/status component with running, recalling, ready, no-match, failed, paused, and disabled states. Missing local embeddings or broken setup must fail visibly instead of silently skipping memory.</p><p><strong>Impact:</strong> Keeps the conversation clean while preserving auditability and setup trust.</p><p><strong>Owner/status:</strong> User reviewed; resolved for design.</p></article>
+            <article class="review-gap-card" data-review-id="review-gaps.gap-004"><h3><span class="id-chip">DEC-004</span>MVP review surface</h3><p><strong>Decision:</strong> Use <code>/agent-memory review</code> plus the composer/status “open details” affordance for recent recalls, candidates, and correction actions. Defer a full TUI overlay until after MVP.</p><p><strong>Impact:</strong> Design should prioritize the command/detail surface and not make a complex overlay a release blocker.</p><p><strong>Owner/status:</strong> User reviewed; resolved for design.</p></article>
+            <article class="review-gap-card" data-review-id="review-gaps.gap-005"><h3><span class="id-chip">GAP-005</span>L2/L3 terminology</h3><p><strong>Question:</strong> Should the top memory layer be called persona, profile, agent profile, or something else in Pi?</p><p><strong>Impact:</strong> Changes labels and mental model but not core behavior.</p><p><strong>Owner/status:</strong> No change requested; keep for design naming polish only.</p></article>
+          </div>
+          <span class="review-label">review: review-gaps</span>
+        </section>
+
+        <section class="section-card reveal" id="acceptance" aria-labelledby="acceptance-title" data-review-id="acceptance">
+          <span class="section-kicker">Done means observable</span>
+          <h2 id="acceptance-title">Acceptance Criteria</h2>
+          <p class="section-summary">Acceptance is based on what the user and agent can observe in normal Pi use.</p>
+          <div class="acceptance-list">
+            <article class="acceptance-card" data-review-id="acceptance.ac-001"><h3><span class="id-chip">AC-001</span>Default-on visible state</h3><p>Given Pi starts after install or update, when the memory extension loads, Pi shows memory running by default, active project/global scopes, data locations, local-only behavior, and how to pause/resume, disable/enable, review, or reset it.</p></article>
+            <article class="acceptance-card" data-review-id="acceptance.ac-002"><h3><span class="id-chip">AC-002</span>Composer/status automatic recall</h3><p>Given relevant memory exists, when a normal task prompt starts, Pi shows a composer/status recall state and saves detailed scoped memories for review rather than posting them as a normal conversation message.</p></article>
+            <article class="acceptance-card" data-review-id="acceptance.ac-003"><h3><span class="id-chip">AC-003</span>Scope precedence</h3><p>Given both project and global memories match, project memories rank first in the injected memory pack and review details; global memories are labeled separately.</p></article>
+            <article class="acceptance-card" data-review-id="acceptance.ac-004"><h3><span class="id-chip">AC-004</span>Outcome-weighted memory</h3><p>Given a memory was recalled during a task, when verification passes or fails, Pi updates the memory's usefulness evidence without creating hidden global memories.</p></article>
+            <article class="acceptance-card" data-review-id="acceptance.ac-005"><h3><span class="id-chip">AC-005</span>Human-gated global promotion</h3><p>Given a project lesson looks reusable, when Pi proposes promotion, the user can approve, edit, or reject before it affects other projects.</p></article>
+            <article class="acceptance-card" data-review-id="acceptance.ac-006"><h3><span class="id-chip">AC-006</span>Inspectability</h3><p>Given the user asks what memory influenced a turn, Pi can show recent recalled items, scope, source evidence reference, metadata, and available correction actions.</p></article>
+            <article class="acceptance-card" data-review-id="acceptance.ac-007"><h3><span class="id-chip">AC-007</span>Manual seed memory</h3><p>Given the user runs <code>/agent-memory add project "..."</code> or <code>/agent-memory add global "..."</code>, Pi confirms the atomic lesson, scope, source/redaction status, and whether the memory is active or waiting for review.</p></article>
+            <article class="acceptance-card" data-review-id="acceptance.ac-008"><h3><span class="id-chip">AC-008</span>Setup failure is visible</h3><p>Given memory is running but local embeddings are unavailable or recall setup is broken, when a turn starts, Pi shows a memory failed state with a reviewable reason and recovery path instead of silently skipping memory.</p></article>
+            <article class="acceptance-card" data-review-id="acceptance.ac-009"><h3><span class="id-chip">AC-009</span>Pause and disable controls</h3><p>Given the user runs <code>/agent-memory pause</code> or <code>/agent-memory disable</code>, when the next turn starts, no memory pack is injected and Pi shows paused/off with a resume or enable path.</p></article>
+            <article class="acceptance-card" data-review-id="acceptance.ac-010"><h3><span class="id-chip">AC-010</span>Review correction and reset</h3><p>Given the review surface, the user can archive, edit, delete, reset, promote, or reject a memory; subsequent recall honors that decision.</p></article>
+          </div>
+          <span class="review-label">review: acceptance</span>
+        </section>
+
+        <section class="section-card reveal" id="open-questions" aria-labelledby="open-questions-title" data-review-id="open-questions">
+          <span class="section-kicker">Unresolved blockers</span>
+          <h2 id="open-questions-title">Open Questions</h2>
+          <p class="section-summary">No product blocker prevents design. The open questions are copy, budget, and later-phase choices.</p>
+          <ul class="checklist question-list">
+            <li data-review-id="open-questions.q-001"><strong>Q-001:</strong> What should be the exact startup/status copy for running, ready, no-match, failed, paused, and disabled memory states? Owner: design/product. Status: non-blocking.</li>
+            <li data-review-id="open-questions.q-002"><strong>Q-002:</strong> What maximum injected recall budget helps the agent without creating hidden context bloat? Owner: design/product. Status: non-blocking.</li>
+            <li data-review-id="open-questions.q-003"><strong>Q-003:</strong> Should short-term symbolic tool-log offload be a future feature packet or a later phase of this one? Owner: user/product. Status: deferred.</li>
+          </ul>
+          <span class="review-label">review: open-questions</span>
+        </section>
+
+        <section class="section-card reveal" id="ready-for-design" aria-labelledby="ready-for-design-title" data-review-id="ready-for-design">
+          <span class="section-kicker">Readiness</span>
+          <h2 id="ready-for-design-title">Ready For Design</h2>
+          <p class="section-summary">This PRD is ready for architecture design with default-on assisted automatic memory as the selected product shape.</p>
+          <div class="card-grid">
+            <article class="callout success" data-review-id="ready-for-design.checklist"><strong>Ready checklist</strong><ul class="checklist"><li>Primary user and job are clear.</li><li>Main, bootstrap, and setup-failure workflows are defined.</li><li>Selected UI direction is identified.</li><li>Two-scope project/global model, visible data locations, and precedence are explicit.</li><li>Atomic lesson, redaction, reset/delete, and global promotion boundaries are explicit.</li><li>Sources reviewed are named.</li></ul></article>
+            <article class="callout warning" data-review-id="ready-for-design.next"><strong>Next step</strong><p>Create <code>docs/features/agent-memory/design.html</code> to define the memory layers, semantic-search core reuse, Pi hooks, storage ownership, feedback loop, and implementation slices.</p></article>
+          </div>
+          <details data-review-id="ready-for-design.sources">
+            <summary>Sources reviewed</summary>
+            <ul class="checklist">
+              <li>User conversation in this session: desired default-on automatic memory, manual seed creation, project/global-only scopes, visible failure posture for broken embeddings, composer/status component, semantic-search reuse, Engram and TencentDB comparisons.</li>
+              <li>Engram repository README: atomic bullets, materialization receipts, feedback-weighted memory, core memory, worked examples.</li>
+              <li>TencentDB Agent Memory README and config: L0→L3 layering, automatic recall, recall timeout, budgeted injection, hybrid retrieval, traceability.</li>
+              <li><code>extensions/semantic-search/README.md</code>, <code>extensions/semantic-search/index.ts</code>, and tests: local Ollama summaries/embeddings, semantic cards, compact vector encoding, background rebuild, hybrid scoring.</li>
+              <li><code>extensions/self-improvement-archive/index.ts</code>, <code>extensions/verify/index.ts</code>, <code>docs/playbooks/self-improvement.md</code>, and <code>docs/playbooks/compound-engineering.md</code>: existing verification/archive/warning evidence loop.</li>
+              <li>Pi extension docs: lifecycle hooks, tool/command registration, context injection, extension state, UI/status affordances.</li>
+            </ul>
+          </details>
+          <span class="review-label">review: ready-for-design</span>
+        </section>
+
+        <nav class="prev-next" aria-label="Previous and next documents" data-review-id="chrome.prev-next">
+          <a href="../context-engineering/design.html">← Context engineering design</a>
+          <a href="design.html">Next: agent-memory design →</a>
+        </nav>
+
+        <section class="related-links" aria-labelledby="related-title" data-review-id="chrome.related-links">
+          <h2 id="related-title">Related Artifacts</h2>
+          <ul>
+            <li><a href="../../../extensions/semantic-search/README.md">Semantic-search extension README</a></li>
+            <li><a href="../../playbooks/self-improvement.md">Self-improvement loop playbook</a></li>
+            <li><a href="../../playbooks/compound-engineering.md">Compound engineering playbook</a></li>
+          </ul>
+        </section>
+
+        <section class="feedback-widget" aria-labelledby="feedback-title" data-review-id="chrome.feedback">
+          <h2 id="feedback-title">Feedback</h2>
+          <p>Review next: exact composer/status copy and recall budget. Default-on memory, project/global scopes, manual seed creation, visible setup failures, and MVP review controls have been incorporated from review comments.</p>
+        </section>
+      </article>
+    </main>
+  </div>
+
+  <a class="back-to-top" href="#main" aria-label="Back to top">↑</a>
+  <footer data-review-id="chrome.footer">Generated for Pi Agent Memory planning. Status: Draft PRD. Validation state recorded in assistant response.</footer>
+
+  <script>
+    document.documentElement.classList.add('js');
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const items = document.querySelectorAll('.reveal');
+    if (reduce || !('IntersectionObserver' in window)) {
+      items.forEach((el) => el.classList.add('is-visible'));
+    } else {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+      items.forEach((el) => observer.observe(el));
+    }
+  </script>
+</body>
+</html>

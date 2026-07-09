@@ -443,16 +443,16 @@ test("Ollama embedding client falls back to the legacy embeddings endpoint", asy
 	}
 });
 
-test("Ollama config defaults to local embedding and strong summary models", () => {
+test("Ollama config defaults come from semantic-search config file and env can override them", () => {
 	assert.deepEqual(resolveOllamaEmbeddingConfig({}, {}), {
-		model: "nomic-embed-text",
+		model: "mxbai-embed-large",
 		baseUrl: "http://127.0.0.1:11434",
 		batchSize: 16,
 		timeoutMs: 30_000,
 		maxInputChars: 6_000,
 	});
 	assert.deepEqual(resolveOllamaSummaryConfig({}, {}), {
-		model: "qwen2.5-coder:7b",
+		model: "qwen2.5-coder:14b",
 		baseUrl: "http://127.0.0.1:11434",
 		timeoutMs: 180_000,
 		maxInputChars: 10_000,
@@ -462,8 +462,10 @@ test("Ollama config defaults to local embedding and strong summary models", () =
 	assert.equal(resolveOllamaEmbeddingConfig({}, { OLLAMA_HOST: "localhost:11434", OLLAMA_EMBED_MODEL: "mxbai-embed-large" }).baseUrl, "http://localhost:11434");
 	assert.equal(resolveOllamaEmbeddingConfig({}, { OLLAMA_HOST: "localhost:11434", OLLAMA_EMBED_MODEL: "mxbai-embed-large" }).model, "mxbai-embed-large");
 	assert.equal(resolveOllamaEmbeddingConfig({}, { PI_SEMANTIC_SEARCH_EMBED_MAX_CHARS: "256" }).maxInputChars, 256);
-	assert.equal(resolveOllamaSummaryConfig({}, { PI_SEMANTIC_SEARCH_SUMMARY_MODEL: "qwen2.5-coder:32b", PI_SEMANTIC_SEARCH_SUMMARIES: "false" }).model, "qwen2.5-coder:32b");
+	assert.equal(resolveOllamaSummaryConfig({}, { PI_SEMANTIC_SEARCH_SUMMARY_MODEL: "qwen2.5-coder:14b", PI_SEMANTIC_SEARCH_SUMMARIES: "false" }).model, "qwen2.5-coder:14b");
 	assert.equal(resolveOllamaSummaryConfig({}, { PI_SEMANTIC_SEARCH_SUMMARIES: "false" }).enabled, false);
+	assert.equal(resolveOllamaEmbeddingConfig({}, {}, { ollama: { embeddingModel: "custom-embed" } }).model, "custom-embed");
+	assert.equal(resolveOllamaSummaryConfig({}, {}, { ollama: { summaryModel: "custom-summary", summaryConcurrency: 3 } }).concurrency, 3);
 });
 
 test("repo map clusters indexed files by reusable code concepts", () => {
@@ -589,15 +591,15 @@ test("index command treats build as rebuild instead of an embedding model", asyn
 
 		assert.ok(seenModels.length > 0, "expected the command to request Ollama");
 		assert.ok(!seenModels.includes("build"), "build should be parsed as a command alias, not a model");
-		assert.ok(seenModels.includes("nomic-embed-text"));
-		assert.ok(seenModels.includes("qwen2.5-coder:7b"));
+		assert.ok(seenModels.includes("mxbai-embed-large"));
+		assert.ok(seenModels.includes("qwen2.5-coder:14b"));
 
 		seenModels.length = 0;
 		await commands.get("index").handler("build --foreground --summary-model qwen2.5-coder:32b", {
 			cwd: dir,
 			ui: { notify() {}, setStatus() {} },
 		} as any);
-		assert.ok(seenModels.includes("nomic-embed-text"));
+		assert.ok(seenModels.includes("mxbai-embed-large"));
 		assert.ok(seenModels.includes("qwen2.5-coder:32b"));
 	} finally {
 		globalThis.fetch = originalFetch;
@@ -925,6 +927,7 @@ test("ollama tunnel args build a localhost SSH tunnel command", () => {
 	assert.equal(parsed.sshTarget, "user@ryzen-box");
 	assert.equal(parsed.localHost, "127.0.0.1");
 	assert.equal(parsed.localPort, 11435);
+	assert.equal(parsed.localPortExplicit, true);
 	assert.equal(parsed.remoteHost, "127.0.0.1");
 	assert.equal(parsed.remotePort, 11434);
 	assert.equal(
@@ -935,7 +938,13 @@ test("ollama tunnel args build a localhost SSH tunnel command", () => {
 	const fromEnv = parseOllamaTunnelCommandArgs("--print", { PI_OLLAMA_SSH_HOST: "workstation" });
 	assert.equal(fromEnv.sshTarget, "workstation");
 	assert.equal(fromEnv.printOnly, true);
-	assert.match(parseOllamaTunnelCommandArgs("", {}).error ?? "", /Missing SSH target/);
+	assert.equal(parseOllamaTunnelCommandArgs("", {}).sshTarget, "charleshippo@otto");
+	assert.equal(parseOllamaTunnelCommandArgs("", {}).localPortExplicit, false);
+	assert.equal(parseOllamaTunnelCommandArgs("", {}, { tunnel: { sshTarget: "agent@box", localPort: 11436 } }).sshTarget, "agent@box");
+	assert.equal(parseOllamaTunnelCommandArgs("", {}, { tunnel: { sshTarget: "agent@box", localPort: 11436 } }).localPort, 11436);
+	assert.equal(parseOllamaTunnelCommandArgs("local", {}).action, "local");
+	assert.equal(parseOllamaTunnelCommandArgs("stop", {}).action, "stop");
+	assert.equal(parseOllamaTunnelCommandArgs("user@host", { PI_OLLAMA_SSH_HOST: "workstation" }).sshTarget, "user@host");
 	assert.match(parseOllamaTunnelCommandArgs("user@host --local-port nope", {}).error ?? "", /Local port/);
 });
 
@@ -962,7 +971,7 @@ test("ollama-tunnel command starts SSH tunnel and points this Pi session at it",
 
 	const dir = makeProject({});
 	try {
-		await commands.get("ollama-tunnel").handler("user@ryzen-box --local-port 11435", {
+		await commands.get("ollama-tunnel").handler("--local-port 11435", {
 			cwd: dir,
 			ui: {
 				notify(message: string, level: string) {
@@ -972,11 +981,97 @@ test("ollama-tunnel command starts SSH tunnel and points this Pi session at it",
 		} as any);
 
 		assert.equal(starts.length, 1);
-		assert.equal(starts[0].sshTarget, "user@ryzen-box");
+		assert.equal(starts[0].sshTarget, "charleshippo@otto");
 		assert.equal(process.env.OLLAMA_BASE_URL, "http://127.0.0.1:11435");
 		assert.match(notifications[0]?.message ?? "", /Ollama SSH tunnel ready/);
 		assert.equal(notifications[0]?.level, "info");
 		assert.match(messages[0]?.content ?? "", /\/index rebuild/);
+	} finally {
+		if (previousBaseUrl === undefined) delete process.env.OLLAMA_BASE_URL;
+		else process.env.OLLAMA_BASE_URL = previousBaseUrl;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("ollama-tunnel command auto-falls back when default local port is busy", async () => {
+	const commands = new Map<string, any>();
+	const messages: any[] = [];
+	const previousBaseUrl = process.env.OLLAMA_BASE_URL;
+	const starts: any[] = [];
+	semanticSearchExtension({
+		registerTool() {},
+		registerCommand(name: string, definition: any) {
+			commands.set(name, definition);
+		},
+		sendMessage(message: any) {
+			messages.push(message);
+		},
+	} as any, {
+		startOllamaTunnel(config) {
+			starts.push(config);
+			if (config.localPort === 11434) return { ok: false, command: formatOllamaTunnelSshCommand(config), ollamaUrl: `http://${config.localHost}:${config.localPort}`, error: "bind [127.0.0.1]:11434: Address already in use" };
+			return { ok: true, command: formatOllamaTunnelSshCommand(config), ollamaUrl: `http://${config.localHost}:${config.localPort}` };
+		},
+	});
+
+	const dir = makeProject({});
+	try {
+		await commands.get("ollama-tunnel").handler("", {
+			cwd: dir,
+			ui: { notify() {} },
+		} as any);
+
+		assert.deepEqual(starts.map((start) => start.localPort), [11434, 11435]);
+		assert.equal(process.env.OLLAMA_BASE_URL, "http://127.0.0.1:11435");
+		assert.match(messages[0]?.content ?? "", /port 11434 was busy; used 11435/);
+		assert.deepEqual(messages[0]?.details.attemptedPorts, [11434, 11435]);
+	} finally {
+		if (previousBaseUrl === undefined) delete process.env.OLLAMA_BASE_URL;
+		else process.env.OLLAMA_BASE_URL = previousBaseUrl;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("ollama-tunnel local and stop reset Pi back to local Ollama", async () => {
+	const commands = new Map<string, any>();
+	const messages: any[] = [];
+	const notifications: any[] = [];
+	const previousBaseUrl = process.env.OLLAMA_BASE_URL;
+	const stops: any[] = [];
+	process.env.OLLAMA_BASE_URL = "http://127.0.0.1:11435";
+	semanticSearchExtension({
+		registerTool() {},
+		registerCommand(name: string, definition: any) {
+			commands.set(name, definition);
+		},
+		sendMessage(message: any) {
+			messages.push(message);
+		},
+	} as any, {
+		stopOllamaTunnel(config) {
+			stops.push(config);
+			return { killedPids: [12345], attemptedPorts: [11434, 11435] };
+		},
+	});
+
+	const dir = makeProject({});
+	try {
+		await commands.get("ollama-tunnel").handler("local", {
+			cwd: dir,
+			ui: { notify(message: string, level: string) { notifications.push({ message, level }); } },
+		} as any);
+		assert.equal(process.env.OLLAMA_BASE_URL, "http://127.0.0.1:11434");
+		assert.match(messages[messages.length - 1]?.content ?? "", /uses local Ollama/);
+
+		process.env.OLLAMA_BASE_URL = "http://127.0.0.1:11435";
+		await commands.get("ollama-tunnel").handler("stop", {
+			cwd: dir,
+			ui: { notify(message: string, level: string) { notifications.push({ message, level }); } },
+		} as any);
+		assert.equal(stops.length, 1);
+		assert.equal(process.env.OLLAMA_BASE_URL, "http://127.0.0.1:11434");
+		assert.match(messages[messages.length - 1]?.content ?? "", /Stopped Ollama SSH tunnel process: 12345/);
+		assert.deepEqual(messages[messages.length - 1]?.details.killedPids, [12345]);
 	} finally {
 		if (previousBaseUrl === undefined) delete process.env.OLLAMA_BASE_URL;
 		else process.env.OLLAMA_BASE_URL = previousBaseUrl;
@@ -1020,8 +1115,8 @@ test("extension registers semantic search tools and command entrypoints", async 
 			assert.match(result.content[0].text, /src\/search\/index\.ts/);
 			assert.equal(result.details.query, "vector search");
 			assert.equal(result.details.embeddingUsed, true);
-			assert.equal(result.details.index.embedding.model, "nomic-embed-text");
-			assert.equal(result.details.index.summary.model, "qwen2.5-coder:7b");
+			assert.equal(result.details.index.embedding.model, "mxbai-embed-large");
+			assert.equal(result.details.index.summary.model, "qwen2.5-coder:14b");
 			assert.equal(result.details.results.length, 1);
 		});
 	} finally {
@@ -1059,8 +1154,8 @@ test("semantic_search reports required Ollama setup instead of falling back to l
 		assert.equal(result.details.error, true);
 		assert.equal(result.details.requirement, "ollama");
 		assert.match(result.content[0].text, /requires local Ollama summaries and embeddings/i);
-		assert.match(result.content[0].text, /ollama pull nomic-embed-text/);
-		assert.match(result.content[0].text, /ollama pull qwen2\.5-coder:7b/);
+		assert.match(result.content[0].text, /ollama pull mxbai-embed-large/);
+		assert.match(result.content[0].text, /ollama pull qwen2\.5-coder:14b/);
 		assert.doesNotMatch(result.content[0].text, /src\/search\/index\.ts/);
 	} finally {
 		globalThis.fetch = originalFetch;

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "modelHost": {
+    "kind": "user-controlled-remote-ollama",
+    "label": "Remote Ollama server"
+  },
+  "ollama": {
+    "baseUrl": "http://127.0.0.1:11434",
+    "embeddingModel": "mxbai-embed-large",
+    "generationModel": "qwen2.5-coder:14b",
+    "embeddingMaxChars": 6000,
+    "generationMaxChars": 6000,
+    "embeddingTimeoutMs": 30000,
+    "generationTimeoutMs": 180000
+  },
+  "tunnel": {
+    "enabled": true,
+    "sshTarget": "charleshippo@otto",
+    "localHost": "127.0.0.1",
+    "localPort": 11434,
+    "remoteHost": "127.0.0.1",
+    "remotePort": 11434
+  },
+  "recall": {
+    "maxItems": 6,
+    "maxProjectItems": 4,
+    "maxGlobalItems": 2,
+    "maxPromptChars": 3000,
+    "minScore": 0.2
+  },
+  "failurePolicy": {
+    "embeddingUnavailable": "visible-failure-no-recall",
+    "generationUnavailable": "visible-failure-for-generation",
+    "cloudFallback": "disabled"
+  }
+}

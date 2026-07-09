@@ -1,0 +1,16 @@
+{
+  "excludePaths": [
+    "docs/features/**/*.html"
+  ],
+  "ollama": {
+    "embeddingModel": "mxbai-embed-large",
+    "summaryModel": "qwen2.5-coder:14b"
+  },
+  "tunnel": {
+    "sshTarget": "charleshippo@otto",
+    "localHost": "127.0.0.1",
+    "localPort": 11434,
+    "remoteHost": "127.0.0.1",
+    "remotePort": 11434
+  }
+}
