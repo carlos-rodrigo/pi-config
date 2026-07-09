@@ -86,9 +86,9 @@ To update, just `git pull` — symlinks pick up changes automatically.
 
 Agent definitions used by the agent-jobs extension:
 
-- **oracle** — Deep reasoning second opinion (gpt-5.5). For complex debugging, architecture decisions, and thorough code analysis. Read-only.
-- **researcher** — Concise research specialist (gpt-5.5). Investigates technologies, reads docs/source, compares approaches, and returns evidence-first briefs with bounded tool/output budgets. Uses `websearch`/`webfetch` instead of shelling out.
-- **librarian** — Remote GitHub code research specialist (gpt-5.5). Uses only `bash` with the authenticated `gh` CLI for public/private GitHub source search and upstream library inspection. Read-only.
+- **oracle** — Deep reasoning second opinion (gpt-5.6-sol). For complex debugging, architecture decisions, and thorough code analysis. Read-only.
+- **researcher** — Concise research specialist (gpt-5.6-terra). Investigates technologies, reads docs/source, compares approaches, and returns evidence-first briefs with bounded tool/output budgets. Uses `websearch`/`webfetch` instead of shelling out.
+- **librarian** — Remote GitHub code research specialist (gpt-5.6-terra). Uses only `bash` with the authenticated `gh` CLI for public/private GitHub source search and upstream library inspection. Read-only.
 
 ### Feature packets
 

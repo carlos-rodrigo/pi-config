@@ -33,6 +33,7 @@ const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
 	},
 	deep2: {
 		models: [
+			{ provider: "openai-codex", model: "gpt-5.6-sol" },
 			{ provider: "openai-codex", model: "gpt-5.5" },
 			{ provider: "openai-codex", model: "gpt-5.4", thinking: "high" },
 			{ provider: "openai-codex", model: "gpt-5.3-codex", thinking: "xhigh" },
@@ -41,6 +42,7 @@ const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
 	},
 	deep3: {
 		models: [
+			{ provider: "openai-codex", model: "gpt-5.6-sol" },
 			{ provider: "openai-codex", model: "gpt-5.5" },
 			{ provider: "openai-codex", model: "gpt-5.4" },
 			{ provider: "openai-codex", model: "gpt-5.3-codex" },

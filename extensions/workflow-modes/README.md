@@ -23,10 +23,10 @@ pi install ./extensions/workflow-modes
 | Mode | Preferred model | Thinking | Use case |
 |------|-----------------|----------|----------|
 | **smart** | `anthropic/claude-fable-5` | low | Default — small/narrow work, repo questions, cheap-to-verify edits |
-| **deep** / **deep2** | `openai-codex/gpt-5.5` | medium | Normal deep work: bug fixes, feature work, multi-file edits |
-| **deep3** | `openai-codex/gpt-5.5` | xhigh | Hard debugging, broad/high-risk work, maximum quality |
+| **deep** / **deep2** | `openai-codex/gpt-5.6-sol` | medium | Normal deep work: bug fixes, feature work, multi-file edits |
+| **deep3** | `openai-codex/gpt-5.6-sol` | xhigh | Hard debugging, broad/high-risk work, maximum quality |
 | **fast** | `openai-codex/gpt-5.5` | off | No-thinking GPT-5.5 for quick tasks and simple edits |
 
-GPT-5.5 modes prefer outcome-focused prompts: state the target, what good means, constraints, and how to verify. `/deep` is the same as `/deep2`; it falls back to `gpt-5.4` with high thinking and `gpt-5.3-codex` with xhigh thinking if needed. `/fast` is GPT-5.5 with thinking off for quick, cheap-to-verify work.
+GPT-5 modes prefer outcome-focused prompts: state the target, what good means, constraints, and how to verify. `/deep` is the same as `/deep2`; deep modes prefer `gpt-5.6-sol` and fall back to `gpt-5.5`, `gpt-5.4`, and `gpt-5.3-codex` if needed. `/fast` is GPT-5.5 with thinking off for quick, cheap-to-verify work.
 
 Startup note: if you launch Pi with an explicit model/thinking selection (`--model`, `--models`, or `--thinking`), workflow-modes now preserves that choice unless you also pass `--workflow-mode`.

@@ -187,11 +187,13 @@ test("ctrl+shift+m cycles through every mode", async () => {
 	assert.match(statuses.at(-1)?.value ?? "", /mode: Fast/i);
 
 	await shortcut.handler(ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
 	assert.equal(getThinkingLevel(), "medium");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep²/i);
 	assert.match(statuses.at(-1)?.value ?? "", /mode: Deep²/i);
 
 	await shortcut.handler(ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
 	assert.equal(getThinkingLevel(), "xhigh");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep³/i);
 	assert.match(statuses.at(-1)?.value ?? "", /mode: Deep³/i);
@@ -226,17 +228,17 @@ test("/smart /deep /deep2 /deep3 /fast commands switch modes directly", async ()
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Smart/i);
 
 	await deepCommand.handler("", ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
 	assert.equal(getThinkingLevel(), "medium");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep²/i);
 
 	await deep2Command.handler("", ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
 	assert.equal(getThinkingLevel(), "medium");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep²/i);
 
 	await deep3Command.handler("", ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
 	assert.equal(getThinkingLevel(), "xhigh");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep³/i);
 
@@ -246,7 +248,21 @@ test("/smart /deep /deep2 /deep3 /fast commands switch modes directly", async ()
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Fast/i);
 });
 
-test("deep mode falls back to gpt-5.4 when gpt-5.5 is unavailable", async () => {
+test("deep mode falls back to gpt-5.5 when gpt-5.6-sol is unavailable", async () => {
+	const { commands, pi, getSelectedModel, getThinkingLevel } = createPiHarness();
+	const { ctx } = createContext({ availableModels: new Set(["openai-codex/gpt-5.5"]) });
+
+	workflowModesExtension(pi as any);
+
+	const deepCommand = commands.get("deep");
+	assert.ok(deepCommand);
+
+	await deepCommand.handler("", ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
+	assert.equal(getThinkingLevel(), "medium");
+});
+
+test("deep mode falls back to gpt-5.4 when gpt-5.6-sol and gpt-5.5 are unavailable", async () => {
 	const { commands, pi, getSelectedModel, getThinkingLevel } = createPiHarness();
 	const { ctx } = createContext({ availableModels: new Set(["openai-codex/gpt-5.4"]) });
 
@@ -260,7 +276,7 @@ test("deep mode falls back to gpt-5.4 when gpt-5.5 is unavailable", async () => 
 	assert.equal(getThinkingLevel(), "high");
 });
 
-test("deep mode falls back to gpt-5.3-codex when gpt-5.5 and gpt-5.4 are unavailable", async () => {
+test("deep mode falls back to gpt-5.3-codex when newer GPT-5 models are unavailable", async () => {
 	const { commands, pi, getSelectedModel, getThinkingLevel } = createPiHarness();
 	const { ctx } = createContext({ availableModels: new Set(["openai-codex/gpt-5.3-codex"]) });
 
@@ -287,7 +303,7 @@ test("/mode command accepts aliases and rejects unknown values", async () => {
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
 
 	await modeCommand.handler("d3", ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
 
 	await modeCommand.handler("invalid", ctx as any);
 	assert.match(notifications.at(-1)?.message ?? "", /Unknown mode\. Use: smart, deep2, deep3, or fast/i);

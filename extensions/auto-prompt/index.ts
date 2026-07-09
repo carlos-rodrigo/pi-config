@@ -27,7 +27,7 @@
  *
  * Commands:
  *   /suggest          Toggle auto-suggestions on/off
- *   /suggest model    Change the suggestion model (e.g. /suggest model openai-codex/gpt-5.5)
+ *   /suggest model    Change the suggestion model (e.g. /suggest model openai-codex/gpt-5.6-terra)
  *   /suggest now      Manually trigger a suggestion
  *   /improve          Manually improve the current editor text
  */
@@ -52,7 +52,7 @@ const LEGACY_UNSUPPORTED_MODEL = {
 	provider: "openai-codex" as const,
 	id: "gpt-5.1-codex-mini" as const,
 };
-const PRIMARY_MODEL = { provider: "openai-codex" as const, id: "gpt-5.5" as const };
+const PRIMARY_MODEL = { provider: "openai-codex" as const, id: "gpt-5.6-terra" as const };
 const FALLBACK_MODEL = { provider: "openai-codex" as const, id: "gpt-5.4" as const };
 
 // --- State ---

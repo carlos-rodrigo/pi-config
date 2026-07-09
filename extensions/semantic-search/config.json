@@ -1,5 +1,6 @@
 {
   "excludePaths": [
+    "**/.*/**",
     "docs/features/**/*.html"
   ],
   "ollama": {

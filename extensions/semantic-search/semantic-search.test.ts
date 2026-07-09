@@ -468,14 +468,18 @@ test("Ollama config defaults come from semantic-search config file and env can o
 	assert.equal(resolveOllamaSummaryConfig({}, {}, { ollama: { summaryModel: "custom-summary", summaryConcurrency: 3 } }).concurrency, 3);
 });
 
-test("configured exclude paths omit generated feature HTML from the semantic index", () => {
+test("configured exclude paths omit generated feature HTML and hidden directories from the semantic index", () => {
 	const dir = makeProject({
 		"src/index.ts": "export function runSearch() { return 'ok'; }\n",
+		"src/.generated/cache.ts": "export const hiddenCache = true;\n",
+		".github/workflows/ci.yml": "name: ci\n",
 		"docs/features/agent-memory/design.html": "<html><body>Large generated planning document</body></html>\n",
 	});
 	try {
 		const index = buildSearchIndex(dir, { writeToDisk: false });
 		assert.ok(index.files.some((file) => file.path === "src/index.ts"));
+		assert.ok(!index.files.some((file) => file.path === "src/.generated/cache.ts"));
+		assert.ok(!index.files.some((file) => file.path === ".github/workflows/ci.yml"));
 		assert.ok(!index.files.some((file) => file.path === "docs/features/agent-memory/design.html"));
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
