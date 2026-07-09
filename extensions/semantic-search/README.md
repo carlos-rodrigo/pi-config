@@ -119,6 +119,7 @@ Config file shape:
 Configuration:
 
 - `extensions/semantic-search/config.json` — repo-local defaults for excluded paths, Ollama models, and SSH tunnel settings
+- `excludePaths` — git-style path globs omitted from indexing; useful for generated/planning HTML that should not make code search stale
 - `PI_SEMANTIC_SEARCH_CONFIG` — optional path to an alternate JSON config file
 - `OLLAMA_HOST` or `OLLAMA_BASE_URL` — overrides the configured Ollama URL; fallback is `http://127.0.0.1:11434`
 - `OLLAMA_EMBED_MODEL` or `PI_SEMANTIC_SEARCH_EMBED_MODEL` — overrides the configured embedding model

@@ -468,6 +468,20 @@ test("Ollama config defaults come from semantic-search config file and env can o
 	assert.equal(resolveOllamaSummaryConfig({}, {}, { ollama: { summaryModel: "custom-summary", summaryConcurrency: 3 } }).concurrency, 3);
 });
 
+test("configured exclude paths omit generated feature HTML from the semantic index", () => {
+	const dir = makeProject({
+		"src/index.ts": "export function runSearch() { return 'ok'; }\n",
+		"docs/features/agent-memory/design.html": "<html><body>Large generated planning document</body></html>\n",
+	});
+	try {
+		const index = buildSearchIndex(dir, { writeToDisk: false });
+		assert.ok(index.files.some((file) => file.path === "src/index.ts"));
+		assert.ok(!index.files.some((file) => file.path === "docs/features/agent-memory/design.html"));
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("repo map clusters indexed files by reusable code concepts", () => {
 	const dir = makeProject({
 		"src/payments/checkout.ts": "export const checkout = () => stripe.checkout.sessions.create({ mode: 'payment' });\n",
