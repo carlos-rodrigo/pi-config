@@ -31,13 +31,22 @@ test("pickPrimaryExtensionStatus prefers review over prompt queue", () => {
 	assert.equal(pickPrimaryExtensionStatus(statuses), "reviewing");
 });
 
-test("pickPrimaryExtensionStatus surfaces semantic search rebuild status", () => {
+test("pickPrimaryExtensionStatus suppresses semantic search rebuild status because it has a dedicated indicator", () => {
 	const statuses = new Map<string, string>([
 		["workflow-mode", "mode: Smart"],
 		["semantic-search", "idx: embedding 60% · ~11s"],
 	]);
 
-	assert.equal(pickPrimaryExtensionStatus(statuses), "idx: embedding 60% · ~11s");
+	assert.equal(pickPrimaryExtensionStatus(statuses), "mode: Smart");
+});
+
+test("pickPrimaryExtensionStatus still surfaces foreground semantic search status", () => {
+	const statuses = new Map<string, string>([
+		["workflow-mode", "mode: Smart"],
+		["semantic-search", "embedding…"],
+	]);
+
+	assert.equal(pickPrimaryExtensionStatus(statuses), "embedding…");
 });
 
 test("pickPrimaryExtensionStatus falls back to ambient workflow mode status", () => {

@@ -25,15 +25,22 @@ const GHOST_COLOR = "\x1b[90m"; // bright black (gray)
 const ANSI_RESET = "\x1b[0m";
 const PADDING_X = 2;
 
+function shouldShowPrimaryExtensionStatus(key: string, status: string): boolean {
+	// Background semantic index rebuilds have a dedicated compact indicator on the
+	// right border. Suppress the mirrored extension status to avoid duplicate
+	// `idx: ...` labels while keeping foreground semantic-search statuses visible.
+	return !(key === "semantic-search" && status.trim().startsWith("idx:"));
+}
+
 export function pickPrimaryExtensionStatus(statuses: ReadonlyMap<string, string>): string | null {
 	const highPriorityKeys = ["auto-prompt", "review", "semantic-search"];
 	for (const key of highPriorityKeys) {
 		const status = statuses.get(key);
-		if (status) return status;
+		if (status && shouldShowPrimaryExtensionStatus(key, status)) return status;
 	}
 
 	for (const [key, value] of statuses) {
-		if (key !== "workflow-mode") return value;
+		if (key !== "workflow-mode" && shouldShowPrimaryExtensionStatus(key, value)) return value;
 	}
 
 	return statuses.get("workflow-mode") ?? statuses.values().next().value ?? null;

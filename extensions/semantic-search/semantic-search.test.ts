@@ -10,9 +10,11 @@ import semanticSearchExtension, {
 	buildSearchIndexWithEmbeddings,
 	createRepoMap,
 	formatBackgroundRebuildIndicator,
+	formatOllamaTunnelSshCommand,
 	formatRepoMap,
 	formatSearchResults,
 	parseIndexCommandArgs,
+	parseOllamaTunnelCommandArgs,
 	parseSearchIndexJson,
 	resolveOllamaEmbeddingConfig,
 	resolveOllamaSummaryConfig,
@@ -915,6 +917,73 @@ test("index rebuild status reports the last background rebuild state", async () 
 	}
 });
 
+test("ollama tunnel args build a localhost SSH tunnel command", () => {
+	const parsed = parseOllamaTunnelCommandArgs("user@ryzen-box --local-port 11435 --remote-port 11434", {});
+
+	assert.equal(parsed.error, undefined);
+	assert.equal(parsed.action, "start");
+	assert.equal(parsed.sshTarget, "user@ryzen-box");
+	assert.equal(parsed.localHost, "127.0.0.1");
+	assert.equal(parsed.localPort, 11435);
+	assert.equal(parsed.remoteHost, "127.0.0.1");
+	assert.equal(parsed.remotePort, 11434);
+	assert.equal(
+		formatOllamaTunnelSshCommand(parsed),
+		"ssh -f -N -L 127.0.0.1:11435:127.0.0.1:11434 -o ExitOnForwardFailure=yes -o BatchMode=yes user@ryzen-box",
+	);
+
+	const fromEnv = parseOllamaTunnelCommandArgs("--print", { PI_OLLAMA_SSH_HOST: "workstation" });
+	assert.equal(fromEnv.sshTarget, "workstation");
+	assert.equal(fromEnv.printOnly, true);
+	assert.match(parseOllamaTunnelCommandArgs("", {}).error ?? "", /Missing SSH target/);
+	assert.match(parseOllamaTunnelCommandArgs("user@host --local-port nope", {}).error ?? "", /Local port/);
+});
+
+test("ollama-tunnel command starts SSH tunnel and points this Pi session at it", async () => {
+	const commands = new Map<string, any>();
+	const messages: any[] = [];
+	const notifications: any[] = [];
+	const previousBaseUrl = process.env.OLLAMA_BASE_URL;
+	const starts: any[] = [];
+	semanticSearchExtension({
+		registerTool() {},
+		registerCommand(name: string, definition: any) {
+			commands.set(name, definition);
+		},
+		sendMessage(message: any) {
+			messages.push(message);
+		},
+	} as any, {
+		startOllamaTunnel(config) {
+			starts.push(config);
+			return { ok: true, command: formatOllamaTunnelSshCommand(config), ollamaUrl: `http://${config.localHost}:${config.localPort}` };
+		},
+	});
+
+	const dir = makeProject({});
+	try {
+		await commands.get("ollama-tunnel").handler("user@ryzen-box --local-port 11435", {
+			cwd: dir,
+			ui: {
+				notify(message: string, level: string) {
+					notifications.push({ message, level });
+				},
+			},
+		} as any);
+
+		assert.equal(starts.length, 1);
+		assert.equal(starts[0].sshTarget, "user@ryzen-box");
+		assert.equal(process.env.OLLAMA_BASE_URL, "http://127.0.0.1:11435");
+		assert.match(notifications[0]?.message ?? "", /Ollama SSH tunnel ready/);
+		assert.equal(notifications[0]?.level, "info");
+		assert.match(messages[0]?.content ?? "", /\/index rebuild/);
+	} finally {
+		if (previousBaseUrl === undefined) delete process.env.OLLAMA_BASE_URL;
+		else process.env.OLLAMA_BASE_URL = previousBaseUrl;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("extension registers semantic search tools and command entrypoints", async () => {
 	const tools = new Map<string, any>();
 	const commands = new Map<string, any>();
@@ -933,6 +1002,7 @@ test("extension registers semantic search tools and command entrypoints", async 
 	assert.ok(tools.has("index_rebuild_status"));
 	assert.ok(commands.has("index"));
 	assert.ok(commands.has("code-search"));
+	assert.ok(commands.has("ollama-tunnel"));
 
 	const dir = makeProject({
 		"src/search/index.ts": "export function semanticSearch(query: string) { return vectorIndex.search(query); }\n",

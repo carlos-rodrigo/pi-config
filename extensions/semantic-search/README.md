@@ -21,6 +21,8 @@ Local hybrid code search for Pi, backed by required local Ollama semantic-card s
 /index rebuild --no-summaries # background diagnostic: embeddings without generated card summaries
 /index lexical           # diagnostic: rebuild lexical-only in the foreground
 /code-search <q>         # run a natural-language search and show results in the session
+/ollama-tunnel user@host # start a localhost SSH tunnel to a remote Ollama server
+/ollama-tunnel status    # check whether the configured local Ollama URL is reachable
 ```
 
 The index is stored under `.pi/semantic-search/index.json` in each project and is ignored by this repo's git settings.
@@ -41,6 +43,40 @@ ollama pull mxbai-embed-large
 
 Lexical-only paths still exist for diagnostics (`/index lexical`, `/index rebuild --no-summaries`, or `semantic_search` with `useEmbeddings=false/useSummaries=false`), but they are explicit lower-quality escape hatches, not the default.
 
+### Remote Ollama over SSH tunnel
+
+For heavier rebuilds on a stronger SSH-accessible machine, keep Ollama bound to localhost on the remote host and tunnel it to Pi:
+
+```bash
+# On the remote machine, make sure Ollama and models are ready:
+ollama serve
+ollama pull nomic-embed-text
+ollama pull qwen2.5-coder:7b
+```
+
+Then in Pi:
+
+```bash
+/ollama-tunnel user@remote-host
+/index rebuild
+/index rebuild --status
+```
+
+The command runs the equivalent of:
+
+```bash
+ssh -f -N -L 127.0.0.1:11434:127.0.0.1:11434 -o ExitOnForwardFailure=yes -o BatchMode=yes user@remote-host
+```
+
+If local port `11434` is already occupied, use a different local port; the command points the current Pi process at it via `OLLAMA_BASE_URL`:
+
+```bash
+/ollama-tunnel user@remote-host --local-port 11435
+/index rebuild
+```
+
+Use `--print` to show the SSH command without starting it. The tunnel command requires SSH key/agent auth because it runs with `BatchMode=yes`; it will not prompt for passwords inside Pi.
+
 Configuration:
 
 - `OLLAMA_HOST` or `OLLAMA_BASE_URL` — defaults to `http://127.0.0.1:11434`
@@ -48,6 +84,8 @@ Configuration:
 - `PI_SEMANTIC_SEARCH_SUMMARY_MODEL` — generation model for semantic-card summaries, defaults to `qwen2.5-coder:7b`
 - `PI_SEMANTIC_SEARCH_SUMMARIES=false` — disables default summary generation and now causes the required default path to fail; prefer explicit lexical/debug commands when you intentionally want lower-quality local summaries
 - `PI_SEMANTIC_SEARCH_SUMMARY_CONCURRENCY` — parallel summary requests, defaults to `2`
+- `PI_OLLAMA_SSH_HOST` — default SSH target for `/ollama-tunnel` when no host argument is provided
+- `PI_OLLAMA_TUNNEL_LOCAL_PORT` / `PI_OLLAMA_TUNNEL_REMOTE_PORT` — default tunnel ports, both default to `11434`
 - `PI_SEMANTIC_SEARCH_AUTO_REBUILD=false` — disable the automatic background rebuild after successful `write`/`edit` tool changes leave the index stale
 - `PI_SEMANTIC_SEARCH_EMBED_MAX_CHARS` — max characters sent per Ollama embedding input before adaptive retries; defaults to `6000`
 - `PI_SEMANTIC_SEARCH_SUMMARY_MAX_CHARS` — max characters sent per Ollama summary prompt; defaults to `10000`
