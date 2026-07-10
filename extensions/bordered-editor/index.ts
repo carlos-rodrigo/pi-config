@@ -33,6 +33,9 @@ function shouldShowPrimaryExtensionStatus(key: string, status: string): boolean 
 }
 
 export function pickPrimaryExtensionStatus(statuses: ReadonlyMap<string, string>): string | null {
+	const memoryStatus = statuses.get("agent-memory");
+	if (memoryStatus?.trim().startsWith("mem: failed")) return memoryStatus;
+
 	const highPriorityKeys = ["auto-prompt", "review", "semantic-search"];
 	for (const key of highPriorityKeys) {
 		const status = statuses.get(key);
@@ -40,10 +43,10 @@ export function pickPrimaryExtensionStatus(statuses: ReadonlyMap<string, string>
 	}
 
 	for (const [key, value] of statuses) {
-		if (key !== "workflow-mode" && shouldShowPrimaryExtensionStatus(key, value)) return value;
+		if (key !== "workflow-mode" && key !== "agent-memory" && shouldShowPrimaryExtensionStatus(key, value)) return value;
 	}
 
-	return statuses.get("workflow-mode") ?? statuses.values().next().value ?? null;
+	return memoryStatus ?? statuses.get("workflow-mode") ?? statuses.values().next().value ?? null;
 }
 
 export type WorkflowModeColor = "success" | "error" | "warning";

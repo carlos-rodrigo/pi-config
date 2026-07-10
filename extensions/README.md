@@ -19,6 +19,7 @@ Or run the install script for symlink-based local development:
 ```bash
 pi install ./extensions/agent-jobs
 pi install ./extensions/agent-benchmark
+pi install ./extensions/agent-memory
 pi install ./extensions/auto-prompt
 pi install ./extensions/bordered-editor
 pi install ./extensions/code-intel
@@ -46,6 +47,7 @@ pi install ./extensions/worktree-manager
 |-----------|-------------|
 | [agent-jobs](agent-jobs/) | Non-blocking tmux-backed researcher/oracle jobs with persisted logs/results |
 | [agent-benchmark](agent-benchmark/) | Cheap local benchmark suite for evidence-based Pi config improvement |
+| [agent-memory](agent-memory/) | Default-on local project/global memory with bounded recall, review controls, and verification feedback |
 | [auto-prompt](auto-prompt/) | Inline ghost text prompt suggestions (fish-style) |
 | [bordered-editor](bordered-editor/) | Bordered input editor with model/context/git info |
 | [branch-switcher](branch-switcher/) | Interactive git branch switching with local + remote-only branch support |

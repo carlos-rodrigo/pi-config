@@ -335,7 +335,7 @@ mem: paused · /agent-memory resume</div>
           <p class="section-summary">Stay inside existing project technology so memory can be tested with fake ports and verified with the repo gate.</p>
           <div class="card-grid">
             <article class="component-card" data-review-id="technology-stack.pi"><h3>Pi APIs</h3><p><code>before_agent_start</code>, <code>session_start</code>, command registration, <code>ctx.ui.setStatus()</code>, custom/session messages for review output, and the Pi event bus.</p></article>
-            <article class="component-card" data-review-id="technology-stack.node"><h3>Node filesystem</h3><p><code>fs/promises</code>, JSONL append files, atomic write-and-rename for settings and vector cache, and an in-process per-scope write queue.</p></article>
+            <article class="component-card" data-review-id="technology-stack.node"><h3>Node filesystem</h3><p><code>fs/promises</code>, JSONL append files, atomic write-and-rename for settings and vector cache, an in-process per-scope write queue, and a stale-recoverable per-scope filesystem lock for concurrent Pi processes.</p></article>
             <article class="component-card" data-review-id="technology-stack.embeddings"><h3>User-controlled Ollama</h3><p>Use <code>extensions/agent-memory/config.json</code> defaults: a user-controlled remote Ollama server via SSH tunnel, <code>mxbai-embed-large</code> for atomic-memory recall, and <code>qwen2.5-coder:14b</code> for drafting/review helpers. No test should require a live model.</p></article>
           </div>
           <span class="review-label">review: technology-stack</span>
@@ -514,7 +514,7 @@ mem: paused · /agent-memory resume</div>
   <span class="code-key">updatedAt</span>: <span class="code-string">"ISO"</span>,
   <span class="code-key">lastRecalledAt</span>: <span class="code-string">"ISO"</span>
 }</code></pre></article>
-            <article class="contract-card" data-review-id="data-contracts.scope-files"><h3>Scope files</h3><pre class="schema-code"><code><span class="code-key">projectRoot</span>: <span class="code-string">"&lt;cwd&gt;/.pi/agent-memory/"</span>
+            <article class="contract-card" data-review-id="data-contracts.scope-files"><h3>Scope files</h3><pre class="schema-code"><code><span class="code-key">projectRoot</span>: <span class="code-string">"&lt;resolved-repository-root&gt;/.pi/agent-memory/"</span>
 <span class="code-key">globalRoot</span>: <span class="code-string">"$HOME/.pi/agent-memory/"</span>
 <span class="code-key">memoriesFile</span>: <span class="code-string">"memories.jsonl"</span>
 <span class="code-key">vectorsFile</span>: <span class="code-string">"vectors.json"</span>

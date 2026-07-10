@@ -12,6 +12,47 @@ import {
 	pickPrimaryExtensionStatus,
 } from "./index.ts";
 
+test("pickPrimaryExtensionStatus promotes Agent Memory failure over active statuses", () => {
+	const statuses = new Map<string, string>([
+		["workflow-mode", "mode: Smart"],
+		["auto-prompt", "Improving prompt…"],
+		["agent-memory", "mem: failed · embeddings unavailable · /agent-memory status"],
+	]);
+
+	assert.equal(
+		pickPrimaryExtensionStatus(statuses),
+		"mem: failed · embeddings unavailable · /agent-memory status",
+	);
+});
+
+test("pickPrimaryExtensionStatus does not promote healthy Agent Memory over active work", () => {
+	const statuses = new Map<string, string>([
+		["agent-memory", "mem: ready · project 1 · global 0"],
+		["auto-prompt", "Improving prompt…"],
+	]);
+
+	assert.equal(pickPrimaryExtensionStatus(statuses), "Improving prompt…");
+});
+
+test("pickPrimaryExtensionStatus keeps healthy Agent Memory ambient behind prompt queue", () => {
+	const statuses = new Map<string, string>([
+		["agent-memory", "mem: ready · project 1 · global 0"],
+		["prompt-queue", "queue: 2 queued"],
+		["workflow-mode", "mode: Smart"],
+	]);
+
+	assert.equal(pickPrimaryExtensionStatus(statuses), "queue: 2 queued");
+});
+
+test("pickPrimaryExtensionStatus uses healthy Agent Memory as the ambient fallback", () => {
+	const statuses = new Map<string, string>([
+		["agent-memory", "mem: running"],
+		["workflow-mode", "mode: Smart"],
+	]);
+
+	assert.equal(pickPrimaryExtensionStatus(statuses), "mem: running");
+});
+
 test("pickPrimaryExtensionStatus prefers active auto-prompt status over ambient statuses", () => {
 	const statuses = new Map<string, string>([
 		["workflow-mode", "mode: Smart"],
