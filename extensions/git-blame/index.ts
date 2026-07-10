@@ -1,10 +1,11 @@
-import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
-import { highlightCode, getLanguageFromPath } from "@mariozechner/pi-coding-agent";
-import { Text, matchesKey, Key, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import { Type } from "@sinclair/typebox";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { highlightCode, getLanguageFromPath } from "@earendil-works/pi-coding-agent";
+import { Text, matchesKey, Key, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -38,30 +39,30 @@ interface BlameLine {
 
 // ── Git helpers ────────────────────────────────────────────────────────────
 
-function getGitBlame(filePath: string): BlameLine[] | undefined {
+const execFileAsync = promisify(execFile);
+
+export async function getGitBlame(filePath: string, signal?: AbortSignal): Promise<BlameLine[] | undefined> {
   try {
     const dir = path.dirname(filePath);
-    
+
     // Check if file is in a git repo
-    execSync("git rev-parse --git-dir", {
+    await execFileAsync("git", ["rev-parse", "--git-dir"], {
       cwd: dir,
       encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
+      signal,
     });
-    
+
     // Get blame with porcelain format for easy parsing
-    const blameOutput = execSync(
-      `git blame --line-porcelain "${path.basename(filePath)}"`,
-      {
-        cwd: dir,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-        maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large files
-      }
-    );
-    
-    return parseBlame(blameOutput);
-  } catch {
+    const { stdout } = await execFileAsync("git", ["blame", "--line-porcelain", "--", path.basename(filePath)], {
+      cwd: dir,
+      encoding: "utf-8",
+      signal,
+      maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large files
+    });
+
+    return parseBlame(stdout);
+  } catch (error) {
+    if (signal?.aborted) throw error;
     return undefined;
   }
 }
@@ -104,23 +105,6 @@ function parseBlame(output: string): BlameLine[] {
   }
   
   return lines;
-}
-
-function getCommitInfo(hash: string, cwd: string): string | undefined {
-  if (hash.startsWith("0000000")) return undefined;
-  
-  try {
-    return execSync(
-      `git show --no-patch --format="%H%n%an%n%ae%n%ai%n%s%n%b" ${hash}`,
-      {
-        cwd,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }
-    );
-  } catch {
-    return undefined;
-  }
 }
 
 // ── Border helpers ─────────────────────────────────────────────────────────
@@ -342,7 +326,7 @@ export class BlameViewerComponent {
   handleInput(data: string): void {
     this.invalidate();
 
-    if (matchesKey(data, Key.Escape) || data === "q") {
+    if (matchesKey(data, Key.escape) || data === "q") {
       if (this.showCommitDetail) {
         this.showCommitDetail = false;
       } else {
@@ -351,7 +335,7 @@ export class BlameViewerComponent {
       return;
     }
 
-    if (matchesKey(data, Key.Up) || data === "k") {
+    if (matchesKey(data, Key.up) || data === "k") {
       if (this.selectedLine > 0) {
         this.selectedLine--;
         if (this.selectedLine < this.scrollOffset) {
@@ -361,7 +345,7 @@ export class BlameViewerComponent {
       return;
     }
 
-    if (matchesKey(data, Key.Down) || data === "j") {
+    if (matchesKey(data, Key.down) || data === "j") {
       if (this.selectedLine < this.blameLines.length - 1) {
         this.selectedLine++;
         if (this.selectedLine >= this.scrollOffset + this.currentViewHeight) {
@@ -371,13 +355,13 @@ export class BlameViewerComponent {
       return;
     }
 
-    if (matchesKey(data, Key.PageUp)) {
+    if (matchesKey(data, Key.pageUp)) {
       this.selectedLine = Math.max(0, this.selectedLine - this.currentViewHeight);
       this.scrollOffset = Math.max(0, this.scrollOffset - this.currentViewHeight);
       return;
     }
 
-    if (matchesKey(data, Key.PageDown)) {
+    if (matchesKey(data, Key.pageDown)) {
       this.selectedLine = Math.min(
         this.blameLines.length - 1,
         this.selectedLine + this.currentViewHeight
@@ -411,6 +395,10 @@ export default function gitBlameExtension(pi: ExtensionAPI) {
   pi.registerCommand("blame", {
     description: "Show git blame for the current or specified file",
     handler: async (args, ctx) => {
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify("/blame requires the interactive Pi TUI", "error");
+        return;
+      }
       let filePath = args?.trim();
       
       if (!filePath) {
@@ -427,7 +415,7 @@ export default function gitBlameExtension(pi: ExtensionAPI) {
         return;
       }
       
-      const blameLines = getGitBlame(resolved);
+      const blameLines = await getGitBlame(resolved);
       if (!blameLines) {
         ctx.ui.notify("File is not tracked by git", "error");
         return;
@@ -467,16 +455,16 @@ export default function gitBlameExtension(pi: ExtensionAPI) {
         throw new Error(`File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB) for blame view.`);
       }
 
-      const blameLines = getGitBlame(resolved);
+      const blameLines = await getGitBlame(resolved, signal);
       if (!blameLines) {
         throw new Error(`File is not tracked by git or git blame failed.`);
       }
 
-      if (ctx.hasUI) {
+      if (ctx.mode === "tui") {
         await showBlameOverlay(resolved, blameLines, ctx);
       }
 
-      // Summary for non-UI context
+      // Summary for non-TUI contexts
       const authors = new Map<string, number>();
       for (const line of blameLines) {
         authors.set(line.author, (authors.get(line.author) || 0) + 1);
@@ -487,8 +475,9 @@ export default function gitBlameExtension(pi: ExtensionAPI) {
         .map(([name, count]) => `${name}: ${count} lines`)
         .join(", ");
 
+      const action = ctx.mode === "tui" ? "Showed blame" : "Blame summary";
       return {
-        content: [{ type: "text", text: `Showed blame for ${path.basename(resolved)} (${blameLines.length} lines). Top authors: ${topAuthors}` }],
+        content: [{ type: "text", text: `${action} for ${path.basename(resolved)} (${blameLines.length} lines). Top authors: ${topAuthors}` }],
         details: { path: resolved, lines: blameLines.length, authors: Object.fromEntries(authors) },
       };
     },
@@ -499,8 +488,8 @@ export default function gitBlameExtension(pi: ExtensionAPI) {
       return new Text(text, 0, 0);
     },
 
-    renderResult(result, { expanded }, theme) {
-      if (result.isError) {
+    renderResult(result, { expanded }, theme, context) {
+      if (context.isError) {
         const msg = result.content[0];
         return new Text(theme.fg("error", msg?.type === "text" ? msg.text : "Error"), 0, 0);
       }
@@ -530,7 +519,7 @@ export default function gitBlameExtension(pi: ExtensionAPI) {
   async function showBlameOverlay(
     resolved: string,
     blameLines: BlameLine[],
-    ctx: { hasUI: boolean; cwd: string; ui: any }
+    ctx: { cwd: string; ui: ExtensionContext["ui"] }
   ) {
     await ctx.ui.custom<void>(
       (tui: any, theme: Theme, _kb: any, done: (v: void) => void) => {

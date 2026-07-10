@@ -2,9 +2,9 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileS
 import { join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { StringEnum } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { StringEnum } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 export const CHECKPOINT_SCHEMA_VERSION = 1;
 export const CHECKPOINT_ROOT = ".pi/self-improvement/checkpoints";

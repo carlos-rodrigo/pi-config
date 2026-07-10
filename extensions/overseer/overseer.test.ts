@@ -88,6 +88,16 @@ test("overseer is quiet for normal events and warning-only for repeated failures
 	assert.equal(context.notifications.length, 1, "warning should be rate limited");
 });
 
+test("overseer emits separate warnings for distinct repeated failures", async () => {
+	const harness = createHarness();
+	const context = createCtx();
+	for (const message of ["first error", "second error"]) {
+		await harness.emit("tool_result", { toolName: "bash", isError: true, content: [{ text: message }] }, context.ctx);
+		await harness.emit("tool_result", { toolName: "bash", isError: true, content: [{ text: message }] }, context.ctx);
+	}
+	assert.equal(context.notifications.length, 2);
+});
+
 test("overseer does not crash without UI and never blocks tool calls", async () => {
 	const harness = createHarness();
 	const context = createCtx(false);

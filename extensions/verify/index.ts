@@ -1,8 +1,8 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 export const VERIFY_SCRIPT_RELATIVE_PATH = "scripts/verify.sh";
 const VERIFY_TIMEOUT_MS = 60_000;
@@ -651,9 +651,6 @@ export default function (pi: ExtensionAPI) {
 		resetSessionState(ctx);
 	});
 
-	pi.on("session_switch", async (_event, ctx) => {
-		resetSessionState(ctx);
-	});
 
 
 	pi.on("tool_call", async (event, ctx) => {
@@ -665,7 +662,10 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("agent_end", async (_event, ctx) => {
 		syncSessionState(ctx);
-		if (!ctx.hasUI) return;
+		if (!ctx.hasUI) {
+			clearTouchedState();
+			return;
+		}
 
 		const touchedSnapshot = Array.from(touchedPaths);
 		const roots = new Set<string>(touchedProjectRoots);

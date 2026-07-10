@@ -1,9 +1,9 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { buildLaunchFallbackText } from "./launch-help.js";
-import { getDocumentReviewService } from "./server.js";
+import { getDocumentReviewService, stopDocumentReviewService } from "./server.js";
 import { openExternal } from "./lib/open-external.ts";
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown", ".mdown", ".mkd", ".mdx"]);
@@ -13,7 +13,6 @@ const MARKDOWN_EXTENSION_LIST = Array.from(MARKDOWN_EXTENSIONS).join(", ");
 const HTML_EXTENSION_LIST = Array.from(HTML_EXTENSIONS).join(", ");
 const REVIEW_EXTENSION_LIST = Array.from(REVIEW_EXTENSIONS).join(", ");
 type ReviewSourceKind = "markdown" | "html";
-let activeReviewSessionCount = 0;
 
 function stripWrappingQuotes(input: string): string {
 	let text = input.trim();
@@ -154,11 +153,27 @@ async function validateAndResolve(input: string, cwd: string, expected: Validati
 }
 
 export default function (pi: ExtensionAPI) {
+	let activeReviewSessionCount = 0;
+	let shuttingDown = false;
+	const reviewControllers = new Set<AbortController>();
+
+	pi.on("session_start", async () => {
+		shuttingDown = false;
+	});
+	pi.on("session_shutdown", async (_event, ctx) => {
+		shuttingDown = true;
+		for (const controller of reviewControllers) controller.abort();
+		reviewControllers.clear();
+		activeReviewSessionCount = 0;
+		ctx.ui.setStatus("review", undefined);
+		await stopDocumentReviewService();
+	});
+
 	async function startReviewCommand(args: string, ctx: ExtensionCommandContext, expected: ValidationExpectation) {
 		const input = args.trim();
 
 		const validation = await validateAndResolve(input, ctx.cwd, expected);
-		if (!validation.ok) {
+		if (validation.ok === false) {
 			ctx.ui.notify(validation.error, "error");
 			if ("hint" in validation && validation.hint) {
 				ctx.ui.setEditorText(validation.hint);
@@ -193,7 +208,7 @@ export default function (pi: ExtensionAPI) {
 				? `After finishing, the tab may auto-close; if it stays open, close it and ask Pi: Apply comments in ${path.basename(getHtmlReviewSidecarPath(resolvedPath))}.`
 				: `After finishing, the tab may auto-close; if it stays open, close it and ask Pi: Apply comments in ${session.title}.`,
 		].join("\n");
-		pi.sendMessage({ customType: "review", content: sessionReadyText });
+		pi.sendMessage({ customType: "review", content: sessionReadyText, display: true });
 		ctx.ui.notify(`Review session ready: ${session.sessionId}`, "info");
 
 		const launched = await openExternal(pi, session.reviewUrl);
@@ -204,7 +219,7 @@ export default function (pi: ExtensionAPI) {
 				healthUrl: session.healthUrl,
 				fallbackCommand: launched.fallbackCommand,
 			});
-			pi.sendMessage({ customType: "review", content: fallbackText });
+			pi.sendMessage({ customType: "review", content: fallbackText, display: true });
 		} else {
 			ctx.ui.notify(`Browser opened via ${launched.usedCommand ?? "system launcher"}.`, "info");
 		}
@@ -216,10 +231,13 @@ export default function (pi: ExtensionAPI) {
 			ctx.ui.theme.fg("accent", `● reviewing${activeReviewSessionCount > 1 ? ` (${activeReviewSessionCount})` : ""}`),
 		);
 
+		const controller = new AbortController();
+		reviewControllers.add(controller);
 		void (async () => {
 			try {
 				const reviewService = await getDocumentReviewService();
-				const comments = await reviewService.waitForFinish(session.sessionId);
+				const comments = await reviewService.waitForFinish(session.sessionId, { signal: controller.signal });
+				if (shuttingDown) return;
 
 				if (comments.length > 0) {
 					const target = sourceKind === "html" ? path.basename(getHtmlReviewSidecarPath(resolvedPath)) : path.basename(resolvedPath);
@@ -227,27 +245,34 @@ export default function (pi: ExtensionAPI) {
 					pi.sendMessage({
 						customType: "review",
 						content: buildCompletionSummary(sourceKind, resolvedPath, comments.length),
+						display: true,
 					});
 				} else {
 					ctx.ui.notify("Review finished with no comments.", "info");
 					pi.sendMessage({
 						customType: "review",
 						content: `Review finished with no comments on ${resolvedPath}. You can close the review tab and continue in Pi.`,
+						display: true,
 					});
 				}
 			} catch (error) {
-				ctx.ui.notify(`Review session ended with an error: ${formatError(error)}`, "warning");
+				if (!shuttingDown && (!(error instanceof Error) || error.name !== "AbortError")) {
+					ctx.ui.notify(`Review session ended with an error: ${formatError(error)}`, "warning");
+				}
 			} finally {
+				reviewControllers.delete(controller);
 				activeReviewSessionCount = Math.max(0, activeReviewSessionCount - 1);
-				ctx.ui.setStatus(
-					"review",
-					activeReviewSessionCount > 0
-						? ctx.ui.theme.fg(
-								"accent",
-								`● reviewing${activeReviewSessionCount > 1 ? ` (${activeReviewSessionCount})` : ""}`,
-							)
-						: undefined,
-				);
+				if (!shuttingDown) {
+					ctx.ui.setStatus(
+						"review",
+						activeReviewSessionCount > 0
+							? ctx.ui.theme.fg(
+									"accent",
+									`● reviewing${activeReviewSessionCount > 1 ? ` (${activeReviewSessionCount})` : ""}`,
+								)
+							: undefined,
+					);
+				}
 			}
 		})();
 
@@ -279,7 +304,7 @@ export default function (pi: ExtensionAPI) {
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const input = params.path.replace(/^@/, "");
 			const validation = await validateAndResolve(input, ctx.cwd);
-			if (!validation.ok) {
+			if (validation.ok === false) {
 				throw new Error(validation.error);
 			}
 
@@ -333,7 +358,7 @@ export default function (pi: ExtensionAPI) {
 			});
 
 			// Wait for the review to finish
-			const comments = await reviewService.waitForFinish(session.sessionId);
+			const comments = await reviewService.waitForFinish(session.sessionId, { signal });
 
 			const commentsList = `Comments:\n${comments.map((c, i) => `${i + 1}. "${c.selectedText.slice(0, 80)}${c.selectedText.length > 80 ? "..." : ""}"${c.reviewId ? ` [${c.reviewId}]` : ""} → ${c.comment}`).join("\n")}`;
 			const summary =
@@ -371,7 +396,7 @@ export default function (pi: ExtensionAPI) {
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const input = params.path.replace(/^@/, "");
 			const validation = await validateAndResolve(input, ctx.cwd, "html");
-			if (!validation.ok) {
+			if (validation.ok === false) {
 				throw new Error(validation.error);
 			}
 
@@ -420,7 +445,7 @@ export default function (pi: ExtensionAPI) {
 				details: {},
 			});
 
-			const comments = await reviewService.waitForFinish(session.sessionId);
+			const comments = await reviewService.waitForFinish(session.sessionId, { signal });
 			const commentsList = `Comments:\n${comments.map((c, i) => `${i + 1}. "${c.selectedText.slice(0, 80)}${c.selectedText.length > 80 ? "..." : ""}"${c.reviewId ? ` [${c.reviewId}]` : ""} → ${c.comment}`).join("\n")}`;
 			const summary =
 				comments.length > 0

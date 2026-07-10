@@ -4,13 +4,14 @@
     "docs/features/**/*.html"
   ],
   "ollama": {
+    "baseUrl": "http://127.0.0.1:11435",
     "embeddingModel": "mxbai-embed-large",
     "summaryModel": "qwen2.5-coder:14b"
   },
   "tunnel": {
     "sshTarget": "charleshippo@otto",
     "localHost": "127.0.0.1",
-    "localPort": 11434,
+    "localPort": 11435,
     "remoteHost": "127.0.0.1",
     "remotePort": 11434
   }

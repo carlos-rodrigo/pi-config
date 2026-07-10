@@ -1,29 +1,36 @@
 
-import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
-import { highlightCode, getLanguageFromPath, getMarkdownTheme } from "@mariozechner/pi-coding-agent";
-import { StringEnum } from "@mariozechner/pi-ai";
-import { Markdown, Text, matchesKey, Key, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import { Type } from "@sinclair/typebox";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { highlightCode, getLanguageFromPath, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
+import { Markdown, Text, matchesKey, Key, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { diffLines, type Change } from "diff";
+import { execChecked, shellQuote } from "../lib/process.ts";
 
-function getGitOriginalContent(filePath: string): string | undefined {
+const execFileAsync = promisify(execFile);
+
+export async function getGitOriginalContent(filePath: string, signal?: AbortSignal): Promise<string | undefined> {
   try {
     const dir = path.dirname(filePath);
-    const gitRoot = execSync("git rev-parse --show-toplevel", {
+    const rootResult = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
       cwd: dir,
       encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-    const relativePath = path.relative(gitRoot, filePath);
-    return execSync(`git show HEAD:${relativePath}`, {
+      signal,
+    });
+    const gitRoot = rootResult.stdout.trim();
+    const relativePath = path.relative(fs.realpathSync(gitRoot), fs.realpathSync(filePath));
+    const showResult = await execFileAsync("git", ["show", `HEAD:${relativePath}`], {
       cwd: gitRoot,
       encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
+      signal,
     });
-  } catch {
+    return showResult.stdout;
+  } catch (error) {
+    if (signal?.aborted) throw error;
     return undefined;
   }
 }
@@ -164,6 +171,7 @@ class FileViewerComponent {
     onClose: () => void,
     onEdit?: () => void,
     startInDiffMode: boolean = false,
+    originalContent?: string,
   ) {
     this.filePath = filePath;
     this.theme = theme;
@@ -173,10 +181,9 @@ class FileViewerComponent {
     this.rawContent = content;
 
     // Check for differences against git HEAD
-    const original = getGitOriginalContent(filePath);
-    if (original !== undefined && original !== content) {
+    if (originalContent !== undefined && originalContent !== content) {
       this.hasDiff = true;
-      this.buildDiffLines(original, content);
+      this.buildDiffLines(originalContent, content);
     }
 
     // Only enable diff mode if there are actual diffs to show
@@ -456,13 +463,23 @@ async function isInsideTmux(): Promise<boolean> {
   return !!process.env.TMUX;
 }
 
+function buildNvimCommand(resolved: string, line?: number): string {
+  return ["nvim", line ? `+${line}` : undefined, "--", shellQuote(resolved)].filter(Boolean).join(" ");
+}
+
+async function openNvimSplit(pi: Pick<ExtensionAPI, "exec">, resolved: string, line?: number, signal?: AbortSignal): Promise<void> {
+  await execChecked(pi, "tmux", ["split-window", "-h", buildNvimCommand(resolved, line)], { signal });
+}
+
 export async function openFileOverlay(
   resolved: string,
   content: string,
-  ctx: { hasUI: boolean; cwd: string; ui: any },
+  ctx: { cwd: string; ui: ExtensionContext["ui"] },
   startInDiffMode: boolean = false,
   onEdit?: () => Promise<void> | void,
+  signal?: AbortSignal,
 ) {
+  const originalContent = await getGitOriginalContent(resolved, signal);
   await ctx.ui.custom<void>(
     (tui: any, theme: Theme, _kb: any, done: (v: void) => void) => {
       const viewer = new FileViewerComponent(
@@ -478,6 +495,7 @@ export async function openFileOverlay(
             }
           : undefined,
         startInDiffMode,
+        originalContent,
       );
       return {
         render: (w: number) => viewer.render(w),
@@ -508,8 +526,8 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("open", {
     description: "Open a file in an overlay viewer (usage: /open <file> [--diff])",
     handler: async (args, ctx) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("/open requires interactive mode", "error");
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify("/open requires the interactive Pi TUI", "error");
         return;
       }
 
@@ -564,35 +582,21 @@ export default function (pi: ExtensionAPI) {
       const resolved = resolveFilePath(params.path, ctx.cwd);
 
       if (!fs.existsSync(resolved)) {
-        return {
-          content: [{ type: "text", text: `File not found: ${resolved}` }],
-          isError: true,
-        };
+        throw new Error(`File not found: ${resolved}`);
       }
 
       const stat = fs.statSync(resolved);
       if (stat.isDirectory()) {
-        return {
-          content: [{ type: "text", text: `Cannot open directory: ${resolved}` }],
-          isError: true,
-        };
+        throw new Error(`Cannot open directory: ${resolved}`);
       }
 
       if (params.mode === "edit") {
         const inTmux = await isInsideTmux();
         if (!inTmux) {
-          return {
-            content: [{ type: "text", text: "Cannot open nvim: not inside a tmux session. Use mode 'view' instead." }],
-            isError: true,
-          };
+          throw new Error("Cannot open nvim: not inside a tmux session. Use mode 'view' instead.");
         }
 
-        const nvimArgs = params.line ? `+${params.line}` : "";
-        const cmd = nvimArgs
-          ? `tmux split-window -h "nvim ${nvimArgs} '${resolved}'"`
-          : `tmux split-window -h "nvim '${resolved}'"`;
-
-        await pi.exec("bash", ["-c", cmd]);
+        await openNvimSplit(pi, resolved, params.line, signal);
 
         return {
           content: [{ type: "text", text: `Opened ${path.basename(resolved)} in nvim (tmux split)` }],
@@ -601,24 +605,22 @@ export default function (pi: ExtensionAPI) {
       }
 
       // View or diff mode
+      if (ctx.mode !== "tui") {
+        throw new Error("open_file view and diff modes require the interactive Pi TUI.");
+      }
       if (stat.size > 1_000_000) {
-        return {
-          content: [{ type: "text", text: `File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB) for modal view.` }],
-          isError: true,
-        };
+        throw new Error(`File too large (${(stat.size / 1024 / 1024).toFixed(1)}MB) for modal view.`);
       }
 
       const content = fs.readFileSync(resolved, "utf-8");
       const lineCount = content.split("\n").length;
       const startInDiff = params.mode === "diff";
 
-      if (ctx.hasUI) {
-        await openFileOverlay(resolved, content, ctx, startInDiff, async () => {
-          if (await isInsideTmux()) {
-            await pi.exec("bash", ["-c", `tmux split-window -h "nvim '${resolved}'"`]);
-          }
-        });
-      }
+      await openFileOverlay(resolved, content, ctx, startInDiff, async () => {
+        if (await isInsideTmux()) {
+          await openNvimSplit(pi, resolved);
+        }
+      }, signal);
 
       const modeText = startInDiff ? "diff" : "view";
       return {
@@ -632,7 +634,7 @@ export default function (pi: ExtensionAPI) {
       if (args.mode === "edit") {
         mode = theme.fg("warning", "nvim");
       } else if (args.mode === "diff") {
-        mode = theme.fg("info", "diff");
+        mode = theme.fg("accent", "diff");
       } else {
         mode = theme.fg("accent", "view");
       }
@@ -643,8 +645,8 @@ export default function (pi: ExtensionAPI) {
       return new Text(text, 0, 0);
     },
 
-    renderResult(result, { expanded }, theme) {
-      if (result.isError) {
+    renderResult(result, { expanded }, theme, context) {
+      if (context.isError) {
         const msg = result.content[0];
         return new Text(theme.fg("error", msg?.type === "text" ? msg.text : "Error"), 0, 0);
       }
@@ -678,7 +680,7 @@ export default function (pi: ExtensionAPI) {
 
   async function openInNvim(resolved: string, ctx: { ui: any }) {
     if (await isInsideTmux()) {
-      await pi.exec("bash", ["-c", `tmux split-window -h "nvim '${resolved}'"`]);
+      await openNvimSplit(pi, resolved);
     } else {
       ctx.ui.notify("Not inside tmux — cannot open nvim in a split", "error");
     }

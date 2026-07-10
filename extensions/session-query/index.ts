@@ -5,14 +5,14 @@
  */
 
 import { existsSync } from "node:fs";
-import { complete, type Message } from "@mariozechner/pi-ai";
+import { complete, type Message } from "@earendil-works/pi-ai/compat";
 import {
 	SessionManager,
 	convertToLlm,
 	serializeConversation,
 	type ExtensionAPI,
-} from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+} from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 const MAX_SESSION_CHARS = 100_000;
 
@@ -37,17 +37,12 @@ export default function (pi: ExtensionAPI) {
 			}),
 		}),
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const errorResult = (text: string) => ({
-				content: [{ type: "text" as const, text }],
-				details: { error: true },
-			});
-
 			if (!params.sessionPath.endsWith(".jsonl")) {
-				return errorResult(`Error: invalid session path. Expected a .jsonl file, got: ${params.sessionPath}`);
+				throw new Error(`Invalid session path. Expected a .jsonl file, got: ${params.sessionPath}`);
 			}
 
 			if (!existsSync(params.sessionPath)) {
-				return errorResult(`Error: session file not found: ${params.sessionPath}`);
+				throw new Error(`Session file not found: ${params.sessionPath}`);
 			}
 
 			onUpdate?.({
@@ -60,7 +55,7 @@ export default function (pi: ExtensionAPI) {
 				sessionManager = SessionManager.open(params.sessionPath);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
-				return errorResult(`Error loading session: ${message}`);
+				throw new Error(`Error loading session: ${message}`, { cause: error });
 			}
 
 			const { messages } = sessionManager.buildSessionContext();
@@ -79,12 +74,12 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (!ctx.model) {
-				return errorResult("Error: no model available to analyze the session.");
+				throw new Error("No model available to analyze the session.");
 			}
 
 			const apiKey = await ctx.modelRegistry.getApiKeyForProvider(ctx.model.provider);
 			if (!apiKey) {
-				return errorResult(`Error: no API key available for ${ctx.model.provider}/${ctx.model.id}.`);
+				throw new Error(`No API key available for ${ctx.model.provider}/${ctx.model.id}.`);
 			}
 
 			try {
@@ -106,10 +101,9 @@ export default function (pi: ExtensionAPI) {
 				);
 
 				if (response.stopReason === "aborted") {
-					return {
-						content: [{ type: "text" as const, text: "Session query cancelled." }],
-						details: { cancelled: true },
-					};
+					const error = new Error("Session query cancelled.");
+					error.name = "AbortError";
+					throw error;
 				}
 
 				if (response.stopReason === "error") {
@@ -117,7 +111,7 @@ export default function (pi: ExtensionAPI) {
 						"errorMessage" in response && typeof response.errorMessage === "string"
 							? response.errorMessage
 							: "LLM request failed";
-					return errorResult(`Error querying session: ${message}`);
+					throw new Error(`Error querying session: ${message}`);
 				}
 
 				const answer = response.content
@@ -136,8 +130,10 @@ export default function (pi: ExtensionAPI) {
 					},
 				};
 			} catch (error) {
+				if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
 				const message = error instanceof Error ? error.message : String(error);
-				return errorResult(`Error querying session: ${message}`);
+				if (message.startsWith("Error querying session:")) throw error;
+				throw new Error(`Error querying session: ${message}`, { cause: error });
 			}
 		},
 	});

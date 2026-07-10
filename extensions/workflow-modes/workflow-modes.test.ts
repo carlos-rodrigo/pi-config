@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { matchesKey, setKittyProtocolActive } from "@mariozechner/pi-tui";
+import { matchesKey, setKittyProtocolActive } from "@earendil-works/pi-tui";
 
 import { appendArchiveRecord } from "../self-improvement-archive/index.ts";
 import workflowModesExtension, { normalizeMode } from "./index.ts";
@@ -182,7 +182,7 @@ test("ctrl+shift+m cycles through every mode", async () => {
 
 	await shortcut.handler(ctx as any);
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
-	assert.equal(getThinkingLevel(), "off");
+	assert.equal(getThinkingLevel(), "minimal");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Fast/i);
 	assert.match(statuses.at(-1)?.value ?? "", /mode: Fast/i);
 
@@ -244,7 +244,7 @@ test("/smart /deep /deep2 /deep3 /fast commands switch modes directly", async ()
 
 	await fastCommand.handler("", ctx as any);
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
-	assert.equal(getThinkingLevel(), "off");
+	assert.equal(getThinkingLevel(), "minimal");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Fast/i);
 });
 
@@ -344,7 +344,7 @@ test("session_start applies workflow-mode flag and keeps edit/write tools active
 	await sessionStart?.({}, ctx as any);
 
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
-	assert.equal(getThinkingLevel(), "off");
+	assert.equal(getThinkingLevel(), "minimal");
 	assert.ok(getActiveTools().includes("edit"));
 	assert.ok(getActiveTools().includes("write"));
 	assert.ok(getActiveTools().includes("open_file"));
@@ -389,7 +389,7 @@ test("session_start workflow-mode flag overrides explicit CLI model selection", 
 		await sessionStart?.({}, ctx as any);
 
 		assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
-		assert.equal(getThinkingLevel(), "off");
+		assert.equal(getThinkingLevel(), "minimal");
 	} finally {
 		process.argv = originalArgv;
 	}
@@ -402,4 +402,5 @@ test("legacy workflow behavior hooks are removed", () => {
 	assert.equal(eventHandlers.has("before_agent_start"), false);
 	assert.equal(eventHandlers.has("tool_call"), false);
 	assert.equal(eventHandlers.has("input"), false);
+	assert.equal(eventHandlers.has("session_shutdown"), true);
 });

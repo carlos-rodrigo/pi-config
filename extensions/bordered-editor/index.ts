@@ -17,8 +17,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { CURSOR_MARKER, matchesKey, Key, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
+import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CURSOR_MARKER, matchesKey, Key, visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
 
 const ANSI_SGR = /\x1b\[[0-9;]*m/g;
 const GHOST_COLOR = "\x1b[90m"; // bright black (gray)

@@ -1,5 +1,5 @@
-import type { ExtensionAPI, ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 
 export type PromptQueueStatus = "queued" | "running" | "done";
 
@@ -80,9 +80,11 @@ export function applyPromptQueueAction(state: PromptQueueState, entry: PromptQue
 			if (item) {
 				item.status = entry.status;
 				item.updatedAt = entry.updatedAt;
+				if (entry.status === "running") activeId = entry.id;
+				else if (activeId === entry.id) activeId = undefined;
+			} else if (activeId === entry.id) {
+				activeId = undefined;
 			}
-			if (entry.status === "running") activeId = entry.id;
-			if (entry.status === "done" && activeId === entry.id) activeId = undefined;
 			break;
 		}
 		case "clearDone": {
@@ -121,10 +123,37 @@ function cloneState(state: PromptQueueState): PromptQueueState {
 	};
 }
 
-function isPromptQueueAction(value: unknown): value is PromptQueueAction {
+function isFiniteNumber(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value);
+}
+
+function isPromptQueueStatus(value: unknown): value is PromptQueueStatus {
+	return value === "queued" || value === "running" || value === "done";
+}
+
+function isPromptQueueItem(value: unknown): value is PromptQueueItem {
 	if (!value || typeof value !== "object") return false;
-	const action = (value as { action?: unknown }).action;
-	return action === "add" || action === "update" || action === "delete" || action === "status" || action === "clearDone";
+	const item = value as Partial<PromptQueueItem>;
+	return isFiniteNumber(item.id) && item.id > 0 && typeof item.text === "string" && isPromptQueueStatus(item.status) && isFiniteNumber(item.createdAt) && isFiniteNumber(item.updatedAt);
+}
+
+export function isPromptQueueAction(value: unknown): value is PromptQueueAction {
+	if (!value || typeof value !== "object") return false;
+	const entry = value as Record<string, unknown>;
+	switch (entry.action) {
+		case "add":
+			return isPromptQueueItem(entry.item);
+		case "update":
+			return isFiniteNumber(entry.id) && typeof entry.text === "string" && isFiniteNumber(entry.updatedAt);
+		case "delete":
+			return isFiniteNumber(entry.id);
+		case "status":
+			return isFiniteNumber(entry.id) && isPromptQueueStatus(entry.status) && isFiniteNumber(entry.updatedAt);
+		case "clearDone":
+			return isFiniteNumber(entry.updatedAt);
+		default:
+			return false;
+	}
 }
 
 function firstLine(text: string): string {
@@ -305,8 +334,14 @@ export default function promptQueueExtension(pi: ExtensionAPI) {
 			if (isPromptQueueAction(entry.data)) state = applyPromptQueueAction(state, entry.data);
 		}
 		state.draining = false;
-		state.activeId = state.items.find((item) => item.status === "running")?.id;
+		const interruptedIds = state.items.filter((item) => item.status === "running").map((item) => item.id);
+		for (const id of interruptedIds) {
+			persist({ action: "status", id, status: "queued", updatedAt: Date.now() });
+		}
 		updateStatus(ctx);
+		if (interruptedIds.length > 0) {
+			ctx.ui.notify(`Recovered ${interruptedIds.length} interrupted queued prompt${interruptedIds.length === 1 ? "" : "s"}.`, "warning");
+		}
 	}
 
 	function updateStatus(ctx: Pick<ExtensionContext, "ui">): void {
@@ -371,8 +406,8 @@ export default function promptQueueExtension(pi: ExtensionAPI) {
 	}
 
 	async function showQueue(ctx: ExtensionContext): Promise<void> {
-		if (!ctx.hasUI) {
-			ctx.ui.notify("/queue requires interactive mode", "error");
+		if (ctx.mode !== "tui") {
+			ctx.ui.notify("/queue requires the interactive Pi TUI", "error");
 			return;
 		}
 
@@ -459,7 +494,7 @@ export default function promptQueueExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => reconstruct(ctx));
 	pi.on("session_tree", async (_event, ctx) => reconstruct(ctx));
-	pi.on("agent_end", async (_event, ctx) => {
+	pi.on("agent_settled", async (_event, ctx) => {
 		const activeId = state.activeId;
 		if (activeId === undefined) return;
 		const shouldContinue = state.draining;

@@ -9,6 +9,7 @@ import {
 	readFileSync,
 	statSync,
 	writeFileSync,
+	type Dirent,
 } from "node:fs";
 import {
 	basename,
@@ -21,8 +22,8 @@ import {
 	sep,
 } from "node:path";
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 const INDEX_VERSION = 5;
 const INDEX_DIR = ".pi/semantic-search";
@@ -719,7 +720,7 @@ function discoverProjectFiles(cwd: string, config: SemanticSearchConfig = readSe
 function walkFiles(cwd: string, current = "", excludePatterns: readonly RegExp[] = []): string[] {
 	const directory = current ? join(cwd, current) : cwd;
 	const out: string[] = [];
-	let entries: ReturnType<typeof readdirSync>;
+	let entries: Dirent[];
 	try {
 		entries = readdirSync(directory, { withFileTypes: true });
 	} catch {
@@ -938,9 +939,14 @@ export function resolveOllamaSummaryConfig(
 
 async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: number, signal?: AbortSignal): Promise<unknown> {
 	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), timeoutMs);
+	let timedOut = false;
+	const timeout = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, timeoutMs);
 	const abort = () => controller.abort();
-	signal?.addEventListener("abort", abort, { once: true });
+	if (signal?.aborted) controller.abort();
+	else signal?.addEventListener("abort", abort, { once: true });
 	try {
 		const response = await fetch(url, { ...init, signal: controller.signal });
 		if (!response.ok) {
@@ -949,7 +955,12 @@ async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: n
 		}
 		return await response.json();
 	} catch (error) {
-		if (error instanceof Error && error.name === "AbortError") {
+		if (signal?.aborted) {
+			const aborted = new Error("Ollama request cancelled.");
+			aborted.name = "AbortError";
+			throw aborted;
+		}
+		if (timedOut || (error instanceof Error && error.name === "AbortError")) {
 			throw new Error(`Timed out calling Ollama after ${timeoutMs}ms.`);
 		}
 		throw error;
@@ -2140,6 +2151,11 @@ export async function searchIndexWithEmbeddings(
 	index: SearchIndex,
 	options: SearchOptions & { ollama?: Partial<OllamaEmbeddingConfig>; signal?: AbortSignal },
 ): Promise<{ results: SearchResult[]; embeddingUsed: boolean; config: OllamaEmbeddingConfig }> {
+	if (options.signal?.aborted) {
+		const error = new Error("Semantic search cancelled.");
+		error.name = "AbortError";
+		throw error;
+	}
 	const config = resolveOllamaEmbeddingConfig({
 		model: options.ollama?.model ?? index.embedding?.model,
 		baseUrl: options.ollama?.baseUrl ?? index.embedding?.baseUrl,
@@ -3140,6 +3156,19 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 			}
 
 			if (background) {
+				const runningStatus = currentBackgroundRebuildStatus(ctx.cwd);
+				if (runningStatus?.status === "running") {
+					watchBackgroundIndexBuild(pi, ctx.cwd, ctx.ui);
+					publishBackgroundRebuildComposerStatus(pi, ctx.ui, runningStatus);
+					ctx.ui.notify("A semantic index rebuild is already running.", "info");
+					pi.sendMessage?.({
+						customType: "semantic-search",
+						content: `Semantic index rebuild is already running.\nStatus: ${getIndexRebuildStatusPath(resolve(ctx.cwd))}\nLog: ${runningStatus.logPath}\nMonitor: /index rebuild --status or the index_rebuild_status tool.`,
+						display: true,
+						details: runningStatus,
+					});
+					return;
+				}
 				clearTerminalIndicatorTimer(ctx.cwd);
 				const started = startIndexBuild(ctx.cwd, { embeddingModel: model, summaryModel, summariesDisabled });
 				watchBackgroundIndexBuild(pi, ctx.cwd, ctx.ui);
@@ -3340,10 +3369,8 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 					results = searched.results;
 					embeddingUsed = searched.embeddingUsed;
 				} catch (error) {
-					return {
-						content: [{ type: "text" as const, text: formatOllamaRequirementFailure(error, { embeddingModel: params.embeddingModel, summaryModel: params.summaryModel, ollamaUrl: params.ollamaUrl, embeddingMaxChars: params.embeddingMaxChars }) }],
-						details: { query: params.query, error: true, requirement: "ollama", message: error instanceof Error ? error.message : String(error) },
-					};
+					if (signal?.aborted) throw error;
+					throw new Error(formatOllamaRequirementFailure(error, { embeddingModel: params.embeddingModel, summaryModel: params.summaryModel, ollamaUrl: params.ollamaUrl, embeddingMaxChars: params.embeddingMaxChars }), { cause: error });
 				}
 			}
 

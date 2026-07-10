@@ -1,10 +1,10 @@
-import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
-import { Type } from "@sinclair/typebox";
-import { StringEnum } from "@mariozechner/pi-ai";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
+import { StringEnum } from "@earendil-works/pi-ai";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { execSync } from "node:child_process";
+import { execChecked } from "../lib/process.ts";
 
 export type LazygitOpenMode = "horizontal" | "vertical" | "window" | "popup";
 
@@ -14,27 +14,22 @@ async function isInsideTmux(): Promise<boolean> {
   return !!process.env.TMUX;
 }
 
-function isGitRepo(dir: string): boolean {
+async function isGitRepo(pi: Pick<ExtensionAPI, "exec">, dir: string, signal?: AbortSignal): Promise<boolean> {
   try {
-    execSync("git rev-parse --git-dir", {
-      cwd: dir,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return true;
-  } catch {
+    const result = await pi.exec("git", ["rev-parse", "--git-dir"], { cwd: dir, signal, timeout: 5_000 });
+    return result.code === 0;
+  } catch (error) {
+    if (signal?.aborted) throw error;
     return false;
   }
 }
 
-function hasLazygit(): boolean {
+async function hasLazygit(pi: Pick<ExtensionAPI, "exec">, signal?: AbortSignal): Promise<boolean> {
   try {
-    execSync("which lazygit", {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return true;
-  } catch {
+    const result = await pi.exec("lazygit", ["--version"], { signal, timeout: 5_000 });
+    return result.code === 0;
+  } catch (error) {
+    if (signal?.aborted) throw error;
     return false;
   }
 }
@@ -84,13 +79,27 @@ function isPopupUnsupportedError(error: unknown): boolean {
   return /popup/i.test(message) && /unknown|unsupported|invalid/i.test(message);
 }
 
-async function openLazygitInTmux(pi: ExtensionAPI, targetDir: string, splitType: LazygitOpenMode): Promise<LazygitOpenMode> {
+function buildTmuxLazygitArgs(targetDir: string, splitType: LazygitOpenMode): string[] {
+  switch (splitType) {
+    case "vertical":
+      return ["split-window", "-v", "-c", targetDir, "lazygit"];
+    case "horizontal":
+      return ["split-window", "-h", "-c", targetDir, "lazygit"];
+    case "window":
+      return ["new-window", "-c", targetDir, "-n", "lazygit", "lazygit"];
+    case "popup":
+    default:
+      return ["popup", "-E", "-w", "90%", "-h", "90%", "-d", targetDir, "lazygit"];
+  }
+}
+
+export async function openLazygitInTmux(pi: ExtensionAPI, targetDir: string, splitType: LazygitOpenMode): Promise<LazygitOpenMode> {
   try {
-    await pi.exec("bash", ["-c", buildTmuxLazygitCommand(targetDir, splitType)]);
+    await execChecked(pi, "tmux", buildTmuxLazygitArgs(targetDir, splitType));
     return splitType;
   } catch (error) {
     if (splitType === "popup" && isPopupUnsupportedError(error)) {
-      await pi.exec("bash", ["-c", buildTmuxLazygitCommand(targetDir, "window")]);
+      await execChecked(pi, "tmux", buildTmuxLazygitArgs(targetDir, "window"));
       return "window";
     }
     throw error;
@@ -105,7 +114,7 @@ export default function lazygitExtension(pi: ExtensionAPI) {
   pi.registerCommand("lazygit", {
     description: "Open LazyGit in a tmux popup (usage: /lazygit [path] [--split horizontal|vertical|window|popup])",
     handler: async (args, ctx) => {
-      if (!hasLazygit()) {
+      if (!(await hasLazygit(pi))) {
         ctx.ui.notify("LazyGit is not installed", "error");
         return;
       }
@@ -131,7 +140,7 @@ export default function lazygitExtension(pi: ExtensionAPI) {
         }
       }
 
-      if (!isGitRepo(targetDir)) {
+      if (!(await isGitRepo(pi, targetDir))) {
         ctx.ui.notify("Not a git repository", "error");
         return;
       }
@@ -159,7 +168,7 @@ export default function lazygitExtension(pi: ExtensionAPI) {
 
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       // Check lazygit is installed
-      if (!hasLazygit()) {
+      if (!(await hasLazygit(pi, signal))) {
         throw new Error("LazyGit is not installed. Install with: pacman -S lazygit (Arch) or brew install lazygit (macOS)");
       }
 
@@ -186,7 +195,7 @@ export default function lazygitExtension(pi: ExtensionAPI) {
       }
 
       // Check it's a git repo
-      if (!isGitRepo(targetDir)) {
+      if (!(await isGitRepo(pi, targetDir, signal))) {
         throw new Error(`Not a git repository: ${targetDir}`);
       }
 
@@ -214,8 +223,8 @@ export default function lazygitExtension(pi: ExtensionAPI) {
       return new Text(text, 0, 0);
     },
 
-    renderResult(result, { expanded }, theme) {
-      if (result.isError) {
+    renderResult(result, { expanded }, theme, context) {
+      if (context.isError) {
         const msg = result.content[0];
         return new Text(theme.fg("error", msg?.type === "text" ? msg.text : "Error"), 0, 0);
       }

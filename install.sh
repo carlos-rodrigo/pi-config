@@ -41,12 +41,17 @@ if [ -d "${LEGACY_PI_SKILLS_DIR}" ] || [ -L "${LEGACY_PI_SKILLS_DIR}" ]; then
     fi
 
     cp -RL "$skill" "$target"
+    rm -rf -- "$skill"
     echo "  ✓ migrated skill ${name}"
     migrated=$((migrated + 1))
   done
 
-  rm -rf "${LEGACY_PI_SKILLS_DIR}"
-  echo "  ✓ removed legacy ${LEGACY_PI_SKILLS_DIR} (migrated ${migrated}, skipped ${skipped})"
+  if [ "$skipped" -eq 0 ]; then
+    rmdir "${LEGACY_PI_SKILLS_DIR}" 2>/dev/null || true
+    echo "  ✓ removed legacy ${LEGACY_PI_SKILLS_DIR} (migrated ${migrated})"
+  else
+    echo "  ⚠ preserved ${LEGACY_PI_SKILLS_DIR} with ${skipped} skipped skill(s); reconcile them manually"
+  fi
   echo ""
 fi
 

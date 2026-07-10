@@ -1,4 +1,5 @@
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ThinkingLevel } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { recommendModeFromArchive } from "../self-improvement-archive/index.ts";
 
@@ -19,11 +20,11 @@ const MODE_STATUS_COLOR: Record<AgentMode, "success" | "error" | "warning"> = {
 	fast: "warning",
 };
 
-type ModeModelCandidate = { provider: string; model: string; thinking?: string };
+type ModeModelCandidate = { provider: string; model: string; thinking?: ThinkingLevel };
 
 type ModeProfile = {
 	models: ModeModelCandidate[];
-	thinking: string;
+	thinking: ThinkingLevel;
 };
 
 const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
@@ -55,7 +56,7 @@ const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
 			{ provider: "openai-codex", model: "gpt-5.4" },
 			{ provider: "anthropic", model: "claude-opus-4-5" },
 		],
-		thinking: "off",
+		thinking: "minimal",
 	},
 };
 
@@ -295,6 +296,10 @@ export default function (pi: ExtensionAPI) {
 
 		const mode = flagMode ?? restoredMode ?? inferredMode ?? currentMode;
 		await applyMode(mode, ctx, { persist: false, notify: false });
+	});
+
+	pi.on("session_shutdown", async () => {
+		currentCtx = undefined;
 	});
 
 	pi.events.on("workflow:request-mode", () => {

@@ -73,3 +73,5 @@ pi install ./extensions/worktree-manager
 - **auto-prompt** + **bordered-editor** work together via `pi.events` — auto-prompt generates suggestions, bordered-editor renders the ghost text.
 - **agent-jobs** requires Pi to be running inside tmux; it uses detached windows and persists results under `.pi/agent-jobs/`.
 - Researcher, oracle, and deep-review prompt templates use **agent-jobs** for non-blocking background work.
+- **worktree-manager** does not copy `.env*` files by default; use `copyEnv: true` or `/ws new <feature> --copy-env` only when the new worktree explicitly needs them.
+- **web-tools** rejects private/local network targets, validates redirects, bounds response bodies, and honors tool cancellation.

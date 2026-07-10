@@ -1,6 +1,6 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { StringEnum } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import {
 	buildWindowName,
 	createFeatureWorktree,
@@ -10,7 +10,7 @@ import {
 	pruneWorktrees,
 	removeWorktree,
 	slugifyFeature,
-} from "./lib/worktree.js";
+} from "./lib/worktree.ts";
 
 function stripPrefix(input: string, prefix: string): string {
 	return input.slice(prefix.length).trim();
@@ -57,7 +57,7 @@ function formatWorktreeList(
 function wsHelpText(): string {
 	return [
 		"Usage:",
-		"  /ws new <feature name or slug>",
+		"  /ws new <feature name or slug> [--copy-env]",
 		"  /ws list",
 		"  /ws open <slug> [--window]",
 		"  /ws remove <slug> [--force]",
@@ -89,13 +89,14 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (cleanedInput.startsWith("new ")) {
-				const brief = stripPrefix(cleanedInput, "new");
+				const copyEnv = hasStandaloneFlag(cleanedInput, "--copy-env");
+				const brief = stripPrefix(stripStandaloneFlag(cleanedInput, "--copy-env"), "new");
 				if (!brief) {
-					ctx.ui.notify("Usage: /ws new <feature name>", "error");
+					ctx.ui.notify("Usage: /ws new <feature name> [--copy-env]", "error");
 					return;
 				}
 
-				const result = await createFeatureWorktree(pi, ctx.cwd, brief);
+				const result = await createFeatureWorktree(pi, ctx.cwd, brief, { copyEnv });
 				if (!result.ok) {
 					ctx.ui.notify(result.error ?? "Failed to create worktree", "error");
 					return;
@@ -226,27 +227,26 @@ export default function (pi: ExtensionAPI) {
 			window: Type.Optional(
 				Type.Boolean({ description: "When action=open, launch in a new tmux window instead of the default split pane." }),
 			),
+			copyEnv: Type.Optional(
+				Type.Boolean({ description: "When action=new, explicitly copy root .env* files into the new worktree. Defaults to false." }),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			if (params.action === "list") {
 				const listing = await listWorktrees(pi, ctx.cwd);
 				if (!listing) {
-					return { content: [{ type: "text", text: "Not inside a git repository." }], details: {} };
+					throw new Error("Not inside a git repository.");
 				}
 				return { content: [{ type: "text", text: formatWorktreeList(listing.items) }], details: { count: listing.items.length } };
 			}
 
 			if (params.action === "new") {
 				if (!params.target?.trim()) {
-					return { content: [{ type: "text", text: "target is required for action=new" }], details: {}, isError: true };
+					throw new Error("target is required for action=new");
 				}
-				const created = await createFeatureWorktree(pi, ctx.cwd, params.target);
+				const created = await createFeatureWorktree(pi, ctx.cwd, params.target, { copyEnv: params.copyEnv ?? false });
 				if (!created.ok) {
-					return {
-						content: [{ type: "text", text: created.error ?? "Failed to create worktree." }],
-						details: created,
-						isError: true,
-					};
+					throw new Error(created.error ?? "Failed to create worktree.");
 				}
 				return {
 					content: [{ type: "text", text: `Created ${created.branch} at ${created.worktreePath}` }],
@@ -256,22 +256,18 @@ export default function (pi: ExtensionAPI) {
 
 			if (params.action === "open") {
 				if (!params.target?.trim()) {
-					return { content: [{ type: "text", text: "target is required for action=open" }], details: {}, isError: true };
+					throw new Error("target is required for action=open");
 				}
 
 				const slug = slugifyFeature(params.target);
 				const listing = await listWorktrees(pi, ctx.cwd);
 				if (!listing) {
-					return { content: [{ type: "text", text: "Not inside a git repository." }], details: {}, isError: true };
+					throw new Error("Not inside a git repository.");
 				}
 
 				const found = findFeatureWorktree(listing.items, slug);
 				if (!found) {
-					return {
-						content: [{ type: "text", text: `No worktree found for slug '${slug}'` }],
-						details: {},
-						isError: true,
-					};
+					throw new Error(`No worktree found for slug '${slug}'`);
 				}
 
 				const launched = await launchPiInTmux(pi, {
@@ -281,18 +277,10 @@ export default function (pi: ExtensionAPI) {
 					launchMode: params.window ? "window" : "pane",
 				});
 				if (!launched.ok) {
-					return {
-						content: [
-							{
-								type: "text",
-								text:
-									`${launched.error ?? "Failed to open tmux session."}` +
-									(launched.fallbackCommand ? `\nFallback: ${launched.fallbackCommand}` : ""),
-							},
-						],
-						details: { slug, path: found.path },
-						isError: true,
-					};
+					throw new Error(
+						`${launched.error ?? "Failed to open tmux session."}` +
+							(launched.fallbackCommand ? `\nFallback: ${launched.fallbackCommand}` : ""),
+					);
 				}
 				return {
 					content: [{ type: "text", text: `Opened ${slug} in tmux ${params.window ? "window" : "pane"}.` }],
@@ -302,49 +290,33 @@ export default function (pi: ExtensionAPI) {
 
 			if (params.action === "remove") {
 				if (!params.target?.trim()) {
-					return { content: [{ type: "text", text: "target is required for action=remove" }], details: {}, isError: true };
+					throw new Error("target is required for action=remove");
 				}
 				const slug = slugifyFeature(params.target);
 				const listing = await listWorktrees(pi, ctx.cwd);
 				if (!listing) {
-					return { content: [{ type: "text", text: "Not inside a git repository." }], details: {}, isError: true };
+					throw new Error("Not inside a git repository.");
 				}
 				const found = findFeatureWorktree(listing.items, slug);
 				if (!found) {
-					return {
-						content: [{ type: "text", text: `No worktree found for slug '${slug}'` }],
-						details: {},
-						isError: true,
-					};
+					throw new Error(`No worktree found for slug '${slug}'`);
 				}
 				if (found.isMain) {
-					return {
-						content: [{ type: "text", text: "Refusing to remove main worktree." }],
-						details: {},
-						isError: true,
-					};
+					throw new Error("Refusing to remove main worktree.");
 				}
 				if (found.dirty && !params.force) {
-					return {
-						content: [{ type: "text", text: "Worktree is dirty. Retry with force=true." }],
-						details: { slug, path: found.path },
-						isError: true,
-					};
+					throw new Error("Worktree is dirty. Retry with force=true.");
 				}
 				const removed = await removeWorktree(pi, ctx.cwd, found.path, Boolean(params.force));
 				if (!removed.ok) {
-					return {
-						content: [{ type: "text", text: removed.error ?? "Failed to remove worktree." }],
-						details: { slug, path: found.path },
-						isError: true,
-					};
+					throw new Error(removed.error ?? "Failed to remove worktree.");
 				}
 				return { content: [{ type: "text", text: `Removed ${found.path}` }], details: { slug, path: found.path } };
 			}
 
 			const pruned = await pruneWorktrees(pi, ctx.cwd);
 			if (!pruned.ok) {
-				return { content: [{ type: "text", text: pruned.error ?? "Failed to prune worktrees." }], details: {}, isError: true };
+				throw new Error(pruned.error ?? "Failed to prune worktrees.");
 			}
 			return { content: [{ type: "text", text: "Pruned stale worktree references." }], details: {} };
 		},

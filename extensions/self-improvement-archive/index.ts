@@ -1,9 +1,9 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-import { StringEnum } from "@mariozechner/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { StringEnum } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 export const SELF_IMPROVEMENT_SCHEMA_VERSION = 1;
 export const SELF_IMPROVEMENT_DIR = ".pi/self-improvement";
@@ -208,10 +208,10 @@ function takePendingToolStep(state: RunState, toolName: string): number | undefi
 	return index;
 }
 
-function textFromToolResult(event: { content?: Array<{ text?: string }> }): string {
+function textFromToolResult(event: { content?: Array<{ type?: string; text?: unknown }> }): string {
 	return (event.content ?? [])
 		.map((part) => part.text)
-		.filter((text): text is string => Boolean(text))
+		.filter((text): text is string => typeof text === "string" && Boolean(text))
 		.join("\n")
 		.trim();
 }
@@ -228,7 +228,7 @@ function recordToolCallReplay(state: RunState, event: { toolName: string; input?
 	if (index !== undefined) rememberPendingToolStep(state, event.toolName, index);
 }
 
-function recordToolResultReplay(state: RunState, event: { toolName: string; isError?: boolean; content?: Array<{ text?: string }> }): void {
+function recordToolResultReplay(state: RunState, event: { toolName: string; isError?: boolean; content?: Array<{ type?: string; text?: unknown }> }): void {
 	const isError = Boolean(event.isError);
 	const status: ReplayLiteStep["status"] = isError ? "failed" : "passed";
 	const failureSummary = isError ? compactReplayText(textFromToolResult(event) || "tool failed") : undefined;
@@ -845,18 +845,25 @@ export default function selfImprovementArchiveExtension(pi: ExtensionAPI) {
 		runState = undefined;
 	});
 
-	pi.on("session_shutdown", async () => {
+	function finalizeRun(ctx: ExtensionContext): void {
+		if (!runState) return;
+		appendArchiveRecord(runState.cwd, buildRunRecord(runState, ctx));
 		runState = undefined;
+	}
+
+	pi.on("session_shutdown", async () => {
+		if (runState && currentCtx) finalizeRun(currentCtx);
 		currentCtx = undefined;
 	});
 
 	pi.on("agent_start", async (event, ctx) => {
 		currentCtx = ctx;
+		if (runState) return;
 		runState = {
 			startedAt: Date.now(),
 			sessionId: getSessionId(ctx),
 			cwd: ctx.cwd,
-			prompt: typeof (event as { prompt?: unknown }).prompt === "string" ? (event as { prompt: string }).prompt : undefined,
+			prompt: typeof (event as unknown as { prompt?: unknown }).prompt === "string" ? (event as unknown as { prompt: string }).prompt : undefined,
 			model: modelLabel(ctx.model),
 			workflowMode,
 			toolCounts: {},
@@ -883,11 +890,9 @@ export default function selfImprovementArchiveExtension(pi: ExtensionAPI) {
 		runState.toolFailures.push({ toolName: event.toolName, message: truncate(message) });
 	});
 
-	pi.on("agent_end", async (_event, ctx) => {
+	pi.on("agent_settled", async (_event, ctx) => {
 		currentCtx = ctx;
-		if (!runState) return;
-		appendArchiveRecord(runState.cwd, buildRunRecord(runState, ctx));
-		runState = undefined;
+		finalizeRun(ctx);
 	});
 
 	pi.registerCommand("improve-archive", {

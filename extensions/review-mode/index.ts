@@ -1,5 +1,5 @@
-import { getLanguageFromPath, highlightCode, type ExtensionAPI, type ExtensionCommandContext, type Theme } from "@mariozechner/pi-coding-agent";
-import { CURSOR_MARKER, Key, matchesKey, truncateToWidth, type Focusable, visibleWidth } from "@mariozechner/pi-tui";
+import { getLanguageFromPath, highlightCode, type ExtensionAPI, type ExtensionCommandContext, type Theme } from "@earendil-works/pi-coding-agent";
+import { CURSOR_MARKER, Key, matchesKey, truncateToWidth, type Focusable, visibleWidth } from "@earendil-works/pi-tui";
 
 export type ReviewModeSource = "local" | "staged" | "unstaged" | "outgoing";
 export type ReviewModeInputMode = "browse" | "ask" | "note";
@@ -685,7 +685,7 @@ async function loadReviewModeData(
 			);
 		case "outgoing": {
 			const upstream = await resolveUpstreamRef(pi, cwd);
-			if (!upstream.ok) return upstream;
+			if (upstream.ok === false) return upstream;
 			const range = `${upstream.upstreamRef}...HEAD`;
 			return loadSimpleTrackedReviewModeData(
 				pi,
@@ -1990,7 +1990,7 @@ export async function handleReviewModeCommand(pi: ExtensionAPI, args: string, ct
 		return;
 	}
 
-	if (!ctx.hasUI) {
+	if (ctx.mode !== "tui") {
 		ctx.ui.notify("review-mode requires the interactive Pi TUI.", "error");
 		return;
 	}
@@ -1998,7 +1998,7 @@ export async function handleReviewModeCommand(pi: ExtensionAPI, args: string, ct
 	await ctx.waitForIdle();
 
 	const loaded = await loadReviewModeData(pi, ctx.cwd, parsed.source);
-	if (!loaded.ok) {
+	if (loaded.ok === false) {
 		ctx.ui.notify(loaded.error, loaded.level);
 		return;
 	}

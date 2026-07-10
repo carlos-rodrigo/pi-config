@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getRepoContext, removeWorktree, type RepoContext } from "./lib/worktree.js";
 
 const PR_REVIEW_WORKTREE_ROOT_SUFFIX = "-pr-review-worktrees";

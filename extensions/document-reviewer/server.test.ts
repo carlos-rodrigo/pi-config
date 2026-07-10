@@ -3,11 +3,15 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import * as net from "node:net";
+import { once } from "node:events";
 import type { SubmitPullRequestReviewInput } from "./github-pr.js";
 import {
 	DocumentReviewService,
 	buildFallbackReviewBody,
+	getDocumentReviewService,
 	publishPullRequestReview,
+	stopDocumentReviewService,
 	type PullRequestReviewContext,
 } from "./server.js";
 
@@ -45,6 +49,89 @@ async function postJson(url: string, body: Record<string, unknown>) {
 		body: JSON.stringify(body),
 	});
 }
+
+test("concurrent singleton requests wait for one started service", async () => {
+	const [first, second] = await Promise.all([getDocumentReviewService(), getDocumentReviewService()]);
+	try {
+		assert.equal(first, second);
+	} finally {
+		await stopDocumentReviewService();
+	}
+});
+
+test("stopping the review service terminates a partial request", async () => {
+	const fixture = makeTempMarkdown("# Title\n");
+	const service = new DocumentReviewService();
+	await service.start();
+	const session = await service.createSession(fixture.filePath);
+	const endpoint = new URL(`/api/${session.sessionId}/comments`, session.documentUrl);
+	const socket = net.createConnection({ host: endpoint.hostname, port: Number(endpoint.port) });
+	try {
+		await once(socket, "connect");
+		socket.write(`POST ${endpoint.pathname} HTTP/1.1\r\nHost: ${endpoint.host}\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{`);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		await Promise.race([
+			service.stop(),
+			new Promise((_, reject) => setTimeout(() => reject(new Error("service shutdown timed out")), 500)),
+		]);
+	} finally {
+		socket.destroy();
+		await service.stop();
+		fixture.cleanup();
+	}
+});
+
+test("review service rejects oversized request bodies", async () => {
+	const fixture = makeTempMarkdown("# Title\n");
+	const service = new DocumentReviewService();
+	await service.start();
+	try {
+		const session = await service.createSession(fixture.filePath);
+		const response = await fetch(`${new URL(session.documentUrl).origin}/api/${session.sessionId}/comments`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "x".repeat(1_000_001),
+		});
+		assert.equal(response.status, 413);
+	} finally {
+		await service.stop();
+		fixture.cleanup();
+	}
+});
+
+test("waitForFinish aborts promptly and removes the abandoned session", async (t) => {
+	const fixture = makeTempMarkdown("# Title\n");
+	const service = new DocumentReviewService();
+	await service.start();
+	t.after(async () => {
+		await service.stop();
+		fixture.cleanup();
+	});
+
+	const session = await service.createSession(fixture.filePath);
+	const controller = new AbortController();
+	const wait = service.waitForFinish(session.sessionId, { signal: controller.signal });
+	controller.abort();
+
+	await assert.rejects(wait, (error: any) => error?.name === "AbortError");
+	const response = await fetch(session.documentUrl);
+	assert.equal(response.status, 404);
+});
+
+test("stopping the review service rejects pending waits", async () => {
+	const fixture = makeTempMarkdown("# Title\n");
+	const service = new DocumentReviewService();
+	await service.start();
+	try {
+		const session = await service.createSession(fixture.filePath);
+		const wait = service.waitForFinish(session.sessionId);
+		await service.stop();
+		await assert.rejects(wait, /service stopped/i);
+	} finally {
+		await service.stop();
+		fixture.cleanup();
+	}
+});
 
 test("document sessions still expose markdown and finish by writing inline comments", async (t) => {
 	const fixture = makeTempMarkdown("# Title\n\nHello world\n");

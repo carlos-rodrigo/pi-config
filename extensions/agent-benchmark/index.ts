@@ -1,16 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
-import { StringEnum } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { StringEnum } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 import { SELF_IMPROVEMENT_DIR } from "../self-improvement-archive/index.ts";
 
 const BENCHMARK_DIR = "benchmarks";
 const REGRESSION_SEED_DIR = "benchmark-regressions";
 const RESULT_SCHEMA_VERSION = 1;
-const DEFAULT_TIMEOUT_MS = 5_000;
 const BENCHMARK_TIERS = ["smoke", "harness", "scenario", "regression"] as const;
 const RESULT_TIER_ORDER = [...BENCHMARK_TIERS, "unknown"] as const;
 
@@ -59,6 +58,12 @@ type RegressionSeedDefinition = {
 	source?: unknown;
 	expected?: unknown;
 	tags?: unknown;
+};
+
+type ValidRegressionSeedDefinition = RegressionSeedDefinition & {
+	schemaVersion: 1;
+	id: string;
+	description: string;
 };
 
 let lastIdTimestamp = "";
@@ -139,7 +144,7 @@ function safeRegressionSeedId(file: string): string {
 	return safe || "invalid-seed";
 }
 
-function isRegressionSeedDefinition(value: unknown): value is Required<Pick<RegressionSeedDefinition, "schemaVersion" | "id" | "description">> & RegressionSeedDefinition {
+function isRegressionSeedDefinition(value: unknown): value is ValidRegressionSeedDefinition {
 	if (typeof value !== "object" || value === null) return false;
 	const seed = value as RegressionSeedDefinition;
 	if (seed.schemaVersion !== 1) return false;
@@ -440,7 +445,6 @@ export default function agentBenchmarkExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({
 			action: StringEnum(["list", "run", "compare"] as const, { description: "Benchmark action." }),
 			ids: Type.Optional(Type.Array(Type.String(), { description: "Optional benchmark ids or tiers for action=run." })),
-			timeoutMs: Type.Optional(Type.Number({ description: `Reserved timeout hint for future agent-backed benchmarks (default ${DEFAULT_TIMEOUT_MS}).`, minimum: 1, maximum: 60_000 })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			if (params.action === "list") return { content: [{ type: "text" as const, text: formatBenchmarkList(ctx.cwd) }], details: { benchmarks: availableBenchmarks(ctx.cwd).map((benchmark) => ({ id: benchmark.id, tier: benchmark.tier })) } };

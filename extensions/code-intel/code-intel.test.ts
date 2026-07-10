@@ -132,6 +132,22 @@ test("ast_search builds safe ast-grep arguments", () => {
 	]);
 });
 
+test("code-intel tools honor already-aborted signals", async () => {
+	const tools = new Map<string, any>();
+	codeIntelExtension({
+		registerTool(definition: any) {
+			tools.set(definition.name, definition);
+		},
+	} as any);
+	const controller = new AbortController();
+	controller.abort();
+
+	await assert.rejects(
+		tools.get("git_pickaxe").execute("call-1", { query: "value" }, controller.signal, undefined, { cwd: process.cwd() }),
+		(error: any) => error?.name === "AbortError",
+	);
+});
+
 test("code-intel extension registers non-semantic code navigation tools", () => {
 	const tools = new Map<string, any>();
 	codeIntelExtension({

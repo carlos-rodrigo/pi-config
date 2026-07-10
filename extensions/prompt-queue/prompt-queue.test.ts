@@ -7,6 +7,7 @@ import promptQueueExtension, {
 	createPromptQueueItem,
 	formatQueueStatus,
 	getNextQueuedItem,
+	isPromptQueueAction,
 } from "./index.ts";
 
 test("prompt queue actions add, update, mark done, and clear completed prompts", () => {
@@ -61,6 +62,62 @@ test("delete clears active prompt when the running item is removed", () => {
 	assert.deepEqual(state.items, []);
 });
 
+test("interrupted running items can be recovered to queued", () => {
+	let state = createInitialState();
+	state = applyPromptQueueAction(state, { action: "add", item: createPromptQueueItem(1, "One", 100) });
+	state = applyPromptQueueAction(state, { action: "status", id: 1, status: "running", updatedAt: 200 });
+	state = applyPromptQueueAction(state, { action: "status", id: 1, status: "queued", updatedAt: 300 });
+
+	assert.equal(state.activeId, undefined);
+	assert.equal(state.items[0]?.status, "queued");
+});
+
+test("persisted queue actions require valid payloads", () => {
+	assert.equal(isPromptQueueAction({ action: "add" }), false);
+	assert.equal(isPromptQueueAction({ action: "status", id: 1, status: "bogus", updatedAt: 1 }), false);
+	assert.equal(isPromptQueueAction({ action: "delete", id: Number.NaN }), false);
+	assert.equal(isPromptQueueAction({ action: "add", item: createPromptQueueItem(1, "valid", 1) }), true);
+
+	const state = applyPromptQueueAction(createInitialState(), { action: "status", id: 99, status: "running", updatedAt: 1 });
+	assert.equal(state.activeId, undefined);
+});
+
+test("session reconstruction ignores malformed entries and persists interrupted recovery", async () => {
+	const handlers = new Map<string, any>();
+	const appended: any[] = [];
+	const notifications: string[] = [];
+	promptQueueExtension({
+		registerCommand() {},
+		registerShortcut() {},
+		on(eventName: string, handler: any) {
+			handlers.set(eventName, handler);
+		},
+		appendEntry(_type: string, data: unknown) {
+			appended.push(data);
+		},
+		sendUserMessage() {},
+	} as any);
+	const item = createPromptQueueItem(1, "resume me", 1);
+	await handlers.get("session_start")({}, {
+		sessionManager: {
+			getBranch: () => [
+				{ type: "custom", customType: "prompt-queue", data: { action: "add" } },
+				{ type: "custom", customType: "prompt-queue", data: { action: "add", item } },
+				{ type: "custom", customType: "prompt-queue", data: { action: "status", id: 1, status: "running", updatedAt: 2 } },
+			],
+		},
+		ui: {
+			setStatus() {},
+			notify(message: string) {
+				notifications.push(message);
+			},
+		},
+	});
+
+	assert.deepEqual(appended, [{ action: "status", id: 1, status: "queued", updatedAt: appended[0].updatedAt }]);
+	assert.match(notifications[0] ?? "", /Recovered 1 interrupted queued prompt/);
+});
+
 test("running queue items are represented by status then delete lifecycle", () => {
 	let state = createInitialState();
 	state = applyPromptQueueAction(state, { action: "add", item: createPromptQueueItem(1, "One", 100) });
@@ -95,5 +152,5 @@ test("extension registers queue commands, shortcut, and lifecycle hooks", () => 
 
 	assert.deepEqual(commands, ["queue", "queue-add", "queue-run", "queue-stop"]);
 	assert.deepEqual(shortcuts, ["ctrl+q", "ctrl+shift+a"]);
-	assert.deepEqual(events, ["session_start", "session_tree", "agent_end"]);
+	assert.deepEqual(events, ["session_start", "session_tree", "agent_settled"]);
 });

@@ -1,7 +1,12 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { StringEnum } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import TurndownService from "turndown";
+import { lookup } from "node:dns";
+import { request as httpRequest, type RequestOptions } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { isIP } from "node:net";
+import { Readable } from "node:stream";
 
 type WebfetchFormat = "text" | "markdown" | "html";
 type WebsearchProvider = "exa" | "tavily";
@@ -13,6 +18,7 @@ type FetchedPage = {
 	statusText: string;
 	contentType: string;
 	body: string;
+	bodyTruncated: boolean;
 	cached: boolean;
 };
 
@@ -30,6 +36,15 @@ const DEFAULT_WEBFETCH_MAX_CHARS = 20_000;
 const MAX_WEBFETCH_MAX_CHARS = 100_000;
 const DEFAULT_WEBSEARCH_LIMIT = 5;
 const MAX_WEBSEARCH_LIMIT = 10;
+const MAX_FETCH_BODY_BYTES = 1_000_000;
+const MAX_API_BODY_BYTES = 2_000_000;
+const MAX_REDIRECTS = 5;
+const MAX_FETCH_CACHE_ENTRIES = 100;
+
+export type ResolvedAddress = { address: string; family: 4 | 6 };
+export type WebAddressResolver = (hostname: string, signal?: AbortSignal) => Promise<ResolvedAddress[]>;
+export type PinnedWebRequest = (url: string, address: ResolvedAddress, init: RequestInit) => Promise<Response>;
+export type WebRequestDependencies = { resolveAddresses?: WebAddressResolver; request?: PinnedWebRequest };
 
 const fetchCache = new Map<string, Omit<FetchedPage, "cached"> & { expiresAt: number }>();
 
@@ -71,6 +86,181 @@ export function normalizeWebUrl(raw: string): string {
 	}
 
 	return url.toString();
+}
+
+function abortError(): Error {
+	const error = new Error("Web request cancelled.");
+	error.name = "AbortError";
+	return error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+	if (signal?.aborted) throw abortError();
+}
+
+function isPublicIpv4(address: string): boolean {
+	const parts = address.split(".").map(Number);
+	if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+	const [a, b] = parts;
+	if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+	if (a === 100 && b >= 64 && b <= 127) return false;
+	if (a === 169 && b === 254) return false;
+	if (a === 172 && b >= 16 && b <= 31) return false;
+	if (a === 192 && (b === 0 || b === 168)) return false;
+	if (a === 198 && (b === 18 || b === 19 || b === 51)) return false;
+	if (a === 203 && b === 0) return false;
+	return true;
+}
+
+export function isPublicIpAddress(address: string): boolean {
+	const normalized = address.toLowerCase().replace(/^\[|\]$/g, "");
+	if (normalized.startsWith("::ffff:")) return isPublicIpv4(normalized.slice(7));
+	const version = isIP(normalized);
+	if (version === 4) return isPublicIpv4(normalized);
+	if (version !== 6) return false;
+	const firstHextet = Number.parseInt(normalized.split(":", 1)[0] || "0", 16);
+	if (firstHextet < 0x2000 || firstHextet > 0x3fff) return false;
+	return !normalized.startsWith("2001:db8:");
+}
+
+function resolveHostAddresses(hostname: string, signal?: AbortSignal): Promise<ResolvedAddress[]> {
+	throwIfAborted(signal);
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		const finish = (error: Error | null, addresses?: ResolvedAddress[]) => {
+			if (settled) return;
+			settled = true;
+			signal?.removeEventListener("abort", onAbort);
+			if (error) reject(error);
+			else resolve(addresses ?? []);
+		};
+		const onAbort = () => finish(abortError());
+		signal?.addEventListener("abort", onAbort, { once: true });
+		lookup(hostname, { all: true, verbatim: true }, (error, addresses) => {
+			if (error) finish(error);
+			else finish(null, addresses.map(({ address, family }) => ({ address, family: family === 6 ? 6 : 4 })));
+		});
+	});
+}
+
+export async function resolvePublicWebAddress(
+	url: string,
+	signal?: AbortSignal,
+	resolveAddresses: WebAddressResolver = resolveHostAddresses,
+): Promise<ResolvedAddress> {
+	const hostname = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+	if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local")) {
+		throw new Error(`Refusing to fetch local hostname '${hostname}'.`);
+	}
+	if (isIP(hostname)) {
+		if (!isPublicIpAddress(hostname)) throw new Error(`Refusing to fetch private or non-public address '${hostname}'.`);
+		return { address: hostname, family: isIP(hostname) === 6 ? 6 : 4 };
+	}
+	const addresses = await resolveAddresses(hostname, signal);
+	if (addresses.length === 0 || addresses.some(({ address }) => !isPublicIpAddress(address))) {
+		throw new Error(`Refusing to fetch hostname '${hostname}' because it resolves to a private or non-public address.`);
+	}
+	return addresses[0]!;
+}
+
+function requestPinnedUrl(url: string, pinned: ResolvedAddress, init: RequestInit): Promise<Response> {
+	return new Promise((resolve, reject) => {
+		const target = new URL(url);
+		const headers = Object.fromEntries(new Headers(init.headers).entries());
+		const options: RequestOptions = {
+			protocol: target.protocol,
+			hostname: target.hostname,
+			port: target.port || undefined,
+			path: `${target.pathname}${target.search}`,
+			method: init.method ?? "GET",
+			headers,
+			signal: init.signal ?? undefined,
+			lookup: (_hostname, _options, callback) => callback(null, pinned.address, pinned.family),
+		};
+		const request = (target.protocol === "https:" ? httpsRequest : httpRequest)(options, (response) => {
+			const responseHeaders = new Headers();
+			for (const [name, value] of Object.entries(response.headers)) {
+				if (Array.isArray(value)) for (const item of value) responseHeaders.append(name, item);
+				else if (value !== undefined) responseHeaders.set(name, String(value));
+			}
+			resolve(new Response(Readable.toWeb(response) as ReadableStream<Uint8Array>, {
+				status: response.statusCode ?? 500,
+				statusText: response.statusMessage,
+				headers: responseHeaders,
+			}));
+		});
+		request.once("error", reject);
+		if (typeof init.body === "string" || init.body instanceof Uint8Array) request.write(init.body);
+		else if (init.body !== undefined && init.body !== null) {
+			request.destroy(new Error("Unsupported request body type."));
+			return;
+		}
+		request.end();
+	});
+}
+
+async function cancelResponseBody(response: Response): Promise<void> {
+	await response.body?.cancel().catch(() => undefined);
+}
+
+export async function readResponseTextLimited(
+	response: Response,
+	maxBytes: number,
+	signal?: AbortSignal,
+): Promise<{ text: string; truncated: boolean }> {
+	throwIfAborted(signal);
+	if (!response.body) return { text: "", truncated: false };
+	const reader = response.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	let truncated = false;
+	try {
+		while (true) {
+			throwIfAborted(signal);
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!value) continue;
+			const remaining = maxBytes - total;
+			if (value.byteLength > remaining) {
+				if (remaining > 0) chunks.push(value.slice(0, remaining));
+				total = maxBytes;
+				truncated = true;
+				await reader.cancel();
+				break;
+			}
+			chunks.push(value);
+			total += value.byteLength;
+			if (total >= maxBytes) {
+				const next = await reader.read();
+				if (!next.done) truncated = true;
+				await reader.cancel();
+				break;
+			}
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	return { text: Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8"), truncated };
+}
+
+function linkedAbortController(signal: AbortSignal | undefined, timeoutMs: number) {
+	const controller = new AbortController();
+	let timedOut = false;
+	const onAbort = () => controller.abort();
+	if (signal?.aborted) controller.abort();
+	else signal?.addEventListener("abort", onAbort, { once: true });
+	const timeout = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, timeoutMs);
+	return {
+		controller,
+		timedOut: () => timedOut,
+		cleanup() {
+			clearTimeout(timeout);
+			signal?.removeEventListener("abort", onAbort);
+		},
+	};
 }
 
 function decodeBasicHtmlEntities(text: string): string {
@@ -119,51 +309,97 @@ function truncateText(text: string, maxChars: number): { text: string; truncated
 	};
 }
 
-async function fetchPage(url: string): Promise<FetchedPage> {
+export async function fetchPage(url: string, signal?: AbortSignal, dependencies: WebRequestDependencies = {}): Promise<FetchedPage> {
+	throwIfAborted(signal);
 	const cached = fetchCache.get(url);
 	if (cached && cached.expiresAt > Date.now()) {
 		const { expiresAt: _expiresAt, ...rest } = cached;
 		return { ...rest, cached: true };
 	}
+	if (cached) fetchCache.delete(url);
 
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
+	const linked = linkedAbortController(signal, FETCH_TIMEOUT_MS);
+	const resolveAddresses = dependencies.resolveAddresses ?? resolveHostAddresses;
+	const request = dependencies.request ?? requestPinnedUrl;
+	let currentUrl = url;
 	try {
-		const response = await fetch(url, {
-			method: "GET",
-			redirect: "follow",
-			headers: {
-				accept: "text/markdown, text/html, application/xhtml+xml, text/plain;q=0.9, */*;q=0.1",
-				"user-agent": "pi-config-web-tools/0.1",
-			},
-			signal: controller.signal,
-		});
+		for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
+			const pinned = await resolvePublicWebAddress(currentUrl, linked.controller.signal, resolveAddresses);
+			const response = await request(currentUrl, pinned, {
+				method: "GET",
+				redirect: "manual",
+				headers: {
+					accept: "text/markdown, text/html, application/xhtml+xml, text/plain;q=0.9, */*;q=0.1",
+					"user-agent": "pi-config-web-tools/0.1",
+				},
+				signal: linked.controller.signal,
+			});
+			if ([301, 302, 303, 307, 308].includes(response.status)) {
+				const location = response.headers.get("location");
+				await cancelResponseBody(response);
+				if (!location) throw new Error(`Redirect from ${currentUrl} did not include a Location header.`);
+				if (redirects === MAX_REDIRECTS) throw new Error(`Too many redirects fetching ${url}.`);
+				currentUrl = normalizeWebUrl(new URL(location, currentUrl).toString());
+				continue;
+			}
 
-		const contentType = response.headers.get("content-type") ?? "";
-		const body = await response.text();
-		if (!isTextLikeContent(contentType, body)) {
-			throw new Error(`Unsupported content type '${contentType || "unknown"}'.`);
+			const contentType = response.headers.get("content-type") ?? "";
+			const bodyResult = await readResponseTextLimited(response, MAX_FETCH_BODY_BYTES, linked.controller.signal);
+			if (!isTextLikeContent(contentType, bodyResult.text)) {
+				throw new Error(`Unsupported content type '${contentType || "unknown"}'.`);
+			}
+			const page = {
+				url,
+				finalUrl: currentUrl,
+				status: response.status,
+				statusText: response.statusText,
+				contentType,
+				body: bodyResult.text,
+				bodyTruncated: bodyResult.truncated,
+			};
+			const now = Date.now();
+			for (const [key, entry] of fetchCache) if (entry.expiresAt <= now) fetchCache.delete(key);
+			while (fetchCache.size >= MAX_FETCH_CACHE_ENTRIES) {
+				const oldest = fetchCache.keys().next().value;
+				if (oldest === undefined) break;
+				fetchCache.delete(oldest);
+			}
+			fetchCache.set(url, { ...page, expiresAt: now + WEBFETCH_CACHE_MS });
+			return { ...page, cached: false };
 		}
-
-		const page = {
-			url,
-			finalUrl: response.url || url,
-			status: response.status,
-			statusText: response.statusText,
-			contentType,
-			body,
-		};
-
-		fetchCache.set(url, { ...page, expiresAt: Date.now() + WEBFETCH_CACHE_MS });
-		return { ...page, cached: false };
+		throw new Error(`Too many redirects fetching ${url}.`);
 	} catch (error) {
-		if (error instanceof Error && error.name === "AbortError") {
+		if (signal?.aborted) throw abortError();
+		if (linked.timedOut() || (error instanceof Error && error.name === "AbortError")) {
 			throw new Error(`Timed out fetching ${url} after ${FETCH_TIMEOUT_MS}ms.`);
 		}
 		throw error;
 	} finally {
-		clearTimeout(timeout);
+		linked.cleanup();
+	}
+}
+
+async function fetchApiJson(url: string, init: RequestInit, signal?: AbortSignal): Promise<{ response: Response; payload: unknown }> {
+	throwIfAborted(signal);
+	const linked = linkedAbortController(signal, FETCH_TIMEOUT_MS);
+	try {
+		const pinned = await resolvePublicWebAddress(url, linked.controller.signal);
+		const response = await requestPinnedUrl(url, pinned, { ...init, redirect: "manual", signal: linked.controller.signal });
+		if ([301, 302, 303, 307, 308].includes(response.status)) {
+			await cancelResponseBody(response);
+			throw new Error(`Refusing unexpected API redirect from ${url}.`);
+		}
+		const body = await readResponseTextLimited(response, MAX_API_BODY_BYTES, linked.controller.signal);
+		if (body.truncated) throw new Error(`API response from ${url} exceeded ${MAX_API_BODY_BYTES} bytes.`);
+		return { response, payload: body.text ? JSON.parse(body.text) : {} };
+	} catch (error) {
+		if (signal?.aborted) throw abortError();
+		if (linked.timedOut() || (error instanceof Error && error.name === "AbortError")) {
+			throw new Error(`Timed out calling ${url} after ${FETCH_TIMEOUT_MS}ms.`);
+		}
+		throw error;
+	} finally {
+		linked.cleanup();
 	}
 }
 
@@ -228,8 +464,9 @@ async function searchExa(
 	limit: number,
 	allowedDomains?: string[],
 	blockedDomains?: string[],
+	signal?: AbortSignal,
 ): Promise<WebsearchResult[]> {
-	const response = await fetch("https://api.exa.ai/search", {
+	const { response, payload: rawPayload } = await fetchApiJson("https://api.exa.ai/search", {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
@@ -242,13 +479,13 @@ async function searchExa(
 			includeDomains: allowedDomains && allowedDomains.length > 0 ? allowedDomains : undefined,
 			excludeDomains: blockedDomains && blockedDomains.length > 0 ? blockedDomains : undefined,
 		}),
-	});
+	}, signal);
 
 	if (!response.ok) {
 		throw new Error(`Exa search failed with ${response.status} ${response.statusText}.`);
 	}
 
-	const payload = (await response.json()) as {
+	const payload = rawPayload as {
 		results?: Array<{
 			title?: string;
 			url?: string;
@@ -275,8 +512,9 @@ async function searchTavily(
 	limit: number,
 	allowedDomains?: string[],
 	blockedDomains?: string[],
+	signal?: AbortSignal,
 ): Promise<WebsearchResult[]> {
-	const response = await fetch("https://api.tavily.com/search", {
+	const { response, payload: rawPayload } = await fetchApiJson("https://api.tavily.com/search", {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
@@ -290,13 +528,13 @@ async function searchTavily(
 			exclude_domains: blockedDomains && blockedDomains.length > 0 ? blockedDomains : undefined,
 			search_depth: "advanced",
 		}),
-	});
+	}, signal);
 
 	if (!response.ok) {
 		throw new Error(`Tavily search failed with ${response.status} ${response.statusText}.`);
 	}
 
-	const payload = (await response.json()) as {
+	const payload = rawPayload as {
 		results?: Array<{
 			title?: string;
 			url?: string;
@@ -357,12 +595,12 @@ export default function (pi: ExtensionAPI) {
 				}),
 			),
 		}),
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, signal) {
 			try {
 				const normalizedUrl = normalizeWebUrl(params.url);
 				const format = (params.format ?? "markdown") as WebfetchFormat;
 				const maxChars = Math.min(Math.max(params.maxChars ?? DEFAULT_WEBFETCH_MAX_CHARS, 500), MAX_WEBFETCH_MAX_CHARS);
-				const page = await fetchPage(normalizedUrl);
+				const page = await fetchPage(normalizedUrl, signal);
 				const rendered = renderFetchedContent(page.body, page.contentType, format);
 				const truncated = truncateText(rendered, maxChars);
 
@@ -372,6 +610,7 @@ export default function (pi: ExtensionAPI) {
 					`Content-Type: ${page.contentType || "unknown"}`,
 					`Format: ${format}`,
 					page.cached ? "Cache: hit" : "Cache: miss",
+					page.bodyTruncated ? `Body limit: truncated at ${MAX_FETCH_BODY_BYTES} bytes` : "Body limit: not reached",
 					truncated.truncated ? `Truncated: yes (${maxChars} chars)` : "Truncated: no",
 					"",
 					truncated.text,
@@ -387,15 +626,12 @@ export default function (pi: ExtensionAPI) {
 						contentType: page.contentType,
 						format,
 						cached: page.cached,
+						bodyTruncated: page.bodyTruncated,
 						truncated: truncated.truncated,
 					},
 				};
 			} catch (error) {
-				return {
-					content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
-					details: { url: params.url, format: params.format ?? "markdown" },
-					isError: true,
-				};
+				throw error instanceof Error ? error : new Error(String(error));
 			}
 		},
 	});
@@ -429,7 +665,7 @@ export default function (pi: ExtensionAPI) {
 				}),
 			),
 		}),
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, signal) {
 			try {
 				const provider = resolveWebsearchProvider(params.provider as WebsearchProvider | undefined);
 				const limit = Math.min(Math.max(params.limit ?? DEFAULT_WEBSEARCH_LIMIT, 1), MAX_WEBSEARCH_LIMIT);
@@ -438,8 +674,8 @@ export default function (pi: ExtensionAPI) {
 
 				const results =
 					provider === "exa"
-						? await searchExa(process.env.EXA_API_KEY!, params.query, limit, allowedDomains, blockedDomains)
-						: await searchTavily(process.env.TAVILY_API_KEY!, params.query, limit, allowedDomains, blockedDomains);
+						? await searchExa(process.env.EXA_API_KEY!, params.query, limit, allowedDomains, blockedDomains, signal)
+						: await searchTavily(process.env.TAVILY_API_KEY!, params.query, limit, allowedDomains, blockedDomains, signal);
 
 				const filtered = filterWebsearchResults(results, allowedDomains, blockedDomains).slice(0, limit);
 				return {
@@ -452,14 +688,7 @@ export default function (pi: ExtensionAPI) {
 					},
 				};
 			} catch (error) {
-				return {
-					content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
-					details: {
-						query: params.query,
-						provider: params.provider ?? "exa",
-					},
-					isError: true,
-				};
+				throw error instanceof Error ? error : new Error(String(error));
 			}
 		},
 	});

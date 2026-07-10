@@ -161,7 +161,7 @@ test("extension records a compact run from events", async (t) => {
 	await harness.emit("tool_call", { toolName: "read", input: { path: "README.md" } }, ctx);
 	await harness.emit("tool_call", { toolName: "edit", input: { path: "src/a.ts" } }, ctx);
 	await harness.emit("tool_result", { toolName: "edit", isError: true, content: [{ type: "text", text: "oldText not found" }] }, ctx);
-	await harness.emit("agent_end", {}, ctx);
+	await harness.emit("agent_settled", {}, ctx);
 
 	const read = readArchiveRecords(fixture.root);
 	assert.equal(read.records.length, 1);
@@ -170,6 +170,27 @@ test("extension records a compact run from events", async (t) => {
 	assert.equal(read.records[0].toolCounts?.edit, 1);
 	assert.equal(read.records[0].toolFailures?.[0].message, "oldText not found");
 	assert.ok(read.records[0].touchedFiles?.[0].endsWith(path.join("src", "a.ts")));
+});
+
+test("verification emitted after agent_end is correlated before agent_settled", async (t) => {
+	const fixture = makeTempProject();
+	t.after(() => fixture.cleanup());
+	const harness = createHarness();
+	const { ctx } = createCtx(fixture.root);
+
+	await harness.emit("session_start", {}, ctx);
+	await harness.emit("agent_start", { prompt: "Change code" }, ctx);
+	await harness.emit("agent_end", {}, ctx);
+	harness.emitEvent(VERIFICATION_EVENT, {
+		projectRoot: fixture.root,
+		command: "bash scripts/verify.sh",
+		status: "passed",
+		trigger: "auto",
+	});
+	await harness.emit("agent_settled", {}, ctx);
+
+	const run = readArchiveRecords(fixture.root).records.find((record) => record.kind === "run") as any;
+	assert.deepEqual(run.replayLite.steps.map((step: any) => `${step.name}:${step.status}`), ["verification:passed"]);
 });
 
 test("last report displays compact replay-lite trajectory with failures, warnings, and verification", async (t) => {
@@ -196,7 +217,7 @@ test("last report displays compact replay-lite trajectory with failures, warning
 		failureSummary: "quick gate failed",
 		touchedPaths: ["src/a.ts"],
 	});
-	await harness.emit("agent_end", {}, ctx);
+	await harness.emit("agent_settled", {}, ctx);
 
 	const read = readArchiveRecords(fixture.root);
 	const run = read.records.find((item) => item.kind === "run") as any;
@@ -235,7 +256,7 @@ test("replay-lite is capped and legacy or malformed trajectory data stays readab
 	for (let i = 0; i < 90; i++) {
 		await harness.emit("tool_call", { toolName: "read", input: { path: `file-${i}.md` } }, ctx);
 	}
-	await harness.emit("agent_end", {}, ctx);
+	await harness.emit("agent_settled", {}, ctx);
 
 	const read = readArchiveRecords(fixture.root);
 	const cappedRun = read.records.at(-1) as any;

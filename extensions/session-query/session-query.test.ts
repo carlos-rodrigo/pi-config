@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import sessionQueryExtension from "./index.ts";
 
@@ -54,16 +54,16 @@ function makeMessages() {
 test("session_query rejects non-jsonl paths", async () => {
 	const { tools } = createHarness();
 
-	const result = await tools.get("session_query").execute(
-		"tool-call-1",
-		{ sessionPath: "/tmp/not-a-session.txt", question: "What happened?" },
-		undefined,
-		undefined,
-		{} as any,
+	await assert.rejects(
+		tools.get("session_query").execute(
+			"tool-call-1",
+			{ sessionPath: "/tmp/not-a-session.txt", question: "What happened?" },
+			undefined,
+			undefined,
+			{} as any,
+		),
+		/Expected a \.jsonl file/i,
 	);
-
-	assert.match(result.content[0].text, /Expected a \.jsonl file/i);
-	assert.equal(result.details.error, true);
 });
 
 test("session_query returns empty-session message without needing a model", async (t) => {
@@ -107,14 +107,14 @@ test("session_query reports when no model is available for a non-empty session",
 	const sessionFile = sessionManager.getSessionFile();
 
 	const { tools } = createHarness();
-	const result = await tools.get("session_query").execute(
-		"tool-call-1",
-		{ sessionPath: sessionFile, question: "What changed?" },
-		undefined,
-		undefined,
-		{ model: null } as any,
+	await assert.rejects(
+		tools.get("session_query").execute(
+			"tool-call-1",
+			{ sessionPath: sessionFile, question: "What changed?" },
+			undefined,
+			undefined,
+			{ model: null } as any,
+		),
+		/no model available/i,
 	);
-
-	assert.match(result.content[0].text, /no model available/i);
-	assert.equal(result.details.error, true);
 });

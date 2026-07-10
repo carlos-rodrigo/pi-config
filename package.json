@@ -14,6 +14,8 @@
     "test:auto-prompt": "node --test extensions/auto-prompt/auto-prompt.test.ts",
     "test:branch-switcher": "node --test extensions/branch-switcher/branch-switcher.test.ts",
     "test:checkpoint-rollback": "node --test extensions/checkpoint-rollback/checkpoint-rollback.test.ts",
+    "test:file-opener": "node --test extensions/file-opener/file-opener.test.ts",
+    "test:worktree-manager": "node --test extensions/worktree-manager/worktree-manager.test.ts",
     "test:web-tools": "node --test extensions/web-tools/web-tools.test.ts",
     "test:workflow-modes": "node --test extensions/workflow-modes/workflow-modes.test.ts",
     "test:session-query": "node --test extensions/session-query/session-query.test.ts",
@@ -26,9 +28,12 @@
     "test:code-intel": "node --test extensions/code-intel/code-intel.test.ts",
     "test:oracle": "node --test agents/oracle.test.ts",
     "test:prompt-queue": "node --test extensions/prompt-queue/prompt-queue.test.ts",
-    "test:direct": "node --test agents/oracle.test.ts extensions/agent-jobs/agent-jobs.test.ts extensions/self-improvement-archive/self-improvement-archive.test.ts extensions/agent-benchmark/agent-benchmark.test.ts extensions/agent-memory/agent-memory.test.ts extensions/overseer/overseer.test.ts extensions/auto-prompt/auto-prompt.test.ts extensions/branch-switcher/branch-switcher.test.ts extensions/checkpoint-rollback/checkpoint-rollback.test.ts extensions/web-tools/web-tools.test.ts extensions/workflow-modes/workflow-modes.test.ts extensions/session-query/session-query.test.ts extensions/lazygit/lazygit.test.ts extensions/document-reviewer/review-flow.test.ts extensions/bordered-editor/bordered-editor.test.ts extensions/verify/verify.test.ts extensions/git-blame/git-blame.test.ts extensions/review-mode/review-mode.test.ts extensions/semantic-search/semantic-search.test.ts extensions/code-intel/code-intel.test.ts extensions/prompt-queue/prompt-queue.test.ts",
+    "test:direct": "node --test agents/oracle.test.ts extensions/agent-jobs/agent-jobs.test.ts extensions/self-improvement-archive/self-improvement-archive.test.ts extensions/agent-benchmark/agent-benchmark.test.ts extensions/agent-memory/agent-memory.test.ts extensions/overseer/overseer.test.ts extensions/auto-prompt/auto-prompt.test.ts extensions/branch-switcher/branch-switcher.test.ts extensions/checkpoint-rollback/checkpoint-rollback.test.ts extensions/file-opener/file-opener.test.ts extensions/worktree-manager/worktree-manager.test.ts extensions/web-tools/web-tools.test.ts extensions/workflow-modes/workflow-modes.test.ts extensions/session-query/session-query.test.ts extensions/lazygit/lazygit.test.ts extensions/document-reviewer/review-flow.test.ts extensions/bordered-editor/bordered-editor.test.ts extensions/verify/verify.test.ts extensions/git-blame/git-blame.test.ts extensions/review-mode/review-mode.test.ts extensions/semantic-search/semantic-search.test.ts extensions/code-intel/code-intel.test.ts extensions/prompt-queue/prompt-queue.test.ts",
     "test:document-reviewer": "node scripts/test-document-reviewer.mjs",
-    "test": "npm run test:direct && npm run test:document-reviewer"
+    "test:install": "bash scripts/install.test.sh",
+    "test:package-smoke": "pi -e . --list-models >/dev/null",
+    "test:typecheck": "tsc --noEmit --allowImportingTsExtensions --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --esModuleInterop extensions/*/index.ts extensions/lib/*.ts",
+    "test": "npm run test:direct && npm run test:document-reviewer && npm run test:install && npm run test:typecheck && npm run test:package-smoke"
   },
   "pi": {
     "extensions": ["./extensions/*/index.ts"],
@@ -44,10 +49,9 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
-    "@mariozechner/pi-ai": "*",
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*",
-    "@sinclair/typebox": "*"
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   }
 }

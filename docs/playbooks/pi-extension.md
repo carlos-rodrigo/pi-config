@@ -11,29 +11,38 @@ Pi extensions live in `extensions/{name}/` with an `index.ts` entry point. They 
 ### Extension registration
 
 ```typescript
-import { ExtensionContext } from "@anthropic/pi-sdk";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
-export function activate(ctx: ExtensionContext) {
-  ctx.registerTool("my-tool", { /* schema */ }, handler);
-  ctx.registerCommand("my-command", handler);
+export default function activate(pi: ExtensionAPI) {
+  pi.registerTool({
+    name: "my_tool",
+    label: "My Tool",
+    description: "Describe the tool contract",
+    parameters: Type.Object({}),
+    async execute() {
+      return { content: [{ type: "text", text: "Done" }], details: {} };
+    },
+  });
+  pi.registerCommand("my-command", { description: "Run my command", handler: async () => {} });
 }
 ```
 
 ### Cross-extension status contracts
 
-Extensions publish status via `ctx.setStatus()`. The `bordered-editor` extension uses `pickPrimaryExtensionStatus()` to choose what to display in the footer — active overlays and workflow helpers should expose concise status strings.
+Extensions publish status via `ctx.ui.setStatus()`. The `bordered-editor` extension uses `pickPrimaryExtensionStatus()` to choose what to display in the footer — active overlays and workflow helpers should expose concise status strings.
 
 ### sendMessage with deliverAs/triggerTurn
 
-Use `ctx.sendMessage(text, { deliverAs: "user", triggerTurn: true })` to inject a message as if the user typed it and trigger an agent response. This is the pattern for tools that need to chain agent actions.
+Use `pi.sendUserMessage(text, { deliverAs: "followUp" })` to inject a user message and queue another turn. Use `pi.sendMessage()` for custom extension messages.
 
 ### Session lifecycle events
 
-- `session_start` — fresh session, no prior state
-- `session_switch` — user switched to a different session
-- `reload` — extension reloaded (hot reload during development)
+- `session_start` — startup, reload, new, resume, or fork; inspect `event.reason`
+- `session_shutdown` — quit, reload, new, resume, or fork; close session-scoped resources here
+- `resources_discover` — startup or reload resource contribution
 
-Handle each appropriately — don't assume fresh state on `reload`.
+Do not start long-lived processes, watchers, sockets, or timers in the extension factory. Rebuild state in `session_start` and clean it up idempotently in `session_shutdown`.
 
 ### Cross-platform external launcher
 
@@ -45,7 +54,10 @@ Use pi's theme tokens rather than hardcoded colors. Be aware that not all themes
 
 ## Constraints
 
-- Extensions must not block the main thread — use async operations
+- Extensions must not block the main thread — use async operations and honor tool `AbortSignal`s
+- Throw from tool `execute()` to report failure; returning `isError: true` does not mark a tool result as failed
+- Guard `ctx.ui.custom()` and terminal components with `ctx.mode === "tui"`; `ctx.hasUI` is also true in RPC mode
+- Check `pi.exec()` result codes; nonzero exits are returned rather than thrown
 - File paths from users need validation: prefer `fs.promises.lstat()` with explicit `ENOENT` handling and symlink rejection over `existsSync + statSync`
 - Treat third-party SVG/HTML output as untrusted — sanitize before DOM insertion
 

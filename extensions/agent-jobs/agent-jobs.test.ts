@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import agentJobsExtension, {
 	buildLoopCommandArgs,
@@ -226,6 +226,121 @@ test("collectReviewContext snapshots diff context without requiring oracle bash 
 	assert.match(context, /diff --git a\/src\/app\.ts b\/src\/app\.ts/);
 	assert.match(context, /read\/grep\/find\/ls/);
 });
+
+test("agent job launch rejects a nonzero tmux result", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "agent-job-launch-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	await mkdir(join(root, ".pi", "agents"), { recursive: true });
+	await writeFile(
+		join(root, ".pi", "agents", "fixture.md"),
+		"---\nname: fixture\ndescription: fixture agent\n---\n\nReview the task.\n",
+		"utf8",
+	);
+	const tools = new Map<string, any>();
+	const previousTmux = process.env.TMUX;
+	process.env.TMUX = "/tmp/tmux-test";
+	t.after(() => {
+		if (previousTmux === undefined) delete process.env.TMUX;
+		else process.env.TMUX = previousTmux;
+	});
+
+	agentJobsExtension({
+		on() {},
+		registerCommand() {},
+		registerTool(definition: any) {
+			tools.set(definition.name, definition);
+		},
+		getAllTools() {
+			return [];
+		},
+		exec: async () => ({ stdout: "", stderr: "tmux launch failed", code: 1, killed: false }),
+	} as any);
+
+	await assert.rejects(
+		tools.get("agent_job_start").execute(
+			"call-1",
+			{ agent: "fixture", task: "check launch", cwd: root, agentScope: "project", confirmProjectAgents: false, followUp: false },
+			undefined,
+			undefined,
+			{ cwd: root, signal: undefined, hasUI: false, ui: {} },
+		),
+		/tmux launch failed/,
+	);
+});
+
+test("agent job cancellation stays pending until the process exits", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "agent-job-cancel-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const jobId = "fixture-job";
+	const jobDir = join(root, ".pi", "agent-jobs", jobId);
+	await mkdir(jobDir, { recursive: true });
+	await writeFile(join(jobDir, "status.json"), JSON.stringify({
+		jobId,
+		cwd: root,
+		state: "running",
+		tmuxWindow: "pi-fixture",
+		jobDir,
+		updatedAt: new Date().toISOString(),
+	}), "utf8");
+	const tools = new Map<string, any>();
+	agentJobsExtension({
+		on() {},
+		registerCommand() {},
+		registerTool(definition: any) {
+			tools.set(definition.name, definition);
+		},
+		exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+	} as any);
+
+	const result = await tools.get("agent_job_cancel").execute("call-1", { jobId }, undefined, undefined, { cwd: root });
+	assert.equal(result.details.state, "running");
+	assert.ok(result.details.cancelRequestedAt);
+	assert.match(result.content[0].text, /Cancellation requested/);
+});
+
+for (const fixture of [
+	{ kind: "agent", directory: "agent-jobs", tool: "agent_job_cancel" },
+	{ kind: "loop", directory: "loop-jobs", tool: "loop_job_cancel" },
+] as const) {
+	test(`${fixture.kind} hard cancellation failure remains pending`, async (t) => {
+		const root = await mkdtemp(join(tmpdir(), `${fixture.kind}-job-hard-cancel-`));
+		t.after(() => rm(root, { recursive: true, force: true }));
+		const jobId = "fixture-job";
+		const jobDir = join(root, ".pi", fixture.directory, jobId);
+		await mkdir(jobDir, { recursive: true });
+		await writeFile(join(jobDir, "status.json"), JSON.stringify({
+			jobId,
+			cwd: root,
+			state: "running",
+			tmuxWindow: "pi-fixture",
+			jobDir,
+			updatedAt: new Date().toISOString(),
+		}), "utf8");
+		const tools = new Map<string, any>();
+		let execCalls = 0;
+		agentJobsExtension({
+			on() {},
+			registerCommand() {},
+			registerTool(definition: any) {
+				tools.set(definition.name, definition);
+			},
+			exec: async () => {
+				execCalls += 1;
+				return execCalls === 1
+					? { stdout: "", stderr: "", code: 0, killed: false }
+					: { stdout: "", stderr: "kill failed", code: 1, killed: false };
+			},
+		} as any);
+
+		await assert.rejects(
+			tools.get(fixture.tool).execute("call-1", { jobId, cwd: root, killWindow: true }, undefined, undefined, { cwd: root }),
+			/soft cancellation remains pending/,
+		);
+		const status = JSON.parse(await readFile(join(jobDir, "status.json"), "utf8"));
+		assert.equal(status.state, "running");
+		assert.ok(status.cancelRequestedAt);
+	});
+}
 
 test("agentJobsExtension registers background job tools and commands", () => {
 	const tools = new Set<string>();

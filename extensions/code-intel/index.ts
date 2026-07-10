@@ -1,15 +1,18 @@
-import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import { readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, extname, join, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 
-import { StringEnum } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { StringEnum } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 const MAX_OUTPUT_CHARS = 30_000;
 const MAX_FILE_BYTES = 512 * 1024;
+const execFileAsync = promisify(execFile);
 
 const SKIP_DIRS = new Set([
 	".git",
@@ -126,6 +129,7 @@ export type CodeFindStrategy = "exact" | "symbol" | "semantic" | "impact" | "his
 
 export type CodeFindOptions = {
 	query: string;
+	signal?: AbortSignal;
 	intent?: CodeFindIntent;
 	path?: string;
 	paths?: string[];
@@ -152,6 +156,21 @@ export type CodeFindReport = {
 	results: CodeFindResult[];
 	notes: string[];
 };
+
+function abortError(): Error {
+	const error = new Error("Code search cancelled.");
+	error.name = "AbortError";
+	return error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+	if (signal?.aborted) throw abortError();
+}
+
+async function yieldToEventLoop(signal?: AbortSignal): Promise<void> {
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	throwIfAborted(signal);
+}
 
 function normalizeRelativePath(path: string): string {
 	return path.split(sep).join("/").replace(/^\.\//, "").replace(/^@/, "");
@@ -191,7 +210,7 @@ function pathMatches(path: string, filters: string[] | undefined): boolean {
 function walkFiles(cwd: string, current = ""): string[] {
 	const directory = current ? join(cwd, current) : cwd;
 	const files: string[] = [];
-	let entries: ReturnType<typeof readdirSync>;
+	let entries: Dirent[];
 	try {
 		entries = readdirSync(directory, { withFileTypes: true });
 	} catch {
@@ -228,16 +247,77 @@ function discoverProjectFiles(cwd: string): string[] {
 
 function readTextFile(cwd: string, path: string): string | undefined {
 	const fullPath = join(cwd, path);
-	let stat: ReturnType<typeof statSync>;
+	let fileStat: ReturnType<typeof statSync>;
 	try {
-		stat = statSync(fullPath);
+		fileStat = statSync(fullPath);
 	} catch {
 		return undefined;
 	}
-	if (!stat.isFile() || stat.size > MAX_FILE_BYTES) return undefined;
+	if (!fileStat.isFile() || fileStat.size > MAX_FILE_BYTES) return undefined;
 	const buffer = readFileSync(fullPath);
 	if (isLikelyBinary(buffer)) return undefined;
 	return buffer.toString("utf8");
+}
+
+async function walkFilesAsync(cwd: string, current = "", signal?: AbortSignal): Promise<string[]> {
+	throwIfAborted(signal);
+	const directory = current ? join(cwd, current) : cwd;
+	let entries: Dirent[];
+	try {
+		entries = await readdir(directory, { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	const files: string[] = [];
+	for (const entry of entries) {
+		throwIfAborted(signal);
+		const relativePath = normalizeRelativePath(current ? join(current, entry.name) : entry.name);
+		if (shouldSkipPath(relativePath)) continue;
+		if (entry.isDirectory()) files.push(...await walkFilesAsync(cwd, relativePath, signal));
+		else if (entry.isFile()) files.push(relativePath);
+	}
+	return files;
+}
+
+async function discoverProjectFilesAsync(cwd: string, signal?: AbortSignal): Promise<string[]> {
+	throwIfAborted(signal);
+	const files = new Set<string>();
+	try {
+		const { stdout } = await execFileAsync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+			cwd,
+			encoding: "utf8",
+			signal,
+			maxBuffer: 20 * 1024 * 1024,
+		});
+		for (const raw of stdout.split("\0")) {
+			const file = normalizeRelativePath(raw.trim());
+			if (file && !shouldSkipPath(file)) files.add(file);
+		}
+	} catch (error) {
+		if (signal?.aborted) throw abortError();
+	}
+	if (files.size === 0) for (const file of await walkFilesAsync(cwd, "", signal)) files.add(file);
+	return [...files].sort((a, b) => a.localeCompare(b));
+}
+
+async function readTextFileAsync(cwd: string, filePath: string, signal?: AbortSignal): Promise<string | undefined> {
+	throwIfAborted(signal);
+	const fullPath = join(cwd, filePath);
+	try {
+		const fileStat = await stat(fullPath);
+		if (!fileStat.isFile() || fileStat.size > MAX_FILE_BYTES) return undefined;
+		const buffer = await readFile(fullPath);
+		throwIfAborted(signal);
+		if (isLikelyBinary(buffer)) return undefined;
+		return buffer.toString("utf8");
+	} catch (error) {
+		if (signal?.aborted) throw abortError();
+		return undefined;
+	}
+}
+
+async function sourceFilesAsync(cwd: string, paths?: string[], signal?: AbortSignal): Promise<string[]> {
+	return (await discoverProjectFilesAsync(cwd, signal)).filter((filePath) => SOURCE_EXTENSIONS.has(extname(filePath).toLowerCase()) && pathMatches(filePath, paths));
 }
 
 function sourceFiles(cwd: string, paths?: string[]): string[] {
@@ -315,6 +395,25 @@ export function searchSymbols(cwd: string, options: SymbolSearchOptions): CodeSy
 		.slice(0, clampLimit(options.limit));
 }
 
+async function searchSymbolsAsync(cwd: string, options: SymbolSearchOptions, signal?: AbortSignal): Promise<CodeSymbol[]> {
+	const absoluteCwd = resolve(cwd);
+	const query = options.query.trim();
+	if (!query) return [];
+	const results: CodeSymbol[] = [];
+	for (const file of await sourceFilesAsync(absoluteCwd, options.paths, signal)) {
+		const text = await readTextFileAsync(absoluteCwd, file, signal);
+		if (text === undefined) continue;
+		for (const symbol of extractSymbolsFromText(file, text)) {
+			if (options.kind && symbol.kind !== options.kind) continue;
+			const score = symbolScore(symbol, query);
+			if (score > 0) results.push({ ...symbol, score });
+		}
+	}
+	return results
+		.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || a.path.localeCompare(b.path) || a.line - b.line)
+		.slice(0, clampLimit(options.limit));
+}
+
 export function formatSymbolResults(query: string, results: CodeSymbol[]): string {
 	if (results.length === 0) return `No symbols found for "${query}".`;
 	return [
@@ -381,6 +480,29 @@ export function buildDependencyGraph(cwd: string): DependencyGraph {
 	return { cwd: absoluteCwd, files, nodes };
 }
 
+async function buildDependencyGraphAsync(cwd: string, signal?: AbortSignal): Promise<DependencyGraph> {
+	const absoluteCwd = resolve(cwd);
+	const files = (await sourceFilesAsync(absoluteCwd, undefined, signal)).filter((filePath) => [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"].includes(extname(filePath).toLowerCase()));
+	const fileSet = new Set(files);
+	const nodes: DependencyGraph["nodes"] = {};
+	for (const file of files) {
+		const text = await readTextFileAsync(absoluteCwd, file, signal) ?? "";
+		const imports: string[] = [];
+		const external: string[] = [];
+		for (const specifier of extractImportSpecifiers(text)) {
+			const resolved = resolveLocalImport(file, specifier, fileSet);
+			if (resolved) imports.push(resolved);
+			else if (!isRelativeImport(specifier)) external.push(specifier);
+		}
+		nodes[file] = { imports: [...new Set(imports)].sort(), external: [...new Set(external)].sort(), importedBy: [] };
+	}
+	for (const [file, node] of Object.entries(nodes)) {
+		for (const dependency of node.imports) nodes[dependency]?.importedBy.push(file);
+	}
+	for (const node of Object.values(nodes)) node.importedBy.sort();
+	return { cwd: absoluteCwd, files, nodes };
+}
+
 function resolveGraphTarget(graph: DependencyGraph, target: string | undefined): string | undefined {
 	if (!target) return undefined;
 	const normalized = normalizeRelativePath(target.trim());
@@ -426,7 +548,7 @@ export function parseGitPickaxeLog(output: string): GitPickaxeResult[] {
 		.filter((entry) => entry.hash && entry.shortHash);
 }
 
-export function runGitPickaxe(cwd: string, query: string, mode: GitPickaxeMode, limit?: number, path?: string, allRefs = false): GitPickaxeResult[] {
+function buildGitPickaxeArgs(query: string, mode: GitPickaxeMode, limit?: number, path?: string, allRefs = false): string[] {
 	const args = [
 		"log",
 		`--max-count=${clampLimit(limit)}`,
@@ -437,8 +559,23 @@ export function runGitPickaxe(cwd: string, query: string, mode: GitPickaxeMode, 
 	if (allRefs) args.push("--all");
 	args.push("--");
 	if (path) args.push(normalizeRelativePath(path));
-	const output = execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+	return args;
+}
+
+export function runGitPickaxe(cwd: string, query: string, mode: GitPickaxeMode, limit?: number, path?: string, allRefs = false): GitPickaxeResult[] {
+	const output = execFileSync("git", buildGitPickaxeArgs(query, mode, limit, path, allRefs), { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 	return parseGitPickaxeLog(output);
+}
+
+async function runGitPickaxeAsync(cwd: string, query: string, mode: GitPickaxeMode, limit?: number, path?: string, allRefs = false, signal?: AbortSignal): Promise<GitPickaxeResult[]> {
+	throwIfAborted(signal);
+	const { stdout } = await execFileAsync("git", buildGitPickaxeArgs(query, mode, limit, path, allRefs), {
+		cwd,
+		encoding: "utf8",
+		signal,
+		maxBuffer: 10 * 1024 * 1024,
+	});
+	return parseGitPickaxeLog(stdout);
 }
 
 export function formatGitPickaxeResults(query: string, mode: GitPickaxeMode, results: GitPickaxeResult[]): string {
@@ -491,6 +628,34 @@ function runAstSearch(cwd: string, options: AstSearchOptions): string {
 	const args = buildAstGrepArgs(options);
 	const output = execFileSync(binary, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 	const truncated = truncateText(output || "No ast-grep matches.");
+	return truncated.truncated ? `${truncated.text}\nOutput truncated.` : truncated.text;
+}
+
+async function resolveAstGrepBinaryAsync(signal?: AbortSignal): Promise<string | undefined> {
+	for (const candidate of ["sg", "ast-grep"]) {
+		try {
+			await execFileAsync("which", [candidate], { signal });
+			return candidate;
+		} catch (error) {
+			if (signal?.aborted) throw abortError();
+		}
+	}
+	return undefined;
+}
+
+async function runAstSearchAsync(cwd: string, options: AstSearchOptions, signal?: AbortSignal): Promise<string> {
+	throwIfAborted(signal);
+	const binary = await resolveAstGrepBinaryAsync(signal);
+	if (!binary) {
+		return "ast_search requires ast-grep CLI. Install it with `brew install ast-grep` or see https://ast-grep.github.io/.";
+	}
+	const { stdout } = await execFileAsync(binary, buildAstGrepArgs(options), {
+		cwd,
+		encoding: "utf8",
+		signal,
+		maxBuffer: MAX_OUTPUT_CHARS * 4,
+	});
+	const truncated = truncateText(stdout || "No ast-grep matches.");
 	return truncated.truncated ? `${truncated.text}\nOutput truncated.` : truncated.text;
 }
 
@@ -560,23 +725,69 @@ function exactSearch(cwd: string, options: CodeFindOptions): CodeFindResult[] {
 	return results.sort((a, b) => b.score - a.score || (a.path ?? "").localeCompare(b.path ?? "") || (a.line ?? 0) - (b.line ?? 0)).slice(0, clampLimit(options.limit));
 }
 
+async function exactSearchAsync(cwd: string, options: CodeFindOptions): Promise<CodeFindResult[]> {
+	const query = options.query.trim();
+	if (!query) return [];
+	const phrase = query.replace(/^"|"$/g, "").toLowerCase();
+	const terms = [...new Set(query.toLowerCase().split(/[^a-z0-9_$]+/i).filter((term) => term.length >= 3))];
+	const results: CodeFindResult[] = [];
+	for (const file of await sourceFilesAsync(resolve(cwd), options.paths, options.signal)) {
+		const text = await readTextFileAsync(cwd, file, options.signal);
+		if (!text) continue;
+		for (const [index, rawLine] of text.split("\n").entries()) {
+			const line = rawLine.toLowerCase();
+			let score = line.includes(phrase) ? 120 : 0;
+			const matchedTerms = terms.filter((term) => line.includes(term));
+			if (score === 0 && matchedTerms.length > 0) score = matchedTerms.length * 12;
+			if (score === 0) continue;
+			results.push({
+				strategies: ["exact"],
+				path: file,
+				line: index + 1,
+				title: matchedTerms.length > 0 ? `matched ${matchedTerms.join(", ")}` : `matched "${query}"`,
+				reason: "literal text match",
+				preview: rawLine.trim(),
+				score,
+			});
+		}
+	}
+	return results.sort((a, b) => b.score - a.score || (a.path ?? "").localeCompare(b.path ?? "") || (a.line ?? 0) - (b.line ?? 0)).slice(0, clampLimit(options.limit));
+}
+
 async function semanticFind(cwd: string, options: CodeFindOptions, notes: string[]): Promise<CodeFindResult[]> {
 	try {
-		const semantic = await import("../semantic-search/index.ts");
-		let index = semantic.loadSearchIndex(cwd) ?? semantic.buildSearchIndex(cwd, { writeToDisk: true });
-		let semanticResults: Array<{ path: string; startLine: number; endLine: number; score: number; reason: string[]; symbols: string[]; preview: string }>;
-		if (options.useEmbeddings) {
-			try {
-				index = await semantic.buildSearchIndexWithEmbeddings(cwd, { writeToDisk: true });
-				semanticResults = (await semantic.searchIndexWithEmbeddings(index, { query: options.query, topK: options.limit, paths: options.paths })).results;
-			} catch (error) {
-				notes.push(`Ollama semantic embeddings unavailable; used lexical semantic index (${error instanceof Error ? error.message : String(error)}).`);
-				semanticResults = semantic.searchIndex(index, { query: options.query, topK: options.limit, paths: options.paths });
-			}
-		} else {
-			semanticResults = semantic.searchIndex(index, { query: options.query, topK: options.limit, paths: options.paths });
-		}
-		return semanticResults.map((result) => ({
+		throwIfAborted(options.signal);
+		const semanticModuleUrl = new URL("../semantic-search/index.ts", import.meta.url).href;
+		const script = `
+const [moduleUrl, cwd, rawOptions] = process.argv.slice(1);
+const semantic = await import(moduleUrl);
+const options = JSON.parse(rawOptions);
+const index = semantic.loadSearchIndex(cwd);
+if (!index) {
+  process.stdout.write(JSON.stringify({ note: "semantic index is missing; use semantic_search to build it", results: [] }));
+} else {
+  const status = semantic.getIndexStatus(cwd, index);
+  if (status.stale) {
+    process.stdout.write(JSON.stringify({ note: \`semantic index is stale (\${status.reason}); use semantic_search to rebuild it\`, results: [] }));
+  } else {
+    const searched = options.useEmbeddings && index.embedding
+      ? await semantic.searchIndexWithEmbeddings(index, { query: options.query, topK: options.limit, paths: options.paths })
+      : { results: semantic.searchIndex(index, { query: options.query, topK: options.limit, paths: options.paths }) };
+    process.stdout.write(JSON.stringify({ results: searched.results }));
+  }
+}`;
+		const { stdout } = await execFileAsync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script, semanticModuleUrl, resolve(cwd), JSON.stringify({ query: options.query, limit: options.limit, paths: options.paths, useEmbeddings: options.useEmbeddings })], {
+			cwd: resolve(cwd),
+			encoding: "utf8",
+			signal: options.signal,
+			maxBuffer: 10 * 1024 * 1024,
+		});
+		const payload = JSON.parse(stdout) as {
+			note?: string;
+			results: Array<{ path: string; startLine: number; endLine: number; score: number; reason: string[]; symbols: string[]; preview: string }>;
+		};
+		if (payload.note) notes.push(payload.note);
+		return payload.results.map((result) => ({
 			strategies: ["semantic"],
 			path: result.path,
 			line: result.startLine,
@@ -587,13 +798,14 @@ async function semanticFind(cwd: string, options: CodeFindOptions, notes: string
 			score: result.score * 100,
 		}));
 	} catch (error) {
+		if (options.signal?.aborted) throw abortError();
 		notes.push(`semantic_search unavailable (${error instanceof Error ? error.message : String(error)}).`);
 		return [];
 	}
 }
 
-function symbolFind(cwd: string, options: CodeFindOptions): CodeFindResult[] {
-	return searchSymbols(cwd, { query: options.query, paths: options.paths, limit: options.limit }).map((symbol) => ({
+async function symbolFind(cwd: string, options: CodeFindOptions): Promise<CodeFindResult[]> {
+	return (await searchSymbolsAsync(cwd, { query: options.query, paths: options.paths, limit: options.limit }, options.signal)).map((symbol) => ({
 		strategies: ["symbol"],
 		path: symbol.path,
 		line: symbol.line,
@@ -604,8 +816,8 @@ function symbolFind(cwd: string, options: CodeFindOptions): CodeFindResult[] {
 	}));
 }
 
-function impactFind(cwd: string, options: CodeFindOptions): CodeFindResult[] {
-	const graph = buildDependencyGraph(cwd);
+async function impactFind(cwd: string, options: CodeFindOptions): Promise<CodeFindResult[]> {
+	const graph = await buildDependencyGraphAsync(cwd, options.signal);
 	const text = formatDependencyMap(graph, options.path);
 	return [{
 		strategies: ["impact"],
@@ -617,9 +829,9 @@ function impactFind(cwd: string, options: CodeFindOptions): CodeFindResult[] {
 	}];
 }
 
-function historyFind(cwd: string, options: CodeFindOptions, notes: string[]): CodeFindResult[] {
+async function historyFind(cwd: string, options: CodeFindOptions, notes: string[]): Promise<CodeFindResult[]> {
 	try {
-		return runGitPickaxe(cwd, options.query, "string", options.limit, options.path).map((commit) => ({
+		return (await runGitPickaxeAsync(cwd, options.query, "string", options.limit, options.path, false, options.signal)).map((commit) => ({
 			strategies: ["history"],
 			title: `${commit.shortHash} ${commit.subject}`,
 			reason: `${commit.date} ${commit.author}`,
@@ -627,13 +839,14 @@ function historyFind(cwd: string, options: CodeFindOptions, notes: string[]): Co
 			score: 70,
 		}));
 	} catch (error) {
+		if (options.signal?.aborted) throw abortError();
 		notes.push(`git_pickaxe unavailable (${error instanceof Error ? error.message : String(error)}).`);
 		return [];
 	}
 }
 
-function structureFind(cwd: string, options: CodeFindOptions, notes: string[]): CodeFindResult[] {
-	const text = runAstSearch(cwd, { pattern: options.query, paths: options.paths, limit: options.limit });
+async function structureFind(cwd: string, options: CodeFindOptions, notes: string[]): Promise<CodeFindResult[]> {
+	const text = await runAstSearchAsync(cwd, { pattern: options.query, paths: options.paths, limit: options.limit }, options.signal);
 	if (/requires ast-grep CLI|No ast-grep matches/i.test(text)) notes.push(text);
 	return [{ strategies: ["structure"], title: "ast-grep structural search", reason: "structural code pattern", preview: text, score: 60 }];
 }
@@ -658,12 +871,14 @@ export async function codeFind(cwd: string, options: CodeFindOptions): Promise<C
 	const results = new Map<string, CodeFindResult>();
 
 	for (const strategy of strategies) {
-		if (strategy === "exact") for (const result of exactSearch(cwd, options)) addCodeFindResult(results, result);
-		else if (strategy === "symbol") for (const result of symbolFind(cwd, options)) addCodeFindResult(results, result);
+		await yieldToEventLoop(options.signal);
+		if (strategy === "exact") for (const result of await exactSearchAsync(cwd, options)) addCodeFindResult(results, result);
+		else if (strategy === "symbol") for (const result of await symbolFind(cwd, options)) addCodeFindResult(results, result);
 		else if (strategy === "semantic") for (const result of await semanticFind(cwd, options, notes)) addCodeFindResult(results, result);
-		else if (strategy === "impact") for (const result of impactFind(cwd, options)) addCodeFindResult(results, result);
-		else if (strategy === "history") for (const result of historyFind(cwd, options, notes)) addCodeFindResult(results, result);
-		else if (strategy === "structure") for (const result of structureFind(cwd, options, notes)) addCodeFindResult(results, result);
+		else if (strategy === "impact") for (const result of await impactFind(cwd, options)) addCodeFindResult(results, result);
+		else if (strategy === "history") for (const result of await historyFind(cwd, options, notes)) addCodeFindResult(results, result);
+		else if (strategy === "structure") for (const result of await structureFind(cwd, options, notes)) addCodeFindResult(results, result);
+		throwIfAborted(options.signal);
 	}
 
 	return {
@@ -724,8 +939,8 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 		}),
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			onUpdate?.({ content: [{ type: "text", text: `Finding code for: ${params.query}` }], details: {} });
-			if (signal?.aborted) return { content: [{ type: "text" as const, text: "code_find cancelled." }], details: { cancelled: true } };
-			const report = await codeFind(ctx.cwd, params as CodeFindOptions);
+			throwIfAborted(signal);
+			const report = await codeFind(ctx.cwd, { ...(params as CodeFindOptions), signal });
 			return {
 				content: [{ type: "text" as const, text: formatCodeFindResults(report) }],
 				details: report,
@@ -748,8 +963,9 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 			paths: Type.Optional(Type.Array(Type.String(), { description: "Optional path prefixes/substrings to constrain search." })),
 			limit: Type.Optional(Type.Number({ description: `Maximum results (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}).`, minimum: 1, maximum: MAX_LIMIT })),
 		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const results = searchSymbols(ctx.cwd, params as SymbolSearchOptions);
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			await yieldToEventLoop(signal);
+			const results = await searchSymbolsAsync(ctx.cwd, params as SymbolSearchOptions, signal);
 			return {
 				content: [{ type: "text" as const, text: formatSymbolResults(params.query, results) }],
 				details: { query: params.query, results },
@@ -768,8 +984,9 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({
 			path: Type.Optional(Type.String({ description: "Optional target file path. If omitted, shows high-degree files in the graph." })),
 		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const graph = buildDependencyGraph(ctx.cwd);
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			await yieldToEventLoop(signal);
+			const graph = await buildDependencyGraphAsync(ctx.cwd, signal);
 			return {
 				content: [{ type: "text" as const, text: formatDependencyMap(graph, params.path) }],
 				details: { path: params.path, files: graph.files.length },
@@ -792,19 +1009,17 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 			limit: Type.Optional(Type.Number({ description: `Maximum commits (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}).`, minimum: 1, maximum: MAX_LIMIT })),
 			allRefs: Type.Optional(Type.Boolean({ description: "Search all refs with --all. Defaults to false." })),
 		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			try {
 				const mode = (params.mode ?? "string") as GitPickaxeMode;
-				const results = runGitPickaxe(ctx.cwd, params.query, mode, params.limit, params.path, params.allRefs ?? false);
+				const results = await runGitPickaxeAsync(ctx.cwd, params.query, mode, params.limit, params.path, params.allRefs ?? false, signal);
 				return {
 					content: [{ type: "text" as const, text: formatGitPickaxeResults(params.query, mode, results) }],
 					details: { query: params.query, mode, results },
 				};
 			} catch (error) {
-				return {
-					content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }],
-					details: { error: true, query: params.query },
-				};
+				if (signal?.aborted) throw abortError();
+				throw error instanceof Error ? error : new Error(String(error));
 			}
 		},
 	});
@@ -823,15 +1038,13 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 			paths: Type.Optional(Type.Array(Type.String(), { description: "Optional paths to search." })),
 			limit: Type.Optional(Type.Number({ description: "Reserved for future output limiting. Current output is truncated by size.", minimum: 1, maximum: MAX_LIMIT })),
 		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			try {
-				const text = runAstSearch(ctx.cwd, params as AstSearchOptions);
+				const text = await runAstSearchAsync(ctx.cwd, params as AstSearchOptions, signal);
 				return { content: [{ type: "text" as const, text }], details: { pattern: params.pattern, lang: params.lang } };
 			} catch (error) {
-				return {
-					content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }],
-					details: { error: true, pattern: params.pattern },
-				};
+				if (signal?.aborted) throw abortError();
+				throw error instanceof Error ? error : new Error(String(error));
 			}
 		},
 	});

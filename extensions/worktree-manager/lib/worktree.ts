@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export const DEFAULT_BASE_BRANCH = "main";
 export const DEFAULT_BRANCH_PREFIX = "feat/";
@@ -325,7 +325,7 @@ export async function createFeatureWorktree(
 	pi: ExtensionAPI,
 	cwd: string,
 	briefOrSlug: string,
-	options?: { baseBranch?: string; branchPrefix?: string },
+	options?: { baseBranch?: string; branchPrefix?: string; copyEnv?: boolean },
 ): Promise<CreateWorktreeResult> {
 	const baseBranch = options?.baseBranch ?? DEFAULT_BASE_BRANCH;
 	const branchPrefix = options?.branchPrefix ?? DEFAULT_BRANCH_PREFIX;
@@ -377,8 +377,8 @@ export async function createFeatureWorktree(
 		};
 	}
 
-	// Copy .env files (gitignored) to the new worktree
-	await copyEnvFiles(repo.gitRoot, worktreePath);
+	// Copying secret-bearing .env files is explicit so disposable worktrees do not receive credentials by default.
+	if (options?.copyEnv) await copyEnvFiles(repo.gitRoot, worktreePath);
 
 	return { ok: true, slug, branch, worktreePath, repoContext: repo };
 }
@@ -387,7 +387,7 @@ export async function createFeatureWorktree(
  * Copy .env files from source to target directory.
  * These are typically gitignored so they don't appear in worktrees.
  */
-async function copyEnvFiles(sourceDir: string, targetDir: string): Promise<void> {
+export async function copyEnvFiles(sourceDir: string, targetDir: string): Promise<void> {
 	try {
 		const entries = await fsp.readdir(sourceDir, { withFileTypes: true });
 		const envFiles = entries.filter((entry) => {

@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { WARNING_EVENT, type WarningArchivePayload } from "../self-improvement-archive/index.ts";
 
@@ -35,7 +35,10 @@ function compact(text: string, max = 240): string {
 }
 
 function warningKey(warning: OverseerWarning): string {
-	return `${warning.type}:${warning.toolName ?? "global"}`;
+	const messageKey = warning.type === "repeated-tool-error"
+		? warning.message.replace(/has failed \d+ times/, "has failed repeatedly")
+		: warning.message;
+	return `${warning.type}:${warning.toolName ?? "global"}:${compact(messageKey, 160)}`;
 }
 
 export function detectLargeMutation(event: ToolCallLike): OverseerWarning | undefined {

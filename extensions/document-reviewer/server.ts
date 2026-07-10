@@ -87,6 +87,12 @@ export interface CreatePullRequestSessionOptions {
 	onPublishReview?: (input: PullRequestFinishInput) => Promise<PullRequestFinishResult>;
 }
 
+interface ReviewWaiter {
+	resolve: (comments: ReviewComment[]) => void;
+	reject: (error: Error) => void;
+	cleanup: () => void;
+}
+
 interface BaseActiveSession {
 	sessionId: string;
 	filePath: string;
@@ -94,7 +100,7 @@ interface BaseActiveSession {
 	markdown: string;
 	sourceKind: ReviewSourceKind;
 	comments: ReviewComment[];
-	onFinish?: (comments: ReviewComment[]) => void;
+	waiter?: ReviewWaiter;
 	mode: ReviewSessionMode;
 }
 
@@ -122,13 +128,29 @@ class RequestError extends Error {
 }
 
 let service: DocumentReviewService | undefined;
+let serviceStartPromise: Promise<DocumentReviewService> | undefined;
 
 export async function getDocumentReviewService(): Promise<DocumentReviewService> {
-	if (!service) {
-		service = new DocumentReviewService();
-		await service.start();
+	if (!serviceStartPromise) {
+		const candidate = new DocumentReviewService();
+		service = candidate;
+		serviceStartPromise = candidate.start()
+			.then(() => candidate)
+			.catch((error) => {
+				if (service === candidate) service = undefined;
+				serviceStartPromise = undefined;
+				throw error;
+			});
 	}
-	return service;
+	return serviceStartPromise;
+}
+
+export async function stopDocumentReviewService(): Promise<void> {
+	const pending = serviceStartPromise;
+	const current = pending ? await pending.catch(() => undefined) : service;
+	if (current) await current.stop();
+	if (service === current) service = undefined;
+	serviceStartPromise = undefined;
 }
 
 const FALLBACK_SNIPPET_LIMIT = 180;
@@ -292,16 +314,24 @@ export async function publishPullRequestReview(
 	return result;
 }
 
+const MAX_REQUEST_BODY_BYTES = 1_000_000;
+const REQUEST_BODY_TIMEOUT_MS = 10_000;
+
 export class DocumentReviewService {
 	private server: http.Server | undefined;
 	private port = 0;
 	private sessions = new Map<string, ActiveSession>();
+	private sockets = new Set<import("node:net").Socket>();
 
 	async start(): Promise<void> {
 		if (this.server) return;
 
 		return new Promise((resolve, reject) => {
 			this.server = http.createServer((req, res) => this.handleRequest(req, res));
+			this.server.on("connection", (socket) => {
+				this.sockets.add(socket);
+				socket.once("close", () => this.sockets.delete(socket));
+			});
 
 			this.server.on("error", reject);
 			this.server.listen(0, "127.0.0.1", () => {
@@ -320,9 +350,12 @@ export class DocumentReviewService {
 		const server = this.server;
 		this.server = undefined;
 		this.port = 0;
-		this.sessions.clear();
+		for (const sessionId of [...this.sessions.keys()]) {
+			this.cancelSession(sessionId, new Error("Document review service stopped."));
+		}
 		if (service === this) {
 			service = undefined;
+			serviceStartPromise = undefined;
 		}
 
 		await new Promise<void>((resolve, reject) => {
@@ -333,6 +366,8 @@ export class DocumentReviewService {
 				}
 				resolve();
 			});
+			for (const socket of this.sockets) socket.destroy();
+			this.sockets.clear();
 		});
 	}
 
@@ -353,15 +388,48 @@ export class DocumentReviewService {
 		});
 	}
 
-	waitForFinish(sessionId: string): Promise<ReviewComment[]> {
-		return new Promise((resolve) => {
-			const session = this.sessions.get(sessionId);
-			if (!session) {
-				resolve([]);
-				return;
-			}
-			session.onFinish = resolve;
+	waitForFinish(sessionId: string, options: { signal?: AbortSignal } = {}): Promise<ReviewComment[]> {
+		const session = this.sessions.get(sessionId);
+		if (!session) return Promise.resolve([]);
+		if (options.signal?.aborted) {
+			this.sessions.delete(sessionId);
+			return Promise.reject(this.abortError());
+		}
+
+		return new Promise((resolve, reject) => {
+			session.waiter?.reject(new Error("Review wait was replaced by another waiter."));
+			session.waiter?.cleanup();
+			const onAbort = () => this.cancelSession(sessionId, this.abortError());
+			options.signal?.addEventListener("abort", onAbort, { once: true });
+			session.waiter = {
+				resolve,
+				reject,
+				cleanup: () => options.signal?.removeEventListener("abort", onAbort),
+			};
 		});
+	}
+
+	cancelSession(sessionId: string, reason = new Error("Document review session cancelled.")): boolean {
+		const session = this.sessions.get(sessionId);
+		if (!session) return false;
+		this.sessions.delete(sessionId);
+		session.waiter?.cleanup();
+		session.waiter?.reject(reason);
+		session.waiter = undefined;
+		return true;
+	}
+
+	private abortError(): Error {
+		const error = new Error("Document review cancelled.");
+		error.name = "AbortError";
+		return error;
+	}
+
+	private finishWait(session: ActiveSession, comments: ReviewComment[]): void {
+		const waiter = session.waiter;
+		session.waiter = undefined;
+		waiter?.cleanup();
+		waiter?.resolve(comments);
 	}
 
 	private async createStoredSession(
@@ -548,10 +616,7 @@ export class DocumentReviewService {
 						? await this.finishPullRequestSession(session, comments)
 						: await this.finishDocumentSession(session, comments);
 
-				if (session.onFinish) {
-					session.onFinish(comments);
-				}
-
+				this.finishWait(session, comments);
 				this.sessions.delete(finishMatch[1]!);
 				this.sendJson(res, 200, responsePayload);
 				return;
@@ -764,9 +829,42 @@ export class DocumentReviewService {
 	private readBody(req: http.IncomingMessage): Promise<string> {
 		return new Promise((resolve, reject) => {
 			const chunks: Buffer[] = [];
-			req.on("data", (chunk: Buffer) => chunks.push(chunk));
-			req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-			req.on("error", reject);
+			let total = 0;
+			let settled = false;
+			const cleanup = () => {
+				clearTimeout(timeout);
+				req.off("data", onData);
+				req.off("end", onEnd);
+				req.off("error", onError);
+				req.off("aborted", onAborted);
+			};
+			const finish = (error?: Error) => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				if (error) reject(error);
+				else resolve(Buffer.concat(chunks).toString("utf-8"));
+			};
+			const onData = (chunk: Buffer) => {
+				total += chunk.byteLength;
+				if (total > MAX_REQUEST_BODY_BYTES) {
+					req.resume();
+					finish(new RequestError(`Request body exceeds ${MAX_REQUEST_BODY_BYTES} bytes.`, 413));
+					return;
+				}
+				chunks.push(chunk);
+			};
+			const onEnd = () => finish();
+			const onError = (error: Error) => finish(error);
+			const onAborted = () => finish(new RequestError("Request body was aborted.", 400));
+			const timeout = setTimeout(() => {
+				req.resume();
+				finish(new RequestError("Timed out reading request body.", 408));
+			}, REQUEST_BODY_TIMEOUT_MS);
+			req.on("data", onData);
+			req.on("end", onEnd);
+			req.on("error", onError);
+			req.on("aborted", onAborted);
 		});
 	}
 }

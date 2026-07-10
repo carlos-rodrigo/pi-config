@@ -2,11 +2,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
-import { Text } from "@mariozechner/pi-tui";
-import { StringEnum } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Text } from "@earendil-works/pi-tui";
+import { StringEnum } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+import { execChecked } from "../lib/process.ts";
 
 export type AgentJobMode = "standard" | "review";
 export type AgentJobState = "running" | "completed" | "failed" | "cancelled";
@@ -57,6 +58,7 @@ export interface AgentJobStatus {
 	tools?: string[];
 	exitCode?: number;
 	completedAt?: string;
+	cancelRequestedAt?: string;
 	summary?: string;
 	errorMessage?: string;
 	usage?: UsageStats;
@@ -94,6 +96,7 @@ export interface LoopJobStatus {
 	rateLimitStreak?: number;
 	exitCode?: number;
 	completedAt?: string;
+	cancelRequestedAt?: string;
 	summary?: string;
 	errorMessage?: string;
 	followUp: boolean;
@@ -490,8 +493,16 @@ async function finalizeIfDone(pi: ExtensionAPI, cwd: string, jobId: string, send
 	const stderr = fileExists(status.stderrPath) ? await fs.promises.readFile(status.stderrPath, "utf8") : "";
 	const parsed = parseAgentEvents(events);
 	const hasModelError = parsed.stopReason === "error" || Boolean(parsed.errorMessage);
-	const state: AgentJobState = exit.exitCode === 0 && !hasModelError ? "completed" : "failed";
-	const fallbackOutput = state === "failed" && stderr.trim() ? `Agent failed.\n\n## stderr\n\n${truncateTail(stderr, STDERR_TAIL_CHARS)}` : "(no output)";
+	const state: AgentJobState = status.cancelRequestedAt
+		? "cancelled"
+		: exit.exitCode === 0 && !hasModelError
+			? "completed"
+			: "failed";
+	const fallbackOutput = state === "cancelled"
+		? "Cancelled by user."
+		: state === "failed" && stderr.trim()
+			? `Agent failed.\n\n## stderr\n\n${truncateTail(stderr, STDERR_TAIL_CHARS)}`
+			: "(no output)";
 	const output = parsed.finalOutput || parsed.errorMessage || fallbackOutput;
 	const resultText = truncateMiddle(output, MAX_RESULT_CHARS);
 
@@ -503,7 +514,7 @@ async function finalizeIfDone(pi: ExtensionAPI, cwd: string, jobId: string, send
 		exitCode: exit.exitCode,
 		completedAt: exit.finishedAt,
 		updatedAt: nowIso(),
-		summary: firstNonEmptyLine(resultText) || (state === "completed" ? "Completed with no output." : "Failed with no output."),
+		summary: firstNonEmptyLine(resultText) || (state === "completed" ? "Completed with no output." : state === "cancelled" ? "Cancelled by user." : "Failed with no output."),
 		errorMessage: state === "failed" ? parsed.errorMessage || (stderr.trim() ? firstNonEmptyLine(stderr) : `exit code ${exit.exitCode}`) : undefined,
 		usage: parsed.usage,
 	};
@@ -526,7 +537,7 @@ async function sendCompletionFollowUp(pi: ExtensionAPI, status: AgentJobStatus, 
 	const clipped = resultText.length > FOLLOW_UP_RESULT_CHARS
 		? `${resultText.slice(0, FOLLOW_UP_RESULT_CHARS).trimEnd()}\n\n…[result truncated; full result: ${status.resultPath}]…`
 		: resultText;
-	const verdict = status.state === "completed" ? "finished" : "failed";
+	const verdict = status.state === "completed" ? "finished" : status.state === "cancelled" ? "was cancelled" : "failed";
 	const message = [
 		`Background ${status.agent} job ${status.jobId} ${verdict}.`,
 		`Mode: ${status.mode}`,
@@ -729,7 +740,7 @@ async function launchAgentJob(
 	await writeStatus(status);
 
 	try {
-		await pi.exec("tmux", buildTmuxNewWindowArgs(tmuxWindow, cwd, runScriptPath), { signal: ctx.signal, timeout: 10_000 });
+		await execChecked(pi, "tmux", buildTmuxNewWindowArgs(tmuxWindow, cwd, runScriptPath), { signal: ctx.signal, timeout: 10_000 });
 	} catch (error) {
 		const failed = {
 			...status,
@@ -1050,7 +1061,7 @@ function formatLoopResult(status: LoopJobStatus, exitCode: number, summary: stri
 	const sections = [
 		`# Loop Job ${status.jobId}`,
 		"",
-		`State: ${exitCode === 0 ? "completed" : "failed"}`,
+		`State: ${status.cancelRequestedAt ? "cancelled" : exitCode === 0 ? "completed" : "failed"}`,
 		`Feature: ${status.feature}`,
 		status.task ? `Task: ${status.task}` : "Task: next ready task",
 		`Project: ${status.cwd}`,
@@ -1078,7 +1089,7 @@ async function finalizeLoopIfDone(pi: ExtensionAPI, cwd: string, jobId: string, 
 		readTextIfExists(status.stdoutPath),
 		readTextIfExists(status.stderrPath),
 	]);
-	const state: AgentJobState = exit.exitCode === 0 ? "completed" : "failed";
+	const state: AgentJobState = status.cancelRequestedAt ? "cancelled" : exit.exitCode === 0 ? "completed" : "failed";
 	const resultText = truncateMiddle(formatLoopResult(status, exit.exitCode, summary, log, stdout, stderr), MAX_RESULT_CHARS);
 	await fs.promises.writeFile(status.resultPath, `${resultText.trim()}\n`, "utf8");
 
@@ -1088,7 +1099,7 @@ async function finalizeLoopIfDone(pi: ExtensionAPI, cwd: string, jobId: string, 
 		exitCode: exit.exitCode,
 		completedAt: exit.finishedAt,
 		updatedAt: nowIso(),
-		summary: firstNonEmptyLine(summary) || firstNonEmptyLine(log) || (state === "completed" ? "Loop completed." : `Loop exited ${exit.exitCode}.`),
+		summary: state === "cancelled" ? "Cancelled by user." : firstNonEmptyLine(summary) || firstNonEmptyLine(log) || (state === "completed" ? "Loop completed." : `Loop exited ${exit.exitCode}.`),
 		errorMessage: state === "failed" ? firstNonEmptyLine(stderr) || `exit code ${exit.exitCode}` : undefined,
 	};
 	await writeLoopStatus(updated);
@@ -1109,7 +1120,7 @@ async function sendLoopCompletionFollowUp(pi: ExtensionAPI, status: LoopJobStatu
 	const clipped = resultText.length > FOLLOW_UP_RESULT_CHARS
 		? `${resultText.slice(0, FOLLOW_UP_RESULT_CHARS).trimEnd()}\n\n…[result truncated; full result: ${status.resultPath}]…`
 		: resultText;
-	const verdict = status.state === "completed" ? "finished" : "failed";
+	const verdict = status.state === "completed" ? "finished" : status.state === "cancelled" ? "was cancelled" : "failed";
 	const message = [
 		`Background loop job ${status.jobId} ${verdict}.`,
 		`Feature: ${status.feature}`,
@@ -1348,7 +1359,7 @@ async function launchLoopJob(pi: ExtensionAPI, ctx: LaunchContext, params: LoopL
 	await writeLoopStatus(status);
 
 	try {
-		await pi.exec("tmux", buildTmuxNewWindowArgs(tmuxWindow, cwd, runScriptPath), { signal: ctx.signal, timeout: 10_000 });
+		await execChecked(pi, "tmux", buildTmuxNewWindowArgs(tmuxWindow, cwd, runScriptPath), { signal: ctx.signal, timeout: 10_000 });
 	} catch (error) {
 		const failed = {
 			...status,
@@ -1554,9 +1565,9 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			const mode = args.mode && args.mode !== "standard" ? ` [${args.mode}]` : "";
 			return new Text(`${theme.fg("toolTitle", theme.bold("agent_job_start "))}${theme.fg("accent", args.agent || "agent")}${theme.fg("dim", mode)}`, 0, 0);
 		},
-		renderResult(result, _options, theme) {
+		renderResult(result, _options, theme, context) {
 			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-			return new Text(result.isError ? theme.fg("error", text) : theme.fg("success", text), 0, 0);
+			return new Text(context.isError ? theme.fg("error", text) : theme.fg("success", text), 0, 0);
 		},
 	});
 
@@ -1633,9 +1644,9 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			const task = args.task ? ` ${args.task}` : "";
 			return new Text(`${theme.fg("toolTitle", theme.bold("loop_job_start "))}${theme.fg("accent", args.feature || "feature")}${theme.fg("dim", task)}`, 0, 0);
 		},
-		renderResult(result, _options, theme) {
+		renderResult(result, _options, theme, context) {
 			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-			return new Text(result.isError ? theme.fg("error", text) : theme.fg("success", text), 0, 0);
+			return new Text(context.isError ? theme.fg("error", text) : theme.fg("success", text), 0, 0);
 		},
 	});
 
@@ -1677,20 +1688,34 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			if (status.state !== "running") {
 				return { content: [{ type: "text" as const, text: `Loop job ${status.jobId} is already ${status.state}.` }], details: status };
 			}
-			await pi.exec("tmux", ["send-keys", "-t", status.tmuxWindow, "C-c"], { signal, timeout: 5000 });
+			if (status.cancelRequestedAt) {
+				return { content: [{ type: "text" as const, text: `Cancellation is already pending for loop job ${status.jobId}.` }], details: status };
+			}
+			await execChecked(pi, "tmux", ["send-keys", "-t", status.tmuxWindow, "C-c"], { signal, timeout: 5000 });
+			const requestedAt = nowIso();
+			const pending = { ...status, cancelRequestedAt: requestedAt, updatedAt: requestedAt, summary: "Cancellation requested; waiting for the process to exit." };
 			if (params.killWindow) {
-				await pi.exec("tmux", ["kill-window", "-t", status.tmuxWindow], { signal, timeout: 5000 }).catch(() => undefined);
+				try {
+					await execChecked(pi, "tmux", ["kill-window", "-t", status.tmuxWindow], { signal, timeout: 5000 });
+				} catch (error) {
+					await writeLoopStatus(pending);
+					throw new Error(`Hard cancellation failed for loop job ${status.jobId}; soft cancellation remains pending.`, { cause: error });
+				}
 			}
-			const updated = { ...status, state: "cancelled" as const, updatedAt: nowIso(), completedAt: nowIso(), summary: "Cancelled by user." };
+			const updated = params.killWindow
+				? { ...pending, state: "cancelled" as const, completedAt: requestedAt, summary: "Cancelled by user." }
+				: pending;
 			await writeLoopStatus(updated);
-			const key = `${status.cwd}:${status.jobId}`;
-			const interval = watchedLoopJobs.get(key);
-			if (interval) {
-				clearInterval(interval);
-				watchedLoopJobs.delete(key);
-				emitRunningLoopJobCount(pi, status.cwd);
+			if (params.killWindow) {
+				const key = `${status.cwd}:${status.jobId}`;
+				const interval = watchedLoopJobs.get(key);
+				if (interval) {
+					clearInterval(interval);
+					watchedLoopJobs.delete(key);
+					emitRunningLoopJobCount(pi, status.cwd);
+				}
 			}
-			return { content: [{ type: "text" as const, text: `Cancelled loop job ${status.jobId}.` }], details: updated };
+			return { content: [{ type: "text" as const, text: params.killWindow ? `Cancelled loop job ${status.jobId}.` : `Cancellation requested for loop job ${status.jobId}.` }], details: updated };
 		},
 	});
 
@@ -1707,20 +1732,34 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			if (status.state !== "running") {
 				return { content: [{ type: "text" as const, text: `Job ${status.jobId} is already ${status.state}.` }], details: status };
 			}
-			await pi.exec("tmux", ["send-keys", "-t", status.tmuxWindow, "C-c"], { signal, timeout: 5000 });
+			if (status.cancelRequestedAt) {
+				return { content: [{ type: "text" as const, text: `Cancellation is already pending for job ${status.jobId}.` }], details: status };
+			}
+			await execChecked(pi, "tmux", ["send-keys", "-t", status.tmuxWindow, "C-c"], { signal, timeout: 5000 });
+			const requestedAt = nowIso();
+			const pending = { ...status, cancelRequestedAt: requestedAt, updatedAt: requestedAt, summary: "Cancellation requested; waiting for the process to exit." };
 			if (params.killWindow) {
-				await pi.exec("tmux", ["kill-window", "-t", status.tmuxWindow], { signal, timeout: 5000 }).catch(() => undefined);
+				try {
+					await execChecked(pi, "tmux", ["kill-window", "-t", status.tmuxWindow], { signal, timeout: 5000 });
+				} catch (error) {
+					await writeStatus(pending);
+					throw new Error(`Hard cancellation failed for job ${status.jobId}; soft cancellation remains pending.`, { cause: error });
+				}
 			}
-			const updated = { ...status, state: "cancelled" as const, updatedAt: nowIso(), completedAt: nowIso(), summary: "Cancelled by user." };
+			const updated = params.killWindow
+				? { ...pending, state: "cancelled" as const, completedAt: requestedAt, summary: "Cancelled by user." }
+				: pending;
 			await writeStatus(updated);
-			const key = `${status.cwd}:${status.jobId}`;
-			const interval = watchedJobs.get(key);
-			if (interval) {
-				clearInterval(interval);
-				watchedJobs.delete(key);
-				emitRunningJobCount(pi, status.cwd);
+			if (params.killWindow) {
+				const key = `${status.cwd}:${status.jobId}`;
+				const interval = watchedJobs.get(key);
+				if (interval) {
+					clearInterval(interval);
+					watchedJobs.delete(key);
+					emitRunningJobCount(pi, status.cwd);
+				}
 			}
-			return { content: [{ type: "text" as const, text: `Cancelled job ${status.jobId}.` }], details: updated };
+			return { content: [{ type: "text" as const, text: params.killWindow ? `Cancelled job ${status.jobId}.` : `Cancellation requested for job ${status.jobId}.` }], details: updated };
 		},
 	});
 }

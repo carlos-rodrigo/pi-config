@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { visibleWidth } from "@mariozechner/pi-tui";
+import { visibleWidth } from "@earendil-works/pi-tui";
 
 import reviewModeExtension, {
 	buildReviewModeHelpText,
@@ -9,6 +9,7 @@ import reviewModeExtension, {
 	collectReviewModeNotes,
 	formatReviewModeChange,
 	formatReviewModeNotes,
+	handleReviewModeCommand,
 	parseGitNameStatusOutput,
 	parseReviewModeArgs,
 	parseReviewModeDiffFiles,
@@ -103,6 +104,7 @@ function createPiHarness(execResults: ExecResult[]) {
 
 function createContext(options?: {
 	hasUI?: boolean;
+	mode?: "tui" | "rpc" | "json" | "print";
 	cwd?: string;
 	idle?: boolean;
 	sessionId?: string;
@@ -126,6 +128,7 @@ function createContext(options?: {
 		ctx: {
 			cwd: options?.cwd ?? "/repo",
 			hasUI: options?.hasUI ?? true,
+			mode: options?.mode ?? "tui",
 			isIdle() {
 				return options?.idle ?? true;
 			},
@@ -170,6 +173,13 @@ function createContext(options?: {
 		},
 	};
 }
+
+test("review mode rejects RPC mode before opening a custom overlay", async () => {
+	const context = createContext({ mode: "rpc", hasUI: true });
+	await handleReviewModeCommand({} as any, "", context.ctx as any);
+	assert.equal(context.getCustomCalls(), 0);
+	assert.match(context.notifications[0]?.message ?? "", /interactive Pi TUI/i);
+});
 
 const STAGED_NAME_STATUS = ["M\tREADME.md", "A\textensions/review-mode/index.ts"].join("\n");
 const RENAME_NAME_STATUS = ["M\tREADME.md", "R100\told.ts\tnew.ts"].join("\n");

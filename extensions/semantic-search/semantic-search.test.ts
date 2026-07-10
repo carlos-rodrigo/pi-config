@@ -446,14 +446,14 @@ test("Ollama embedding client falls back to the legacy embeddings endpoint", asy
 test("Ollama config defaults come from semantic-search config file and env can override them", () => {
 	assert.deepEqual(resolveOllamaEmbeddingConfig({}, {}), {
 		model: "mxbai-embed-large",
-		baseUrl: "http://127.0.0.1:11434",
+		baseUrl: "http://127.0.0.1:11435",
 		batchSize: 16,
 		timeoutMs: 30_000,
 		maxInputChars: 6_000,
 	});
 	assert.deepEqual(resolveOllamaSummaryConfig({}, {}), {
 		model: "qwen2.5-coder:14b",
-		baseUrl: "http://127.0.0.1:11434",
+		baseUrl: "http://127.0.0.1:11435",
 		timeoutMs: 180_000,
 		maxInputChars: 10_000,
 		concurrency: 2,
@@ -877,6 +877,75 @@ test("agent_end does not auto-rebuild stale indexes without a successful file-ch
 	}
 });
 
+test("embedding search honors an already-aborted signal", async () => {
+	const dir = makeProject({ "src/index.ts": "export const value = 1;\n" });
+	try {
+		const index = buildSearchIndex(dir, { writeToDisk: false });
+		const controller = new AbortController();
+		controller.abort();
+		await assert.rejects(
+			searchIndexWithEmbeddings(index, { query: "value", signal: controller.signal }),
+			(error: any) => error?.name === "AbortError",
+		);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("manual background rebuild reuses an already-running build", async () => {
+	const dir = makeProject({ "src/index.ts": "export const value = 1;\n" });
+	const commands = new Map<string, any>();
+	const events = new Map<string, any>();
+	const messages: any[] = [];
+	let starts = 0;
+	semanticSearchExtension({
+		on(name: string, handler: any) {
+			events.set(name, handler);
+		},
+		registerTool() {},
+		registerCommand(name: string, definition: any) {
+			commands.set(name, definition);
+		},
+		sendMessage(message: any) {
+			messages.push(message);
+		},
+		events: { emit() {} },
+	} as any, {
+		startBackgroundIndexBuild(cwd: string) {
+			starts += 1;
+			return {
+				pid: 999,
+				logPath: join(cwd, ".pi", "semantic-search", "rebuild.log"),
+				statusPath: join(cwd, ".pi", "semantic-search", "rebuild-status.json"),
+			};
+		},
+	});
+	try {
+		const statusDir = join(dir, ".pi", "semantic-search");
+		mkdirSync(statusDir, { recursive: true });
+		const logPath = join(statusDir, "rebuild.log");
+		writeFileSync(logPath, "running\n", "utf8");
+		writeFileSync(join(statusDir, "rebuild-status.json"), JSON.stringify({
+			status: "running",
+			cwd: dir,
+			logPath,
+			pid: process.pid,
+			startedAt: new Date().toISOString(),
+		}), "utf8");
+
+		await commands.get("index").handler("rebuild", {
+			cwd: dir,
+			ui: { notify() {}, setStatus() {} },
+		} as any);
+
+		assert.equal(starts, 0);
+		assert.match(messages.at(-1)?.content ?? "", /already running/i);
+	} finally {
+		events.get("session_shutdown")?.();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("index rebuild status reports the last background rebuild state", async () => {
 	const commands = new Map<string, any>();
 	const messages: any[] = [];
@@ -1027,7 +1096,7 @@ test("ollama-tunnel command auto-falls back when default local port is busy", as
 	} as any, {
 		startOllamaTunnel(config) {
 			starts.push(config);
-			if (config.localPort === 11434) return { ok: false, command: formatOllamaTunnelSshCommand(config), ollamaUrl: `http://${config.localHost}:${config.localPort}`, error: "bind [127.0.0.1]:11434: Address already in use" };
+			if (config.localPort === 11435) return { ok: false, command: formatOllamaTunnelSshCommand(config), ollamaUrl: `http://${config.localHost}:${config.localPort}`, error: "bind [127.0.0.1]:11435: Address already in use" };
 			return { ok: true, command: formatOllamaTunnelSshCommand(config), ollamaUrl: `http://${config.localHost}:${config.localPort}` };
 		},
 	});
@@ -1039,10 +1108,10 @@ test("ollama-tunnel command auto-falls back when default local port is busy", as
 			ui: { notify() {} },
 		} as any);
 
-		assert.deepEqual(starts.map((start) => start.localPort), [11434, 11435]);
-		assert.equal(process.env.OLLAMA_BASE_URL, "http://127.0.0.1:11435");
-		assert.match(messages[0]?.content ?? "", /port 11434 was busy; used 11435/);
-		assert.deepEqual(messages[0]?.details.attemptedPorts, [11434, 11435]);
+		assert.deepEqual(starts.map((start) => start.localPort), [11435, 11436]);
+		assert.equal(process.env.OLLAMA_BASE_URL, "http://127.0.0.1:11436");
+		assert.match(messages[0]?.content ?? "", /port 11435 was busy; used 11436/);
+		assert.deepEqual(messages[0]?.details.attemptedPorts, [11435, 11436]);
 	} finally {
 		if (previousBaseUrl === undefined) delete process.env.OLLAMA_BASE_URL;
 		else process.env.OLLAMA_BASE_URL = previousBaseUrl;
@@ -1161,20 +1230,22 @@ test("semantic_search reports required Ollama setup instead of falling back to l
 		headers: { "content-type": "application/json" },
 	})) as typeof fetch;
 	try {
-		const result = await tools.get("semantic_search").execute(
-			"tool-call-1",
-			{ query: "vector search", topK: 1, refresh: true },
-			undefined,
-			undefined,
-			{ cwd: dir } as any,
+		await assert.rejects(
+			tools.get("semantic_search").execute(
+				"tool-call-1",
+				{ query: "vector search", topK: 1, refresh: true },
+				undefined,
+				undefined,
+				{ cwd: dir } as any,
+			),
+			(error: Error) => {
+				assert.match(error.message, /requires local Ollama summaries and embeddings/i);
+				assert.match(error.message, /ollama pull mxbai-embed-large/);
+				assert.match(error.message, /ollama pull qwen2\.5-coder:14b/);
+				assert.doesNotMatch(error.message, /src\/search\/index\.ts/);
+				return true;
+			},
 		);
-
-		assert.equal(result.details.error, true);
-		assert.equal(result.details.requirement, "ollama");
-		assert.match(result.content[0].text, /requires local Ollama summaries and embeddings/i);
-		assert.match(result.content[0].text, /ollama pull mxbai-embed-large/);
-		assert.match(result.content[0].text, /ollama pull qwen2\.5-coder:14b/);
-		assert.doesNotMatch(result.content[0].text, /src\/search\/index\.ts/);
 	} finally {
 		globalThis.fetch = originalFetch;
 		rmSync(dir, { recursive: true, force: true });
