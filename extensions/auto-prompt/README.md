@@ -24,21 +24,21 @@ After the agent finishes responding, a gray suggestion appears inside the editor
 
 ## How it works
 
-1. After `agent_end`, calls an LLM (default GPT-5.3 Codex Spark, fallback GPT-5.3 Codex) with the last few messages
-2. The LLM returns one short suggested next-step prompt the user can send to move the work forward
-   (it treats AGENTS/system workflow rules as baseline context, so suggestions focus on concrete next-step deltas instead of repeating generic process reminders)
+1. After `agent_end`, calls an LLM (default GPT-5.6 Terra, fallback GPT-5.4) with the last few messages
+2. The LLM returns one short, result-first next-step prompt the user can send to move the work forward
+   (it adds only context, output requirements, critical boundaries, and verification that materially help; AGENTS/system workflow rules remain implied)
 3. The suggestion appears as gray ghost text in the editor (rendered by `bordered-editor`)
 4. Uses the same API key already configured in pi — no extra setup
 
 ### Devil's Advocate & E2E Verification
 
-Suggestions follow a "devil's advocate" approach to verification:
+Suggestions follow a proportional "devil's advocate" approach to verification:
 
-- **E2E bias**: Prefer verification that hits real boundaries (curl the endpoint, run CLI with real input) over just "run tests"
-- **Fixtures from reality**: Suggest using real inputs from docs/API samples, not agent-generated test data
-- **Challenge the implementation**: Verification should prove the code works to someone who didn't write it
-- **Action + verification**: Suggestions should push the next step forward and include how to verify it worked
-- **Preflight when coding**: For behavior-changing edits, suggestions can ask the agent to call `verification_plan` before editing
+- **Outcome first**: State the desired user-visible or system-visible result without prescribing internal steps
+- **E2E bias when it matters**: For behavior changes and important work, prefer real boundaries (curl, CLI, UI, persisted data) over only "run tests"
+- **Fixtures from reality**: Use supplied or documented inputs instead of agent-generated test data when available
+- **Critical boundaries only**: Include constraints that prevent real mistakes, not generic workflow boilerplate
+- **Observable success**: Define what would prove the requested result without asking the user to restate baseline agent process
 - **Feature-packet aware**: When a `docs/features/<slug>/` packet or `.features/<slug>/tasks/` brief is in the conversation, suggestions can point to the next strategy/design/task/result action for the file-based packet flow
 - **Archive-aware**: When `self-improvement-archive` has compact evidence of recent verification gaps or overseer warnings, suggestions can bias toward verification-first next steps without adding another LLM call
 
@@ -65,7 +65,7 @@ Example: If the agent says "Done! I've created the webhook handler" without ment
 | **Backspace** | Dismiss ghost |
 | **Escape** | Dismiss ghost |
 | Type before suggestion arrives | LLM call is cancelled, no ghost shown |
-| **Ctrl+Shift+I** | Improve current draft prompt in-place (directive + specific + feedback-loopable rewrite) |
+| **Ctrl+Shift+I** | Improve current draft in place (result first, useful context, critical boundaries, proportional verification) |
 
 ## Commands
 
@@ -85,7 +85,7 @@ Example: If the agent says "Done! I've created the webhook handler" without ment
 - Agent mode context (smart/deep2/deep3/fast) is included in the suggestion prompt for relevance:
   - `fast`: GPT-5.5 with thinking off for tiny actions + cheap verification check
   - `smart`: narrow next action + focused check
-  - `deep`/`deep2`: outcome/constraints + `verification_plan` or focused/regression checks
+  - `deep`/`deep2`: clear outcome + relevant constraints + observable success check
   - `deep3`: reproduce/diagnose first, patch only if localized, then focused + regression checks
 
 ## Architecture

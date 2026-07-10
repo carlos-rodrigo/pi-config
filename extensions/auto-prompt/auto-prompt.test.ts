@@ -21,7 +21,7 @@ import {
 
 // --- buildSuggestionPrompt: core framing ---
 
-test("buildSuggestionPrompt frames suggestions as directive next-step prompts", () => {
+test("buildSuggestionPrompt frames suggestions as actionable next-step prompts", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: I fixed the mode switch.\n\nAssistant: Great — the tests passed.",
 	);
@@ -32,43 +32,45 @@ test("buildSuggestionPrompt frames suggestions as directive next-step prompts", 
 	assert.match(prompt, /Return ONLY the prompt text/i);
 });
 
-test("buildSuggestionPrompt includes directive prompting principle", () => {
+test("buildSuggestionPrompt starts with the desired result instead of a prescribed process", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: The login is broken.\n\nAssistant: I see the issue.",
 	);
 
-	assert.match(prompt, /DIRECTIVE/i);
-	assert.match(prompt, /Give direction, not questions/i);
+	assert.match(prompt, /OUTCOME-FIRST/i);
+	assert.match(prompt, /desired result/i);
+	assert.doesNotMatch(prompt, /Give direction, not questions/i);
 });
 
-test("buildSuggestionPrompt includes feedback-loop principle and action-verification contract", () => {
+test("buildSuggestionPrompt makes verification proportional to the task", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Add the API endpoint.\n\nAssistant: Done, I created the endpoint.",
 	);
 
-	assert.match(prompt, /FEEDBACK-LOOPABLE/i);
-	assert.match(prompt, /verify/i);
-	assert.match(prompt, /Action \+ verification/i);
-	assert.match(prompt, /verification_plan/i);
+	assert.match(prompt, /VERIFY WHEN IT MATTERS/i);
+	assert.match(prompt, /observable success check/i);
+	assert.doesNotMatch(prompt, /Action \+ verification shape by default/i);
 });
 
-test("buildSuggestionPrompt includes specificity principle", () => {
+test("buildSuggestionPrompt includes only context that can change the result", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Make the components consistent.\n\nAssistant: I'll update them.",
 	);
 
-	assert.match(prompt, /SPECIFIC/i);
-	assert.match(prompt, /Reference exact files/i);
+	assert.match(prompt, /USEFUL CONTEXT/i);
+	assert.match(prompt, /only when they materially change the result/i);
 });
 
-test("buildSuggestionPrompt describes the 3-part structure: what, verify, reference", () => {
+test("buildSuggestionPrompt uses flexible goal, context, output, and boundaries ingredients", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Build the feature.\n\nAssistant: Working on it.",
 	);
 
-	assert.match(prompt, /WHAT to do/i);
-	assert.match(prompt, /HOW to verify/i);
-	assert.match(prompt, /WHAT to reference/i);
+	assert.match(prompt, /GOAL/i);
+	assert.match(prompt, /CONTEXT/i);
+	assert.match(prompt, /OUTPUT/i);
+	assert.match(prompt, /BOUNDARIES/i);
+	assert.match(prompt, /only the parts that help/i);
 });
 
 // --- Mode awareness ---
@@ -92,7 +94,7 @@ test("buildSuggestionPrompt is mode-aware for deep work", () => {
 
 	assert.match(prompt, /Current agent mode: deep/i);
 	assert.match(prompt, /GPT-5\.5 medium/i);
-	assert.match(prompt, /verification_plan/i);
+	assert.match(prompt, /observable success check/i);
 });
 
 test("buildSuggestionPrompt is mode-aware for deep3 work", () => {
@@ -398,7 +400,7 @@ test("buildSuggestionPrompt includes debugging phase guidance", () => {
 	);
 
 	assert.match(prompt, /phase_guidance.*debugging/i);
-	assert.match(prompt, /reproducible test case/i);
+	assert.match(prompt, /failing behavior/i);
 });
 
 test("buildSuggestionPrompt includes testing phase guidance", () => {
@@ -411,7 +413,7 @@ test("buildSuggestionPrompt includes testing phase guidance", () => {
 	);
 
 	assert.match(prompt, /phase_guidance.*testing/i);
-	assert.match(prompt, /edge case/i);
+	assert.match(prompt, /real boundary/i);
 });
 
 test("buildSuggestionPrompt includes building phase guidance", () => {
@@ -424,7 +426,7 @@ test("buildSuggestionPrompt includes building phase guidance", () => {
 	);
 
 	assert.match(prompt, /phase_guidance.*building/i);
-	assert.match(prompt, /next implementation step/i);
+	assert.match(prompt, /system-visible result/i);
 });
 
 test("buildSuggestionPrompt includes shipping phase guidance", () => {
@@ -437,7 +439,7 @@ test("buildSuggestionPrompt includes shipping phase guidance", () => {
 	);
 
 	assert.match(prompt, /phase_guidance.*shipping/i);
-	assert.match(prompt, /pre-ship checks/i);
+	assert.match(prompt, /confidence gap/i);
 });
 
 test("buildSuggestionPrompt includes planning phase guidance", () => {
@@ -450,7 +452,7 @@ test("buildSuggestionPrompt includes planning phase guidance", () => {
 	);
 
 	assert.match(prompt, /phase_guidance.*planning/i);
-	assert.match(prompt, /clarifying requirements/i);
+	assert.match(prompt, /desired result/i);
 });
 
 // --- Word limit updated ---
@@ -508,10 +510,11 @@ test("buildImprovementPrompt frames rewrite task and preserves intent", () => {
 	assert.match(prompt, /improve prompts/i);
 	assert.match(prompt, /preserving their original intent exactly/i);
 	assert.match(prompt, /Return ONLY the improved prompt text/i);
-	assert.match(prompt, /Rewrite questions as instructions/i);
+	assert.match(prompt, /Start with the result the user needs/i);
+	assert.doesNotMatch(prompt, /Rewrite questions as instructions/i);
 });
 
-test("buildImprovementPrompt pushes behavior changes toward verification_plan or concrete checks", () => {
+test("buildImprovementPrompt adds a concrete success check without prescribing internal process", () => {
 	const prompt = buildImprovementPrompt(
 		"implement the verify planner",
 		"User: improve verify extension\n\nAssistant: use extensions/verify/index.ts",
@@ -520,8 +523,8 @@ test("buildImprovementPrompt pushes behavior changes toward verification_plan or
 		"building",
 	);
 
-	assert.match(prompt, /verification_plan/i);
-	assert.match(prompt, /concrete check/i);
+	assert.match(prompt, /observable success check/i);
+	assert.doesNotMatch(prompt, /include verification_plan before coding/i);
 });
 
 test("buildImprovementPrompt includes baseline context and implied-guidelines rule", () => {
@@ -535,7 +538,7 @@ test("buildImprovementPrompt includes baseline context and implied-guidelines ru
 	);
 
 	assert.match(prompt, /baseline_agent_guidelines/i);
-	assert.match(prompt, /Treat baseline AGENTS\/system guidance as already implied/i);
+	assert.match(prompt, /Treat baseline AGENTS\/system guidance as implied/i);
 });
 
 test("buildImprovementPrompt includes file and command context when provided", () => {

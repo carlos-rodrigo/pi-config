@@ -7,12 +7,11 @@
  * bordered-editor via pi.events).
  *
  * Prompts follow best practices for agent collaboration:
- * - Directive, not questions ("Fix X" not "Why isn't X working?")
- * - Include feedback loops when applicable — prefer E2E verification over "run tests"
- * - Reference specific files/patterns when available
- * - Give definition of done so the agent can self-verify
- * - Devil's advocate: prefer real inputs from docs/API samples over agent-generated test data
- * - E2E bias: suggest hitting real boundaries (curl, CLI) not just unit tests
+ * - Start with the desired result rather than prescribing the agent's process
+ * - Add only context, output requirements, and critical boundaries that matter
+ * - Preserve exploratory questions instead of rewriting every prompt as an instruction
+ * - Include observable success checks for behavior-changing or important work
+ * - Prefer real inputs and external boundaries over agent-generated verification data
  *
  * Acceptance:
  * - Right arrow → accepts the full suggestion
@@ -21,9 +20,9 @@
  *
  * Improve Prompt (Ctrl+Shift+I):
  *   Takes whatever the user has typed in the editor and rewrites it
- *   following the same best-practice principles — making it more
- *   directive, specific, and feedback-loopable. Replaces the editor
- *   text with the improved version.
+ *   following the same best-practice principles — making the outcome,
+ *   useful context, boundaries, and success check clearer without
+ *   prescribing unnecessary process. Replaces the editor text.
  *
  * Commands:
  *   /suggest          Toggle auto-suggestions on/off
@@ -425,7 +424,7 @@ function getWorkflowModeGuidance(workflowMode?: string): string {
 		case "deep":
 		case "deep2":
 			return `
-- In Deep² mode (GPT-5.5 medium), prefer outcome-focused prompts with constraints and a verification_plan before behavior-changing edits`;
+- In Deep² mode (GPT-5.5 medium), prefer a clear outcome, relevant constraints, and an observable success check for behavior-changing work`;
 		case "deep3":
 			return `
 - In Deep³ mode, prefer maximum-quality prompts: reproduce or diagnose first, state tradeoffs, patch only if localized, and verify with focused + regression checks`;
@@ -481,21 +480,22 @@ Based on the recent conversation, suggest ONE actionable next-step prompt for th
 ## Prompt Writing Principles
 
 Good prompts for coding agents are:
-1. DIRECTIVE — Give direction, not questions. "Fix the auth bug in login.ts" beats "Why isn't login working?"
-2. SPECIFIC — Reference exact files, functions, patterns. "Follow the pattern in src/api/messages.ts" beats "Make it consistent"
-3. FEEDBACK-LOOPABLE — Include how the agent should verify its work. Prefer E2E verification over "run tests"
-4. SCOPED — One clear task with a definition of done, not open-ended exploration
-5. CONTEXTUAL — Mention constraints, patterns to follow, things to avoid
-6. DEVIL'S ADVOCATE — When suggesting verification, prefer real inputs (from docs, API samples) over agent-generated test data. Challenge the implementation from the outside.
+1. OUTCOME-FIRST — Start with the desired result or behavior, not a detailed implementation sequence
+2. USEFUL CONTEXT — Mention files, sources, failing inputs, or prior decisions only when they materially change the result
+3. READY TO USE — Name the output, audience, or level of detail when it affects what the agent should produce
+4. CRITICAL BOUNDARIES — Include only the one or two constraints that prevent real problems; do not control every step
+5. SCOPED — Keep one clear next outcome and avoid unrelated improvements
+6. VERIFY WHEN IT MATTERS — For behavior changes or important work, include an observable success check; prefer real inputs and external boundaries over agent-generated data
 
-## Structure
+## Flexible Ingredients
 
-A great prompt has up to 3 parts (combine naturally into 1-2 sentences):
-- WHAT to do (always required)
-- HOW to verify / definition of done (prefer E2E: "curl the endpoint with sample payload", "run the CLI with real input" over just "run tests")
-- WHAT to reference or follow (include when specific files/patterns are relevant)
+Use these as ingredients, not a required template, and include only the parts that help:
+- GOAL — the result needed (always)
+- CONTEXT — information or sources that can change the result
+- OUTPUT — format, audience, length, or definition of done when relevant
+- BOUNDARIES — what must stay unchanged, what to avoid, or what requires approval
 
-Use an Action + verification shape by default: "Do X, then verify with Y." For behavior-changing edits, either ask the agent to call verification_plan first or name a concrete check.
+Do not prescribe the agent's internal workflow unless the process itself matters.
 
 Keep it concise: 10-45 words. One or two sentences max. Never exceed 240 characters.
 
@@ -506,14 +506,15 @@ Keep it concise: 10-45 words. One or two sentences max. Never exceed 240 charact
 - Must be a natural next step from what JUST happened
 - Stay in the user's voice; do NOT write as the assistant
 - Do NOT suggest tangential work, new features, or improvements unless the user was exploring that
-- When a task was just completed, suggest E2E verification (curl the endpoint, run CLI with real input, check actual output) not just "run tests"
-- When the next step is implementation, include verification_plan before editing unless the verification contract is already clear
-- When debugging, suggest the next concrete debugging action plus the failing input or focused test that proves it
-- When tests are failing, suggest fixing them with a specific approach and rerunning the failing command
+- Preserve the kind of request: an exploratory question may stay a question; do not turn it into an implementation request
+- When a task was just completed without evidence, suggest a concrete external verification (curl, CLI, UI, persisted data) rather than more implementation
+- For behavior-changing implementation, include an observable success criterion when it fits; let baseline agent guidance handle planning and internal workflow
+- When debugging, name the failing behavior or input and the result that would prove it fixed; ask for diagnosis first when the cause is unclear
+- When tests are failing, suggest resolving the specific failure and rerunning the known command
 - When the user was told to do something manually, suggest that manual step
 - Assume baseline AGENTS/system guidelines are already enforced by the coding agent
 - Do NOT restate generic process defaults (e.g. "follow AGENTS", "run/feed the loop") unless it is the specific blocking action now
-- Prefer delta guidance: what concrete next action should happen now${modeHint}${modeGuidance}${featurePacketGuidance}
+- Prefer delta guidance: what concrete result is needed next${modeHint}${modeGuidance}${featurePacketGuidance}
 - Return ONLY the prompt text. No quotes, no explanation, no markdown.
 - Hard limit: 240 characters maximum.${phaseGuidance}${unverifiedImplementation ? `
 
@@ -542,37 +543,29 @@ function getPhaseGuidance(phase: ConversationPhase): string {
 	switch (phase) {
 		case "debugging":
 			return `The conversation is in a DEBUGGING phase.
-- Suggest creating a reproducible test case if none exists
-- Suggest targeted fixes with E2E verification: "Fix X, then curl the endpoint with the failing payload"
-- If the cause is unclear, suggest isolating the issue: "Add logging to X to trace the value of Y"
-- Prefer real-world reproduction: "Test with the actual BitFreighter webhook payload from their docs"
-- Prefer: "Fix the collision detection in physics.ts and run the headless CLI to verify" over "Why is it broken?"`;
+- State the failing behavior and reproduction context that matter
+- If the cause is unclear, ask for diagnosis before prescribing a fix
+- If the cause is localized, name the desired fixed behavior and a check using the failing input`;
 		case "testing":
 			return `The conversation is in a TESTING phase.
-- Suggest E2E verification that hits real boundaries (HTTP endpoints, CLI, actual DB), not just unit tests
-- Unit tests written by the agent can share blind spots with the code — suggest testing with real fixtures from docs/samples
-- If tests pass, suggest edge case verification with real inputs: "Try the endpoint with edge case payloads from the API docs"
-- Prefer: "Test the webhook handler with fixtures/bitfreighter/sample.json from their docs" over "Write more tests"`;
+- Suggest an observable check at a real boundary (HTTP, CLI, UI, persisted data) when available
+- Prefer supplied or documented fixtures over data invented by the implementing agent
+- If existing checks pass, suggest an edge case only when it addresses a plausible risk`;
 		case "building":
 			return `The conversation is in a BUILDING phase.
-- Suggest the next implementation step with a clear deliverable
-- Include verification_plan before behavior-changing edits, or include a concrete check if the plan already exists
-- Include E2E verification: "Implement X, then curl it with a sample payload" or "Build X, verify with real input"
-- Reference specific files or patterns when available
-- When integration work, suggest: "Get a sample payload from the API docs and save to fixtures/ for testing"
-- Prefer: "Add the webhook endpoint, test with curl using the sample payload from BitFreighter docs" over "Build webhook"`;
+- State the next user-visible or system-visible result, not an implementation recipe
+- Include relevant files or constraints only when grounded in the conversation
+- For behavior changes, add a concise observable success check when it fits`;
 		case "shipping":
 			return `The conversation is in a SHIPPING phase.
-- Before shipping, suggest devil's advocate verification: test with real inputs the agent didn't generate
-- Include pre-ship checks: "Verify with a real payload from docs, then run full test suite"
-- If review is done, suggest the concrete ship action
-- Prefer: "Test the integration with sample payloads from their API docs, then create the PR" over "Ship it"`;
+- Surface the concrete ship result or the most important remaining confidence gap
+- Before shipping, prefer a real-input boundary check plus the known regression gate
+- Do not add unrelated polish or process`;
 		case "planning":
 			return `The conversation is in a PLANNING phase.
-- Suggest clarifying requirements, defining scope, or documenting decisions
-- For integrations, suggest: "Get sample payloads from their API docs and save to fixtures/"
-- If planning is done, suggest transitioning to implementation with a verification_plan or explicit success criteria
-- Prefer: "Define the webhook contract and save a sample payload from BitFreighter docs to fixtures/" over "Let's plan more"`;
+- Suggest clarifying the desired result, scope, audience, or decision only when unresolved
+- Preserve planning intent; do not jump to implementation
+- If planning is complete, suggest the next deliverable with explicit success criteria`;
 	}
 }
 
@@ -606,23 +599,24 @@ Rewrite the user's draft to follow best practices for agent collaboration, while
 
 ## Improvement Principles
 
-1. DIRECTIVE — Rewrite questions as instructions. "Why isn't X working?" → "Fix X in file.ts"
-2. SPECIFIC — Add file paths, function names, or patterns from the conversation when relevant
-3. FEEDBACK-LOOPABLE — For behavior-changing work, add verification_plan before coding or a concrete check after coding. Prefer "curl the endpoint with sample payload" over just "run tests"
-4. SCOPED — Keep it focused on one task. If the draft is already scoped, don't expand it
-5. CONTEXTUAL — Add relevant constraints or references the user likely meant but didn't spell out
-6. DEVIL'S ADVOCATE — When adding verification, prefer real inputs (from docs, API samples, fixtures) over agent-generated test data
+1. OUTCOME-FIRST — Start with the result the user needs, not a detailed implementation sequence
+2. USEFUL CONTEXT — Add files, sources, failing inputs, or prior decisions only when grounded in the conversation and able to change the result
+3. READY TO USE — Clarify output format, audience, length, or definition of done only when relevant
+4. CRITICAL BOUNDARIES — Keep only constraints that prevent a real mistake; never invent one
+5. SCOPED — Keep one task and do not add optional improvements
+6. VERIFY WHEN IT MATTERS — For behavior changes or important work, add an observable success check; prefer real inputs and external boundaries over agent-generated data
 
 ## Rules
 
 - PRESERVE the user's intent — do NOT change what they want done, only improve how they say it
 - Keep improvements proportional — a short draft becomes a better short prompt, not a paragraph
 - If the draft is already good, make only minor improvements or return it as-is
-- For behavior-changing drafts, include verification_plan before editing or a concrete check after editing; prefer E2E (curl, CLI with real input) over just "run tests"
-- If the task involves integration, suggest verification with real fixtures from docs/API samples
-- Reference specific files or commands from conversation context when they're relevant to the task
-- Treat baseline AGENTS/system guidance as already implied; don't add generic process boilerplate unless it is explicitly requested
-- Do NOT add new requirements, features, or scope the user didn't ask for
+- Preserve exploratory intent: do not turn a question or request for options into an instruction to implement
+- For behavior-changing drafts, add a concrete observable success check when useful; prefer E2E (curl, CLI, UI, persisted data) over only "run tests"
+- For integrations, use real fixtures from supplied docs or API samples when available
+- Reference files or commands only when they are present in the conversation and relevant
+- Treat baseline AGENTS/system guidance as implied; do not prescribe internal process or repeat generic workflow boilerplate
+- Do NOT add new requirements, inferred constraints, features, or scope the user didn't ask for
 - Do NOT add preamble, explanation, or commentary
 - Return ONLY the improved prompt text. No quotes, no markdown formatting.${phaseHint}
 
