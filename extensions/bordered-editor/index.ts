@@ -100,9 +100,16 @@ function objectFrom(value: unknown): Record<string, unknown> | undefined {
 	return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
 }
 
-export function getAssistantUsageTotals(entries: readonly unknown[]): { cost: number; tokensBurned: number } {
+export function getAssistantUsageTotals(entries: readonly unknown[]): {
+	cost: number;
+	tokensBurned: number;
+	inputTokens: number;
+	cacheReadTokens: number;
+} {
 	let cost = 0;
 	let tokensBurned = 0;
+	let inputTokens = 0;
+	let cacheReadTokens = 0;
 
 	for (const entryValue of entries) {
 		const entry = objectFrom(entryValue);
@@ -113,21 +120,27 @@ export function getAssistantUsageTotals(entries: readonly unknown[]): { cost: nu
 		if (!usage) continue;
 
 		cost += numberFrom(objectFrom(usage.cost)?.total);
+		const input = numberFrom(usage.input);
+		const cacheRead = numberFrom(usage.cacheRead);
+		inputTokens += input;
+		cacheReadTokens += cacheRead;
 		const explicitTotal = numberFrom(usage.totalTokens);
-		tokensBurned += explicitTotal || numberFrom(usage.input) + numberFrom(usage.output) + numberFrom(usage.cacheRead) + numberFrom(usage.cacheWrite);
+		tokensBurned += explicitTotal || input + numberFrom(usage.output) + cacheRead + numberFrom(usage.cacheWrite);
 	}
 
-	return { cost, tokensBurned };
+	return { cost, tokensBurned, inputTokens, cacheReadTokens };
 }
 
 export function formatBottomLeftUsage(
 	usage: { percent?: number; tokens: number; contextWindow: number } | undefined,
-	session: { cost: number; tokensBurned: number },
+	session: { cost: number; tokensBurned: number; inputTokens: number; cacheReadTokens: number },
 ): string {
 	const pct = usage?.percent != null ? `${Math.round(usage.percent)}%` : "—";
 	const ctxWin = usage ? `${Math.round(usage.contextWindow / 1000)}k` : "—";
 	const ctxTokens = usage ? formatTokenCount(usage.tokens) : "—";
-	return `${pct} of ${ctxWin} · ${ctxTokens} ctx · ${formatTokenCount(session.tokensBurned)} burned · $${session.cost.toFixed(2)}`;
+	const promptTokens = session.inputTokens + session.cacheReadTokens;
+	const cacheRate = promptTokens > 0 ? ` · ${Math.round(session.cacheReadTokens / promptTokens * 100)}% cache` : "";
+	return `${pct} of ${ctxWin} · ${ctxTokens} ctx${cacheRate} · ${formatTokenCount(session.tokensBurned)} burned · $${session.cost.toFixed(2)}`;
 }
 
 interface WorktreeEntry {

@@ -171,13 +171,27 @@ test("getAssistantUsageTotals sums assistant token burn and cost", () => {
 		},
 	];
 
-	assert.deepEqual(getAssistantUsageTotals(entries), { cost: 0.46, tokensBurned: 1460 });
+	assert.deepEqual(getAssistantUsageTotals(entries), {
+		cost: 0.46,
+		tokensBurned: 1460,
+		inputTokens: 101,
+		cacheReadTokens: 300,
+	});
 });
 
-test("formatBottomLeftUsage includes context percent, context tokens, burned tokens, and cost", () => {
+test("formatBottomLeftUsage shows prompt-cache hit rate after context usage", () => {
 	assert.equal(
-		formatBottomLeftUsage({ percent: 42.4, tokens: 84_200, contextWindow: 200_000 }, { cost: 1.14, tokensBurned: 1_250_000 }),
-		"42% of 200k · 84k ctx · 1.3M burned · $1.14",
+		formatBottomLeftUsage(
+			{ percent: 42.4, tokens: 84_200, contextWindow: 200_000 },
+			{ cost: 1.14, tokensBurned: 1_250_000, inputTokens: 20_000, cacheReadTokens: 80_000 },
+		),
+		"42% of 200k · 84k ctx · 80% cache · 1.3M burned · $1.14",
 	);
-	assert.equal(formatBottomLeftUsage(undefined, { cost: 0, tokensBurned: 0 }), "— of — · — ctx · 0 burned · $0.00");
+});
+
+test("formatBottomLeftUsage omits cache rate when no prompt tokens are reported", () => {
+	assert.equal(
+		formatBottomLeftUsage(undefined, { cost: 0, tokensBurned: 0, inputTokens: 0, cacheReadTokens: 0 }),
+		"— of — · — ctx · 0 burned · $0.00",
+	);
 });

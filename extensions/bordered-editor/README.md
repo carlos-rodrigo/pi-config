@@ -10,19 +10,38 @@ pi install ./extensions/bordered-editor
 
 ## Preview
 
-```
-╭─ Claude 4 Opus · xhigh ──────────────────────────────────────╮
-│   your prompt here                                             │
-╰─ 42% of 200k · 84k ctx · 1.3M burned · $1.14 ─ ~/project (main) ─╯
+```text
+╭─ mode:smart ───────────────────── Claude 4 Opus · high ─╮
+│   your prompt here                                       │
+╰─ 42% of 200k · 84k ctx · 80% cache · 1.3M burned · $1.14 ─ ~/project (main) ─╯
 ```
 
-## What it shows
+## What the composer shows
 
-| Position | Info | Styling |
-|---|---|---|
-| Top left | Model name · thinking level | Level in **green** |
-| Bottom left | Context usage % of window · current context tokens · cumulative tokens burned · session cost | Muted |
-| Bottom right | Working directory + git state | Branch in **violet** for main checkout, **WT ...** tag for linked worktrees |
+### Top border
+
+- **Left — `mode:smart`:** the active workflow mode. Smart is green, Deep²/Deep³ is red, and Fast is yellow. It is omitted when no workflow mode is available.
+- **Right — `Claude 4 Opus · high`:** the active model and thinking level. The thinking level is green.
+
+### Inside the box
+
+- Your current prompt, with two spaces of horizontal padding.
+- When the editor is empty, Auto Prompt can show a gray suggested prompt. Press **Right Arrow** to accept it. Any other input dismisses it; printable input then continues normally.
+- Autocomplete results appear below the bordered box rather than inside it.
+
+### Bottom border
+
+- **`42% of 200k`:** how much of the model's context window the current conversation occupies.
+- **`84k ctx`:** the current context token count.
+- **`80% cache`:** the session's prompt-cache hit rate, calculated as `cacheRead / (input + cacheRead)`. It is omitted until prompt tokens are reported.
+- **`1.3M burned`:** cumulative tokens processed by assistant messages in the current session branch, including input, output, cache reads, and cache writes.
+- **`$1.14`:** cumulative assistant cost for the current session branch.
+- **Extension status:** when present, one active status follows the cost, for example `Improving prompt…`, `reviewing`, `queue: 2 queued`, or an Agent Memory status. Failures and active work take priority over ambient statuses.
+- **Activity:** semantic-index rebuild progress and the number of running background agent jobs appear before the path, for example `idx: embedding 60% · ~11s · 2 bg jobs`.
+- **`~/project`:** the current working directory, shortened with `~` when it is under the home directory.
+- **`(main)`:** the current branch in a normal checkout. Linked worktrees instead show `[WT <worktree> · <branch>]`.
+
+Labels may be truncated or omitted when the terminal is too narrow.
 
 ## How it works
 
