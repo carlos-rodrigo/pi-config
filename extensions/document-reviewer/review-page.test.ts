@@ -182,13 +182,16 @@ test("buildHtmlVisualReviewPage injects top-level review overlay without an ifra
 	const html = buildHtmlVisualReviewPage(
 		"session-123",
 		"design.html",
-		'<!doctype html><html><head><base href="/"><meta http-equiv="Content-Security-Policy" content="default-src none"><title>Design</title></head><body><nav><a href="#summary">Summary</a></nav><section id="summary" data-review-id="summary">Hello</section><script>window.bad = true;</script></body></html>',
+		'<!doctype html><html><head><base href="/"><meta http-equiv="Content-Security-Policy" content="default-src none"><title>Design</title></head><body><nav><a href="#summary">Summary</a></nav><section id="summary" data-review-id="summary">Hello</section><article data-review-id="gap-001"><div data-review-decision="single-choice"><label><input type="radio" name="gap" value="option-a">Option A</label></div></article><script>window.bad = true;</script></body></html>',
 		{ nonce: "nonce-123" },
 	);
 
 	assert.match(html, /pi-html-review-root/);
 	assert.match(html, /Comment selection/);
 	assert.match(html, /data-review-id="summary"/);
+	assert.match(html, /data-review-decision="single-choice"/);
+	assert.match(html, /Decision selected:/);
+	assert.ok(html.includes(".replace(/\\s+/g, ' ')"));
 	assert.match(html, /href="#summary"/);
 	assert.match(html, /script nonce="nonce-123"/);
 	assert.doesNotMatch(html, /html-review-frame/);

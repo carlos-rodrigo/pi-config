@@ -34,7 +34,7 @@ pi install ./extensions/document-reviewer
 
 1. Press `Ctrl+Shift+F` in the browser to finalize.
 2. Markdown reviews write `<!-- REVIEW: ... -->` annotations into the source file.
-3. HTML reviews write comments to `<name>.review.md` and leave the source HTML unchanged.
+3. HTML reviews write comments to `<name>.review.md` and leave the source HTML unchanged. Checked radio options inside an element marked `data-review-decision` are recorded as anchored review feedback and replace the prior decision for that anchor.
 4. The tab will attempt to close automatically; if your browser blocks it, close it manually.
 5. Return to Pi and prompt: `Apply comments in <file>` or `Apply comments in <name>.review.md`.
 

@@ -45,7 +45,7 @@ Model clipboard/export flow as explicit states: `copied`, `manual-copy`, `empty`
 
 Modes share comment APIs but differ in rendering and export behavior:
 - **Markdown document mode:** Comments are inserted as `<!-- REVIEW: ... -->` annotations into the original markdown file.
-- **HTML document mode:** The source HTML is served as the top-level review page, not an iframe. The server strips source scripts/base tags, applies a CSP nonce for the review overlay, preserves normal hash navigation, and exports comments to `<name>.review.md` without modifying the source HTML. Prefer stable `data-review-id` anchors when present.
+- **HTML document mode:** The source HTML is served as the top-level review page, not an iframe. The server strips source scripts/base tags, applies a CSP nonce for the review overlay, preserves normal hash navigation, and exports comments to `<name>.review.md` without modifying the source HTML. Prefer stable `data-review-id` anchors when present. Mark reviewer option containers with `data-review-decision`; changing a contained radio selection creates anchored decision feedback, changing it again replaces the prior decision, and finishing waits for pending decision writes.
 - **PR mode:** Comments are collected and can be submitted as PR review comments.
 
 Lift payload builders and mode-specific copy into exported pure helpers for testability.

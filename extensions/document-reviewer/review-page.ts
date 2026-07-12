@@ -436,6 +436,7 @@ function getHtmlVisualReviewScript(sessionId: string, title: string): string {
   let pendingSelection = null;
   let drawerOpen = false;
   let reviewCompleted = false;
+  let pendingDecisionWrite = Promise.resolve();
 
   const host = document.createElement('div');
   host.id = 'pi-html-review-root';
@@ -660,6 +661,58 @@ function getHtmlVisualReviewScript(sessionId: string, title: string): string {
     }
   }
 
+  function decisionOptionText(input) {
+    const label = input.closest('label');
+    if (!label) return input.value || 'Selected option';
+    const clone = label.cloneNode(true);
+    clone.querySelectorAll('input').forEach((node) => node.remove());
+    return (clone.textContent || input.value || 'Selected option').replace(/\\s+/g, ' ').trim().replace(/:\\s*$/, '');
+  }
+
+  async function recordDecision(input) {
+    const decision = input.closest('[data-review-decision]');
+    const anchor = decision && decision.closest('[data-review-id]');
+    const reviewId = anchor && anchor.getAttribute('data-review-id');
+    if (!decision || !reviewId) return;
+
+    const selected = decision.querySelector('input[type="radio"]:checked');
+    if (!selected) return;
+    const optionText = decisionOptionText(selected);
+    const customInput = selected.closest('label')?.querySelector('input[type="text"], textarea');
+    const customText = customInput && customInput.value ? customInput.value.trim() : '';
+    const commentText = 'Decision selected: ' + optionText + (customText ? ' — ' + customText : '');
+    const previous = comments.find((comment) => comment.reviewId === reviewId && String(comment.comment || '').startsWith('Decision selected:'));
+
+    try {
+      if (previous) {
+        await fetchJson('/comments/' + previous.id, { method: 'DELETE' });
+        comments = comments.filter((comment) => comment.id !== previous.id);
+      }
+      const data = await fetchJson('/comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          selectedText: optionText,
+          comment: commentText,
+          offsetStart: 0,
+          offsetEnd: 0,
+          reviewId,
+          selector: { exact: optionText },
+        }),
+      });
+      comments.push(data.comment);
+      renderComments();
+      markCommentAnchors();
+      showToast('Decision recorded as review feedback.');
+    } catch (error) {
+      showToast('Error recording decision: ' + error.message);
+    }
+  }
+
+  function queueDecision(input) {
+    pendingDecisionWrite = pendingDecisionWrite.then(() => recordDecision(input));
+  }
+
   async function deleteComment(commentId) {
     try {
       await fetchJson('/comments/' + commentId, { method: 'DELETE' });
@@ -719,6 +772,7 @@ function getHtmlVisualReviewScript(sessionId: string, title: string): string {
   async function finishReview() {
     if (reviewCompleted) return;
     try {
+      await pendingDecisionWrite;
       const data = await fetchJson('/finish', { method: 'POST' });
       reviewCompleted = true;
       finishButton.textContent = 'Done';
@@ -748,6 +802,15 @@ function getHtmlVisualReviewScript(sessionId: string, title: string): string {
   }
 
   document.addEventListener('click', openExternalLinksInNewTab, true);
+  document.addEventListener('change', (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || !target.closest('[data-review-decision]')) return;
+    if (target.matches('input[type="radio"]')) queueDecision(target);
+    if (target.matches('input[type="text"], textarea')) {
+      const selected = target.closest('[data-review-decision]')?.querySelector('input[type="radio"]:checked');
+      if (selected) queueDecision(selected);
+    }
+  });
   document.addEventListener('selectionchange', () => window.setTimeout(updateSelectionState, 30));
   document.addEventListener('mouseup', () => window.setTimeout(updateSelectionState, 0));
   document.addEventListener('keyup', () => window.setTimeout(updateSelectionState, 0));
