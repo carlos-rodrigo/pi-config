@@ -28,61 +28,60 @@ test("buildSuggestionPrompt frames suggestions as actionable next-step prompts",
 
 	assert.match(prompt, /next prompt the USER should send/i);
 	assert.match(prompt, /move the work forward/i);
-	assert.match(prompt, /Stay in the user's voice/i);
+	assert.match(prompt, /directly in the user's voice/i);
 	assert.match(prompt, /Return ONLY the prompt text/i);
 });
 
-test("buildSuggestionPrompt starts with the desired result instead of a prescribed process", () => {
+test("buildSuggestionPrompt defines the outcome, evidence, constraints, and completion bar", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: The login is broken.\n\nAssistant: I see the issue.",
 	);
 
-	assert.match(prompt, /OUTCOME-FIRST/i);
-	assert.match(prompt, /desired result/i);
-	assert.doesNotMatch(prompt, /Give direction, not questions/i);
+	assert.match(prompt, /user-visible outcome/i);
+	assert.match(prompt, /available evidence/i);
+	assert.match(prompt, /important constraint/i);
+	assert.match(prompt, /completion bar/i);
+	assert.match(prompt, /smallest missing fact/i);
 });
 
-test("buildSuggestionPrompt makes verification proportional to the task", () => {
+test("buildSuggestionPrompt leaves the agent room to choose an efficient path", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Add the API endpoint.\n\nAssistant: Done, I created the endpoint.",
 	);
 
-	assert.match(prompt, /VERIFY WHEN IT MATTERS/i);
+	assert.match(prompt, /choose an efficient path/i);
 	assert.match(prompt, /observable success check/i);
-	assert.doesNotMatch(prompt, /Action \+ verification shape by default/i);
+	assert.doesNotMatch(prompt, /detailed implementation sequence/i);
 });
 
-test("buildSuggestionPrompt includes only context that can change the result", () => {
+test("buildSuggestionPrompt includes only evidence and constraints that change the result", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Make the components consistent.\n\nAssistant: I'll update them.",
 	);
 
-	assert.match(prompt, /USEFUL CONTEXT/i);
-	assert.match(prompt, /only when they materially change the result/i);
+	assert.match(prompt, /only when (?:it|they) can change the result/i);
+	assert.match(prompt, /without inventing/i);
 });
 
-test("buildSuggestionPrompt uses flexible goal, context, output, and boundaries ingredients", () => {
+test("buildSuggestionPrompt preserves request type and autonomy boundaries", () => {
 	const prompt = buildSuggestionPrompt(
-		"User: Build the feature.\n\nAssistant: Working on it.",
+		"User: Review the feature plan.\n\nAssistant: I'll inspect it.",
 	);
 
-	assert.match(prompt, /GOAL/i);
-	assert.match(prompt, /CONTEXT/i);
-	assert.match(prompt, /OUTPUT/i);
-	assert.match(prompt, /BOUNDARIES/i);
-	assert.match(prompt, /only the parts that help/i);
+	assert.match(prompt, /answer, explain, review, diagnose, or plan/i);
+	assert.match(prompt, /do not turn it into implementation/i);
 });
 
 // --- Mode awareness ---
 
-test("buildSuggestionPrompt is mode-aware for fast GPT-5.5 work", () => {
+test("buildSuggestionPrompt is mode-aware for fast work", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Implement the focused fix.\n\nAssistant: Let's keep this narrow.",
 		"fast",
 	);
 
 	assert.match(prompt, /Current agent mode: fast/i);
-	assert.match(prompt, /GPT-5\.5 no thinking/i);
+	assert.match(prompt, /tiny concrete action/i);
 	assert.match(prompt, /cheap verification check/i);
 });
 
@@ -93,7 +92,7 @@ test("buildSuggestionPrompt is mode-aware for deep work", () => {
 	);
 
 	assert.match(prompt, /Current agent mode: deep/i);
-	assert.match(prompt, /GPT-5\.5 medium/i);
+	assert.match(prompt, /clear outcome/i);
 	assert.match(prompt, /observable success check/i);
 });
 
@@ -104,18 +103,8 @@ test("buildSuggestionPrompt is mode-aware for deep3 work", () => {
 	);
 
 	assert.match(prompt, /Current agent mode: deep3/i);
-	assert.match(prompt, /maximum-quality/i);
+	assert.match(prompt, /quality-first/i);
 	assert.match(prompt, /reproduce or diagnose first/i);
-});
-
-test("buildSuggestionPrompt is mode-aware for fast work", () => {
-	const prompt = buildSuggestionPrompt(
-		"User: We only need a tiny tweak.\n\nAssistant: Let's keep this scoped.",
-		"fast",
-	);
-
-	assert.match(prompt, /Current agent mode: fast/i);
-	assert.match(prompt, /prefer tiny concrete actions/i);
 });
 
 test("buildSuggestionPrompt is mode-aware for smart work", () => {
@@ -125,7 +114,7 @@ test("buildSuggestionPrompt is mode-aware for smart work", () => {
 	);
 
 	assert.match(prompt, /Current agent mode: smart/i);
-	assert.match(prompt, /GPT-5\.5 low/i);
+	assert.match(prompt, /narrow next action/i);
 	assert.match(prompt, /focused check/i);
 });
 
@@ -457,15 +446,14 @@ test("buildSuggestionPrompt includes planning phase guidance", () => {
 
 // --- Word limit updated ---
 
-test("buildSuggestionPrompt enforces concise suggestions under 240 characters", () => {
+test("buildSuggestionPrompt states the 240-character output limit once", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Done.\n\nAssistant: Great.",
 	);
 
 	assert.match(prompt, /10-45 words/);
-	assert.match(prompt, /One or two sentences max/);
-	assert.match(prompt, /Never exceed 240 characters/);
-	assert.match(prompt, /Hard limit: 240 characters maximum/);
+	assert.match(prompt, /one or two sentences/i);
+	assert.equal(prompt.match(/240 characters/gi)?.length, 1);
 });
 
 test("extractBaselineGuidelines captures AGENTS constraints", () => {
@@ -495,26 +483,29 @@ test("buildSuggestionPrompt includes baseline-guideline context and avoids resta
 	);
 
 	assert.match(prompt, /baseline_agent_guidelines/i);
-	assert.match(prompt, /Assume baseline AGENTS\/system guidelines are already enforced/i);
-	assert.match(prompt, /Do NOT restate generic process defaults/i);
+	assert.match(prompt, /Assume baseline AGENTS\/system guidelines are enforced/i);
+	assert.match(prompt, /do not restate generic process defaults/i);
 });
 
 // --- buildImprovementPrompt ---
 
-test("buildImprovementPrompt frames rewrite task and preserves intent", () => {
+test("buildImprovementPrompt frames rewrite task and preserves the request contract", () => {
 	const prompt = buildImprovementPrompt(
 		"why is login broken?",
 		"User: login fails\n\nAssistant: investigate auth",
 	);
 
-	assert.match(prompt, /improve prompts/i);
-	assert.match(prompt, /preserving their original intent exactly/i);
-	assert.match(prompt, /Return ONLY the improved prompt text/i);
-	assert.match(prompt, /Start with the result the user needs/i);
-	assert.doesNotMatch(prompt, /Rewrite questions as instructions/i);
+	assert.match(prompt, /rewrite the user's draft/i);
+	assert.match(prompt, /requested artifact/i);
+	assert.match(prompt, /explicit values/i);
+	assert.match(prompt, /factual claims/i);
+	assert.match(prompt, /Return only the improved prompt text/i);
+	assert.match(prompt, /user-visible outcome/i);
+	assert.match(prompt, /already satisfies this contract, return it as-is/i);
+	assert.match(prompt, /smallest missing fact/i);
 });
 
-test("buildImprovementPrompt adds a concrete success check without prescribing internal process", () => {
+test("buildImprovementPrompt adds a completion bar without prescribing internal process", () => {
 	const prompt = buildImprovementPrompt(
 		"implement the verify planner",
 		"User: improve verify extension\n\nAssistant: use extensions/verify/index.ts",
@@ -523,7 +514,8 @@ test("buildImprovementPrompt adds a concrete success check without prescribing i
 		"building",
 	);
 
-	assert.match(prompt, /observable success check/i);
+	assert.match(prompt, /completion bar/i);
+	assert.match(prompt, /choose an efficient path/i);
 	assert.doesNotMatch(prompt, /include verification_plan before coding/i);
 });
 
@@ -598,7 +590,7 @@ test("detectUnverifiedImplementation detects done/completed without verification
 
 // --- buildSuggestionPrompt with unverifiedImplementation ---
 
-test("buildSuggestionPrompt includes verification_gap guidance when unverifiedImplementation is true", () => {
+test("buildSuggestionPrompt includes concise verification-gap guidance when implementation is unverified", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Add endpoint.\n\nAssistant: Done, created the endpoint.",
 		undefined,
@@ -610,8 +602,9 @@ test("buildSuggestionPrompt includes verification_gap guidance when unverifiedIm
 	);
 
 	assert.match(prompt, /verification_gap/i);
-	assert.match(prompt, /MUST be a verification prompt/i);
-	assert.match(prompt, /blind spot problem/i);
+	assert.match(prompt, /must request the smallest useful external check/i);
+	assert.match(prompt, /real boundary/i);
+	assert.doesNotMatch(prompt, /Examples:/i);
 });
 
 test("buildSuggestionPrompt omits verification_gap when unverifiedImplementation is false", () => {

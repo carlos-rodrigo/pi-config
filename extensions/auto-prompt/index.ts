@@ -6,12 +6,12 @@
  * suggestion appears as gray ghost text inside the editor (rendered by
  * bordered-editor via pi.events).
  *
- * Prompts follow best practices for agent collaboration:
- * - Start with the desired result rather than prescribing the agent's process
- * - Add only context, output requirements, and critical boundaries that matter
- * - Preserve exploratory questions instead of rewriting every prompt as an instruction
- * - Include observable success checks for behavior-changing or important work
- * - Prefer real inputs and external boundaries over agent-generated verification data
+ * Prompt contracts follow OpenAI's GPT-5.6 guidance:
+ * - Define the user-visible outcome, available evidence, important constraints, and completion bar
+ * - Leave the agent room to choose an efficient path
+ * - Preserve request type, explicit values, scope, and autonomy boundaries
+ * - Ask for the smallest missing fact instead of guessing
+ * - Prefer real inputs and external boundaries for behavior-changing verification
  *
  * Acceptance:
  * - Right arrow → accepts the full suggestion
@@ -20,9 +20,9 @@
  *
  * Improve Prompt (Ctrl+Shift+I):
  *   Takes whatever the user has typed in the editor and rewrites it
- *   following the same best-practice principles — making the outcome,
- *   useful context, boundaries, and success check clearer without
- *   prescribing unnecessary process. Replaces the editor text.
+ *   following the same prompt contract — preserving the request while
+ *   clarifying its outcome, evidence, important constraints, output, and
+ *   completion bar only where useful. Replaces the editor text.
  *
  * Commands:
  *   /suggest          Toggle auto-suggestions on/off
@@ -420,17 +420,17 @@ function getWorkflowModeGuidance(workflowMode?: string): string {
 	switch (workflowMode) {
 		case "smart":
 			return `
-- In Smart mode (GPT-5.5 low), prefer a narrow next action plus one focused check`;
+- In Smart mode, prefer a narrow next action plus one focused check`;
 		case "deep":
 		case "deep2":
 			return `
-- In Deep² mode (GPT-5.5 medium), prefer a clear outcome, relevant constraints, and an observable success check for behavior-changing work`;
+- In Deep² mode, prefer a clear outcome, relevant constraints, and an observable success check for behavior-changing work`;
 		case "deep3":
 			return `
-- In Deep³ mode, prefer maximum-quality prompts: reproduce or diagnose first, state tradeoffs, patch only if localized, and verify with focused + regression checks`;
+- In Deep³ mode, prefer a quality-first prompt: reproduce or diagnose first, state material tradeoffs, patch only if localized, and verify with focused and regression checks`;
 		case "fast":
 			return `
-- In Fast mode (GPT-5.5 no thinking), prefer tiny concrete actions with a cheap verification check`;
+- In Fast mode, prefer a tiny concrete action with a cheap verification check`;
 		default:
 			return "";
 	}
@@ -472,66 +472,41 @@ ${getPhaseGuidance(phase)}
 
 	const baselineContext = buildBaselineGuidelinesBlock(baselineGuidelines);
 
-	return `You draft the next prompt the USER should send to a coding agent to move the work forward.
-You write prompts that follow best practices for agent collaboration.
+	return `You write the next prompt the USER should send to a coding agent to move the work forward.
 
-Based on the recent conversation, suggest ONE actionable next-step prompt for the user.
+## Goal
 
-## Prompt Writing Principles
+Produce ONE natural next-step request that can be sent directly in the user's voice.
 
-Good prompts for coding agents are:
-1. OUTCOME-FIRST — Start with the desired result or behavior, not a detailed implementation sequence
-2. USEFUL CONTEXT — Mention files, sources, failing inputs, or prior decisions only when they materially change the result
-3. READY TO USE — Name the output, audience, or level of detail when it affects what the agent should produce
-4. CRITICAL BOUNDARIES — Include only the one or two constraints that prevent real problems; do not control every step
-5. SCOPED — Keep one clear next outcome and avoid unrelated improvements
-6. VERIFY WHEN IT MATTERS — For behavior changes or important work, include an observable success check; prefer real inputs and external boundaries over agent-generated data
+## Success criteria
 
-## Flexible Ingredients
+A successful suggestion:
+- States the user-visible outcome and, when it changes behavior, an observable completion bar
+- Uses available evidence from the conversation without inventing facts, constraints, files, or commands
+- Preserves the request type and authorized scope
+- Is the smallest useful next step from what just happened
 
-Use these as ingredients, not a required template, and include only the parts that help:
-- GOAL — the result needed (always)
-- CONTEXT — information or sources that can change the result
-- OUTPUT — format, audience, length, or definition of done when relevant
-- BOUNDARIES — what must stay unchanged, what to avoid, or what requires approval
+## Constraints
 
-Do not prescribe the agent's internal workflow unless the process itself matters.
+- Include evidence, required output shape, and important constraints only when they can change the result
+- For a request to answer, explain, review, diagnose, or plan, do not turn it into implementation
+- State the destination rather than prescribing steps; let the coding agent choose an efficient path unless a route or process is itself required
+- Preserve explicit user values and decisions. Use absolute language only for true invariants
+- For behavior-changing work, include an observable success check when useful, preferring real inputs and external boundaries
+- Assume baseline AGENTS/system guidelines are enforced; do not restate generic process defaults unless one is the specific blocking action${modeHint}${modeGuidance}${featurePacketGuidance}
 
-Keep it concise: 10-45 words. One or two sentences max. Never exceed 240 characters.
+## Stop rules
 
-## Rules
+- If a required fact is absent, ask for the smallest missing fact instead of guessing
+- Do not add tangential work, optional improvements, or a new feature
 
-- Write the prompt as something the user can send directly to the agent
-- Optimize for forward progress — suggest the most impactful next action
-- Must be a natural next step from what JUST happened
-- Stay in the user's voice; do NOT write as the assistant
-- Do NOT suggest tangential work, new features, or improvements unless the user was exploring that
-- Preserve the kind of request: an exploratory question may stay a question; do not turn it into an implementation request
-- When a task was just completed without evidence, suggest a concrete external verification (curl, CLI, UI, persisted data) rather than more implementation
-- For behavior-changing implementation, include an observable success criterion when it fits; let baseline agent guidance handle planning and internal workflow
-- When debugging, name the failing behavior or input and the result that would prove it fixed; ask for diagnosis first when the cause is unclear
-- When tests are failing, suggest resolving the specific failure and rerunning the known command
-- When the user was told to do something manually, suggest that manual step
-- Assume baseline AGENTS/system guidelines are already enforced by the coding agent
-- Do NOT restate generic process defaults (e.g. "follow AGENTS", "run/feed the loop") unless it is the specific blocking action now
-- Prefer delta guidance: what concrete result is needed next${modeHint}${modeGuidance}${featurePacketGuidance}
-- Return ONLY the prompt text. No quotes, no explanation, no markdown.
-- Hard limit: 240 characters maximum.${phaseGuidance}${unverifiedImplementation ? `
+## Output
+
+Return only the prompt text: 10-45 words, one or two sentences, no quotes or markdown, and at most 240 characters.${phaseGuidance}${unverifiedImplementation ? `
 
 <verification_gap>
-IMPORTANT: The agent just completed an implementation but did NOT mention verification.
-Your suggestion MUST be a verification prompt. Do not suggest more implementation.
-
-Suggest E2E verification that:
-- Hits a real boundary (curl endpoint, run CLI, check DB) — not just "run tests"
-- Uses real inputs from docs/API samples if this is an integration
-- Would catch bugs that unit tests might miss (the blind spot problem)
-- A person who didn't write the code could run to verify it works
-
-Examples:
-- "Verify the webhook handler by curling it with the sample payload from BitFreighter docs"
-- "Test the export by running the CLI with a real data file and checking the output"
-- "Check the API returns correct data by curling /api/users and comparing to the DB"
+The last implementation lacks verification evidence. The next prompt must request the smallest useful external check, not more implementation.
+Name a real boundary, use documented or available sample input when present, and state the expected observable result.
 </verification_gap>` : ""}
 
 <recent_conversation>
@@ -590,35 +565,35 @@ export function buildImprovementPrompt(
 	const phaseHint = phase ? `\nThe conversation is currently in a ${phase.toUpperCase()} phase.` : "";
 	const baselineContext = buildBaselineGuidelinesBlock(baselineGuidelines);
 
-	return `You improve prompts that users send to coding agents.
-Given the user's draft prompt and the recent conversation, rewrite the prompt to be more effective.
+	return `You rewrite the user's draft into a more effective prompt for a coding agent.
 
-## Your Task
+## Goal
 
-Rewrite the user's draft to follow best practices for agent collaboration, while preserving their original intent exactly.
+Clarify the request without changing what the user wants.
 
-## Improvement Principles
+## Success criteria
 
-1. OUTCOME-FIRST — Start with the result the user needs, not a detailed implementation sequence
-2. USEFUL CONTEXT — Add files, sources, failing inputs, or prior decisions only when grounded in the conversation and able to change the result
-3. READY TO USE — Clarify output format, audience, length, or definition of done only when relevant
-4. CRITICAL BOUNDARIES — Keep only constraints that prevent a real mistake; never invent one
-5. SCOPED — Keep one task and do not add optional improvements
-6. VERIFY WHEN IT MATTERS — For behavior changes or important work, add an observable success check; prefer real inputs and external boundaries over agent-generated data
+- Preserve the request type, requested artifact, scope, explicit values, factual claims, and uncertainty
+- Clarify the user-visible outcome, available evidence, important constraints, required output shape, and completion bar only when relevant
+- Keep the rewrite proportional to the draft's length and specificity
 
-## Rules
+## Constraints
 
-- PRESERVE the user's intent — do NOT change what they want done, only improve how they say it
-- Keep improvements proportional — a short draft becomes a better short prompt, not a paragraph
-- If the draft is already good, make only minor improvements or return it as-is
-- Preserve exploratory intent: do not turn a question or request for options into an instruction to implement
-- For behavior-changing drafts, add a concrete observable success check when useful; prefer E2E (curl, CLI, UI, persisted data) over only "run tests"
-- For integrations, use real fixtures from supplied docs or API samples when available
-- Reference files or commands only when they are present in the conversation and relevant
-- Treat baseline AGENTS/system guidance as implied; do not prescribe internal process or repeat generic workflow boilerplate
-- Do NOT add new requirements, inferred constraints, features, or scope the user didn't ask for
-- Do NOT add preamble, explanation, or commentary
-- Return ONLY the improved prompt text. No quotes, no markdown formatting.${phaseHint}
+- Do not add claims, requirements, features, constraints, or scope that are absent from the draft and conversation
+- Keep a request to answer, explain, review, diagnose, plan, or explore as that kind of request; do not turn it into implementation
+- State the destination rather than prescribing internal steps; let the coding agent choose an efficient path unless the process itself matters
+- Use files, commands, fixtures, and prior decisions only when supplied and able to change the result
+- For behavior-changing work, add an observable success check when useful, preferring real inputs and external boundaries
+- Treat baseline AGENTS/system guidance as implied; do not repeat generic workflow rules
+
+## Stop rules
+
+- If the draft already satisfies this contract, return it as-is
+- If required evidence is unavailable, do not guess; preserve the uncertainty or ask for the smallest missing fact
+
+## Output
+
+Return only the improved prompt text, with no preamble, quotes, commentary, or markdown.${phaseHint}
 
 <user_draft>
 ${userDraft}
@@ -679,7 +654,7 @@ async function resolveRequestCandidates(ctx: ExtensionContext): Promise<Resolved
 }
 
 const AUTOPROMPT_SYSTEM_INSTRUCTIONS =
-	"You generate concise, actionable prompt text for coding-agent collaboration. Follow the user request exactly and return only plain text.";
+	"You write direct, concise prompts for coding-agent collaboration.";
 
 function buildCompletionContext(userText: string): {
 	systemPrompt: string;
@@ -1043,7 +1018,7 @@ async function improveCurrentDraft(pi: ExtensionAPI, ctx: ExtensionContext, expl
 		let improved = extractAssistantOutput(response.content);
 
 		if (!improved) {
-			const retryPrompt = `Rewrite this draft into one concise, actionable prompt for a coding agent. Preserve intent. Return only the rewritten prompt text.\n\nDraft: ${draft}`;
+			const retryPrompt = `Rewrite this draft into one effective prompt for a coding agent. Preserve the request type, artifact, scope, explicit facts, and uncertainty. Clarify the outcome, important constraints, output, and completion bar only when relevant. Do not invent details or prescribe internal steps. If the draft is already effective, return it unchanged. Return only the prompt text.\n\nDraft: ${draft}`;
 			const retryResponse = await runWithModelFallback(requestCandidates, async ({ model, apiKey }) => {
 				const retryResponse = await complete(
 					model,

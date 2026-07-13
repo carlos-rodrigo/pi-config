@@ -26,9 +26,11 @@ After the agent finishes responding, a gray suggestion appears inside the editor
 
 1. After `agent_end`, calls an LLM (default GPT-5.6 Terra, fallback GPT-5.4) with the last few messages
 2. The LLM returns one short, result-first next-step prompt the user can send to move the work forward
-   (it adds only context, output requirements, critical boundaries, and verification that materially help; AGENTS/system workflow rules remain implied)
+   (it adds only evidence, output requirements, important constraints, and a completion bar that can change the result; AGENTS/system workflow rules remain implied)
 3. The suggestion appears as gray ghost text in the editor (rendered by `bordered-editor`)
 4. Uses the same API key already configured in pi — no extra setup
+
+The suggestion and `/improve` contracts follow OpenAI's [GPT-5.6 prompting guidance](https://developers.openai.com/api/docs/guides/prompt-guidance-gpt-5p6): define the outcome, available evidence, important constraints, and completion bar while leaving the agent room to choose an efficient path. They also preserve request type and scope, avoid invented context, and ask for the smallest missing fact rather than guessing. `/improve` returns already-effective drafts unchanged.
 
 ### Devil's Advocate & E2E Verification
 
@@ -65,7 +67,7 @@ Example: If the agent says "Done! I've created the webhook handler" without ment
 | **Backspace** | Dismiss ghost |
 | **Escape** | Dismiss ghost |
 | Type before suggestion arrives | LLM call is cancelled, no ghost shown |
-| **Ctrl+Shift+I** | Improve current draft in place (result first, useful context, critical boundaries, proportional verification) |
+| **Ctrl+Shift+I** | Improve current draft in place while preserving its request type, artifact, scope, explicit values, and facts |
 
 ## Commands
 
