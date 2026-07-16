@@ -171,6 +171,7 @@
             <li><a href="#examples">Examples</a></li>
             <li><a href="#prd-story-inventory">PRD stories</a></li>
             <li><a href="#prd-experience-contract">Experience</a></li>
+            <li><a href="#prd-diagram-governance">PRD diagram gate</a></li>
             <li><a href="#pattern-research">Research</a></li>
             <li><a href="#design-thesis">Thesis</a></li>
             <li><a href="#proposed-architecture">Proposal</a></li>
@@ -216,8 +217,9 @@
           <div class="article-meta">
             <span class="pill review">Draft</span>
             <span class="pill">Feature design</span>
-            <span class="pill">Updated 2026-07-08</span>
+            <span class="pill">Updated 2026-07-13</span>
             <span class="pill recommended">Default-on local memory</span>
+            <span class="pill review">Packet migration pending</span>
           </div>
           <h1>Pi Agent Memory Design</h1>
           <p class="subtitle">Agent Memory becomes a small Pi extension that recalls project and global lessons at prompt time, injects a bounded advisory memory pack for the current turn only, shows visible status, and learns cautiously from verification evidence.</p>
@@ -226,6 +228,7 @@
             <li data-review-id="summary.takeaway-2">Persist inspectable memory under <code>.pi/agent-memory</code> and <code>$HOME/.pi/agent-memory</code>; project results outrank global results and global promotion is human-gated.</li>
             <li data-review-id="summary.takeaway-3">Make trust visible through <code>ctx.ui.setStatus()</code>, <code>/agent-memory</code> commands, review logs, setup failure copy, and redaction/promotion gates.</li>
             <li data-review-id="summary.takeaway-4">Reuse semantic-search’s local Ollama patterns by extracting shared embedding/vector helpers only as needed; memory owns lessons and recall logs, not code indexes.</li>
+            <li data-review-id="summary.takeaway-5">Add one final packet-governance slice: finished PRDs must fail validation without an authentic Excalidraw semantic diagram, and this PRD becomes the first migration fixture.</li>
           </ul>
         </header>
 
@@ -267,6 +270,7 @@
             <article class="story-card" data-review-id="prd-story-inventory.story-003"><h3><span class="id-chip">STORY-003</span>Learn from verified outcomes</h3><p><strong>Acceptance:</strong> AC-004.</p><p><strong>Design implication:</strong> verification feedback must reference recalled IDs from the same task and must not create hidden global memories.</p></article>
             <article class="story-card" data-review-id="prd-story-inventory.story-004"><h3><span class="id-chip">STORY-004</span>Inspect and correct memory</h3><p><strong>Acceptance:</strong> AC-005, AC-006, and AC-010.</p><p><strong>Design implication:</strong> review logs, tombstones, candidate states, and restore/recreate paths are first-class domain behavior.</p></article>
             <article class="story-card" data-review-id="prd-story-inventory.story-005"><h3><span class="id-chip">STORY-005</span>Create memories from the beginning</h3><p><strong>Acceptance:</strong> AC-007.</p><p><strong>Design implication:</strong> manual add must confirm scope, redaction, source, active/review state, and future recall proof.</p></article>
+            <article class="story-card" data-review-id="prd-story-inventory.packet-governance"><h3><span class="id-chip">PACKET-GOV-001</span>Require authentic PRD diagrams</h3><p><strong>Acceptance:</strong> AC-011.</p><p><strong>Design implication:</strong> finished PRD validation needs a hard semantic-section Excalidraw gate, actionable migration errors, and a first real migration fixture without replacing useful HTML/CSS wireframes.</p></article>
           </div>
           <div class="callout" data-review-id="prd-story-inventory.non-goals"><strong>Non-goals that constrain design</strong><p>No custom path scope, no cloud vector database, no raw transcript hoarding, no silent global learning, and no full review overlay as an MVP blocker.</p></div>
           <span class="review-label">review: prd-story-inventory</span>
@@ -290,6 +294,21 @@ mem: no match
 mem: failed · local embeddings unavailable · /agent-memory status
 mem: paused · /agent-memory resume</div>
           <span class="review-label">review: prd-experience-contract</span>
+        </section>
+
+        <section class="section-card reveal" id="prd-diagram-governance" aria-labelledby="prd-diagram-governance-title" data-review-id="prd-diagram-governance">
+          <span class="section-kicker">Approved validation boundary</span>
+          <h2 id="prd-diagram-governance-title">Hard PRD Excalidraw Gate</h2>
+          <p class="section-summary">The enforcement slice must distinguish a real semantic Excalidraw diagram from unrelated SVG, HTML/CSS wireframes, or a template placeholder.</p>
+          <div class="card-grid">
+            <article class="component-card" data-review-id="prd-diagram-governance.finished-prd"><h3>Finished PRD classifier</h3><p>Apply the hard gate only to finished files named <code>prd.html</code> validated without <code>--allow-placeholders</code>. Existing design, system-diagram, and generic report validation remains unchanged.</p></article>
+            <article class="component-card" data-review-id="prd-diagram-governance.semantic-scope"><h3>Semantic-section scope</h3><p>Search <code>user-flows</code> and <code>domain-interactions</code> for the qualifying scene. UI option wireframes, decorative SVG, and unrelated <code>role="img"</code> elements cannot satisfy the invariant.</p></article>
+            <article class="component-card" data-review-id="prd-diagram-governance.authenticity"><h3>Authenticity and accessibility</h3><p>Require inline <code>&lt;svg role="img"&gt;</code>, <code>svg-source:excalidraw</code>, title/description text, stable review anchors, and renderer-owned <code>diagram-reveal</code> groups. Keep existing detailed SVG quality checks.</p></article>
+            <article class="component-card" data-review-id="prd-diagram-governance.template-mode"><h3>Template mode</h3><p><code>prd-template.html</code> validated with <code>--allow-placeholders</code> must expose the canonical diagram slot and guidance, but it does not need a feature-specific rendered scene.</p></article>
+          </div>
+          <div class="callout warning" data-review-id="prd-diagram-governance.migration"><strong>Migration boundary</strong><p>Retain the JSON scene near <code>docs/features/agent-memory/</code>, render with <code>render-excalidraw-diagram.mjs</code>, inline the SVG into the PRD domain-interaction section, preserve existing HTML/CSS UI options, and run finished-report validation. Legacy PRDs are readable but not validated/ready until migrated; no self-issued exemption or silent grandfathering is allowed.</p></div>
+          <div class="mini-flow" data-review-id="prd-diagram-governance.flow"><span>finished prd.html</span><b>checks</b><span>semantic sections</span><b>requires</b><span>authentic Excalidraw SVG</span><b>then</b><span>passes or gives migration error</span></div>
+          <span class="review-label">review: prd-diagram-governance</span>
         </section>
 
         <section class="section-card reveal" id="pattern-research" aria-labelledby="research-title" data-review-id="pattern-research">
@@ -408,6 +427,7 @@ mem: paused · /agent-memory resume</div>
             <article class="component-card" data-review-id="architecture-delta.shared-lib"><h3>Optional shared helper</h3><p>Extract Ollama health, embedding, vector scoring, truncation, and setup-error formatting only if memory and semantic-search would otherwise duplicate code.</p></article>
             <article class="component-card" data-review-id="architecture-delta.bordered-editor"><h3>Status priority</h3><p>Update bordered-editor priority if necessary so <code>mem: failed</code> is not hidden behind lower-value statuses.</p></article>
             <article class="component-card" data-review-id="architecture-delta.verify"><h3>Verification consumer</h3><p>Subscribe to verification events; do not fork verification execution or archive logic.</p></article>
+            <article class="component-card" data-review-id="architecture-delta.prd-validator"><h3>PRD report validator</h3><p>Extend <code>/Users/carlosrodrigo/agents/scripts/validate-html-report.mjs</code>, its validator regression fixture, and the PRD/report skill contracts. Migrate this PRD with a retained Excalidraw scene as the first real cross-repo acceptance fixture.</p></article>
           </div>
           <span class="review-label">review: architecture-delta</span>
         </section>
@@ -423,6 +443,7 @@ mem: paused · /agent-memory resume</div>
             <article class="slice-card" data-review-id="slice-plan.slice-004"><h3><span class="id-chip">SLICE-004</span>Visible setup failure</h3><p><strong>Need:</strong> broken embeddings are clearly failed, not empty recall.</p><p><strong>Feedback:</strong> fake adapter failure asserts status and no pack.</p></article>
             <article class="slice-card" data-review-id="slice-plan.slice-005"><h3><span class="id-chip">SLICE-005</span>Review corrections</h3><p><strong>Need:</strong> user archives, edits, deletes, resets, rejects, or promotes memory.</p><p><strong>Feedback:</strong> tombstone and promotion tests.</p></article>
             <article class="slice-card" data-review-id="slice-plan.slice-006"><h3><span class="id-chip">SLICE-006</span>Verification feedback</h3><p><strong>Need:</strong> outcomes update usefulness for recalled memories only.</p><p><strong>Feedback:</strong> event-bus scoring tests.</p></article>
+            <article class="slice-card" data-review-id="slice-plan.slice-007"><h3><span class="id-chip">SLICE-007</span>Hard PRD diagram validation</h3><p><strong>Need:</strong> a finished PRD cannot silently omit its semantic Excalidraw diagram.</p><p><strong>Feedback:</strong> missing-diagram validator regression plus migrated agent-memory PRD validation.</p></article>
           </div>
           <span class="review-label">review: slice-plan</span>
         </section>
@@ -551,6 +572,7 @@ mem: paused · /agent-memory resume</div>
             <article class="decision-record-card" data-review-id="design-decisions.local-only"><h3><span class="id-chip">D2</span>Local embeddings required</h3><p><strong>Chosen:</strong> local adapter failures produce visible memory failure.</p><p><strong>Rejected:</strong> cloud fallback or silent skip.</p></article>
             <article class="decision-record-card" data-review-id="design-decisions.files"><h3><span class="id-chip">D3</span>File-backed stores</h3><p><strong>Chosen:</strong> JSONL and vector cache files under scope roots.</p><p><strong>Rejected:</strong> database or daemon for MVP volume.</p></article>
             <article class="decision-record-card" data-review-id="design-decisions.review-gates"><h3><span class="id-chip">D4</span>Human-gated promotion</h3><p><strong>Chosen:</strong> only explicit user action creates active global memories from project lessons.</p><p><strong>Rejected:</strong> automatic cross-project learning.</p></article>
+            <article class="decision-record-card" data-review-id="design-decisions.prd-diagram-gate"><h3><span class="id-chip">D5</span>Hard finished-PRD diagram gate</h3><p><strong>Chosen:</strong> require one authentic Excalidraw scene in a semantic PRD section and fail with migration guidance when absent.</p><p><strong>Rejected:</strong> prompt-only guidance, accepting HTML wireframes as the semantic diagram, or grandfathering legacy PRDs as validated.</p></article>
           </div>
           <div class="callout risk" data-review-id="design-decisions.prompt-injection-risk"><strong>Prompt influence risk</strong><p>Memory text must be presented as advisory. If memory conflicts with the user request, system instructions, AGENTS.md, PRD/design, or task brief, the higher-priority source wins and the conflict should be reviewable.</p></div>
           <span class="review-label">review: design-decisions</span>
@@ -559,7 +581,7 @@ mem: paused · /agent-memory resume</div>
         <section class="section-card reveal" id="tasks-and-feedback" aria-labelledby="tasks-feedback-title" data-review-id="tasks-and-feedback">
           <span class="section-kicker">Slice designs</span>
           <h2 id="tasks-feedback-title">Outside-in task design and feedback hooks</h2>
-          <p class="section-summary">Task briefs can be generated from these slice designs after design review. The first slice proves visible trust without retrieval complexity.</p>
+          <p class="section-summary">The 6 agent-memory runtime slices are complete. The next approved slice is packet governance: enforce the PRD diagram invariant and migrate this PRD as the first real fixture.</p>
           <article class="slice-design-card" data-review-id="slice-designs.slice-001">
             <h3><span class="id-chip">SLICE-001</span>Status and controls shell</h3>
             <p><strong>External need:</strong> the user sees memory running by default and can pause or disable it before any recall implementation ships.</p>
@@ -600,6 +622,7 @@ mem: paused · /agent-memory resume</div>
               <li><strong>SLICE-004:</strong> fake embedding failure proves visible failed state and no prompt injection.</li>
               <li><strong>SLICE-005:</strong> review commands write tombstones or approved promotion records.</li>
               <li><strong>SLICE-006:</strong> verification events update evidence only for same-task recalled IDs.</li>
+              <li><strong>SLICE-007:</strong> finished PRD validation requires an authentic semantic Excalidraw diagram; migrate this PRD and prove the missing-diagram failure.</li>
             </ul>
           </details>
           <span class="review-label">review: tasks-and-feedback</span>
@@ -619,6 +642,7 @@ mem: paused · /agent-memory resume</div>
                 <tr data-review-id="story-coverage.story-003"><th scope="row">STORY-003 / AC-004</th><td>Verification event consumer and recall ledger</td><td>SLICE-006</td><td>Same-task scoring tests</td></tr>
                 <tr data-review-id="story-coverage.story-004"><th scope="row">STORY-004 / AC-005 / AC-006 / AC-010</th><td>Review log, tombstones, promotion workflow</td><td>SLICE-005</td><td>Review correction and recall-exclusion tests</td></tr>
                 <tr data-review-id="story-coverage.story-005"><th scope="row">STORY-005 / AC-007</th><td>Manual add command, redaction, memory store</td><td>SLICE-002</td><td>Create, review, and later recall tests</td></tr>
+                <tr data-review-id="story-coverage.packet-governance"><th scope="row">PACKET-GOV-001 / AC-011</th><td>Finished-PRD validator, skill contract, Excalidraw migration fixture</td><td>SLICE-007</td><td>Missing-diagram regression and migrated PRD validation</td></tr>
               </tbody>
             </table>
           </div>
@@ -628,11 +652,12 @@ mem: paused · /agent-memory resume</div>
         <section class="section-card reveal" id="open-questions" aria-labelledby="open-questions-title" data-review-id="open-questions">
           <span class="section-kicker">Remaining questions</span>
           <h2 id="open-questions-title">Open questions</h2>
-          <p class="section-summary">No architecture blocker remains. These decisions refine copy and configuration.</p>
+          <p class="section-summary">No agent-memory runtime architecture blocker remains. Packet validation stays pending until SLICE-007 implements the approved hard gate and migration.</p>
           <ul class="checklist">
             <li data-review-id="open-questions.copy"><strong>Q-001 copy:</strong> choose final wording for running, ready, no-match, failed, paused, and disabled states.</li>
             <li data-review-id="open-questions.budget"><strong>Q-002 budget:</strong> choose the default memory pack size; until then use a configurable cap and test enforcement.</li>
             <li data-review-id="open-questions.naming"><strong>Q-003 naming:</strong> defer any top-layer profile/persona terminology until a later feature packet.</li>
+            <li data-review-id="open-questions.diagram-gate"><strong>Approved, pending implementation:</strong> validator scope, semantic-section requirement, template exception, and no-grandfathering migration criteria are settled; TASK-007 is ready.</li>
           </ul>
           <details data-review-id="open-questions.sources">
             <summary>Sources reviewed</summary>
@@ -670,7 +695,7 @@ mem: paused · /agent-memory resume</div>
   </div>
 
   <a class="back-to-top" href="#main" aria-label="Back to top">↑</a>
-  <footer data-review-id="chrome.footer">Generated for Pi Agent Memory planning. Status: Draft design. Preserve <code>data-review-id</code> anchors when editing.</footer>
+  <footer data-review-id="chrome.footer">Generated for Pi Agent Memory planning. Status: Draft design · packet diagram migration pending. Preserve <code>data-review-id</code> anchors when editing.</footer>
 
   <script>
     document.documentElement.classList.add('js');
