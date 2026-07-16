@@ -188,13 +188,13 @@ test("ctrl+shift+m cycles through every mode", async () => {
 
 	await shortcut.handler(ctx as any);
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
-	assert.equal(getThinkingLevel(), "medium");
+	assert.equal(getThinkingLevel(), "xhigh");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep²/i);
 	assert.match(statuses.at(-1)?.value ?? "", /mode: Deep²/i);
 
 	await shortcut.handler(ctx as any);
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
-	assert.equal(getThinkingLevel(), "xhigh");
+	assert.equal(getThinkingLevel(), "max");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep³/i);
 	assert.match(statuses.at(-1)?.value ?? "", /mode: Deep³/i);
 
@@ -227,19 +227,23 @@ test("/smart /deep /deep2 /deep3 /fast commands switch modes directly", async ()
 	assert.equal(getThinkingLevel(), "low");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Smart/i);
 
+	assert.match(deepCommand.description, /xhigh reasoning/i);
+	assert.match(deep2Command.description, /xhigh reasoning/i);
+	assert.match(deep3Command.description, /max reasoning/i);
+
 	await deepCommand.handler("", ctx as any);
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
-	assert.equal(getThinkingLevel(), "medium");
+	assert.equal(getThinkingLevel(), "xhigh");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep²/i);
 
 	await deep2Command.handler("", ctx as any);
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
-	assert.equal(getThinkingLevel(), "medium");
+	assert.equal(getThinkingLevel(), "xhigh");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep²/i);
 
 	await deep3Command.handler("", ctx as any);
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
-	assert.equal(getThinkingLevel(), "xhigh");
+	assert.equal(getThinkingLevel(), "max");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep³/i);
 
 	await fastCommand.handler("", ctx as any);
@@ -259,7 +263,21 @@ test("deep mode falls back to gpt-5.5 when gpt-5.6-sol is unavailable", async ()
 
 	await deepCommand.handler("", ctx as any);
 	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
-	assert.equal(getThinkingLevel(), "medium");
+	assert.equal(getThinkingLevel(), "xhigh");
+});
+
+test("deep3 falls back to gpt-5.5 with xhigh thinking when gpt-5.6-sol is unavailable", async () => {
+	const { commands, pi, getSelectedModel, getThinkingLevel } = createPiHarness();
+	const { ctx } = createContext({ availableModels: new Set(["openai-codex/gpt-5.5"]) });
+
+	workflowModesExtension(pi as any);
+
+	const deep3Command = commands.get("deep3");
+	assert.ok(deep3Command);
+
+	await deep3Command.handler("", ctx as any);
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.5" });
+	assert.equal(getThinkingLevel(), "xhigh");
 });
 
 test("deep mode falls back to gpt-5.4 when gpt-5.6-sol and gpt-5.5 are unavailable", async () => {

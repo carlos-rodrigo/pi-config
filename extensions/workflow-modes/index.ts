@@ -39,16 +39,16 @@ const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
 			{ provider: "openai-codex", model: "gpt-5.4", thinking: "high" },
 			{ provider: "openai-codex", model: "gpt-5.3-codex", thinking: "xhigh" },
 		],
-		thinking: "medium",
+		thinking: "xhigh",
 	},
 	deep3: {
 		models: [
 			{ provider: "openai-codex", model: "gpt-5.6-sol" },
-			{ provider: "openai-codex", model: "gpt-5.5" },
-			{ provider: "openai-codex", model: "gpt-5.4" },
-			{ provider: "openai-codex", model: "gpt-5.3-codex" },
+			{ provider: "openai-codex", model: "gpt-5.5", thinking: "xhigh" },
+			{ provider: "openai-codex", model: "gpt-5.4", thinking: "xhigh" },
+			{ provider: "openai-codex", model: "gpt-5.3-codex", thinking: "xhigh" },
 		],
-		thinking: "xhigh",
+		thinking: "max",
 	},
 	fast: {
 		models: [
@@ -254,21 +254,21 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("deep", {
-		description: "Switch agent mode to Deep² (medium reasoning)",
+		description: "Switch agent mode to Deep² (xhigh reasoning)",
 		handler: async (_args, ctx) => {
 			await applyMode("deep2", ctx);
 		},
 	});
 
 	pi.registerCommand("deep2", {
-		description: "Switch agent mode to Deep² (medium reasoning)",
+		description: "Switch agent mode to Deep² (xhigh reasoning)",
 		handler: async (_args, ctx) => {
 			await applyMode("deep2", ctx);
 		},
 	});
 
 	pi.registerCommand("deep3", {
-		description: "Switch agent mode to Deep³ (xhigh reasoning)",
+		description: "Switch agent mode to Deep³ (max reasoning)",
 		handler: async (_args, ctx) => {
 			await applyMode("deep3", ctx);
 		},
