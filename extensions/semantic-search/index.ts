@@ -2561,9 +2561,8 @@ function formatBackgroundRebuildStatus(cwd: string, indexStatus: IndexStatus): s
 	return lines.join("\n");
 }
 
-function formatBackgroundRebuildFinished(status: BackgroundRebuildStatus, indexStatus: IndexStatus): string {
-	const state = status.status === "succeeded" ? "finished" : status.status;
-	const lines = [`Semantic index background rebuild ${state}.`];
+function formatBackgroundRebuildFailure(status: BackgroundRebuildStatus, indexStatus: IndexStatus): string {
+	const lines = ["Semantic index background rebuild failed."];
 	if (status.message) lines.push(status.message);
 	if (status.error) lines.push(`Error: ${status.error}`);
 	lines.push(`Current index: ${indexStatus.stale ? "stale" : "fresh"} (${indexStatus.reason})`);
@@ -2593,13 +2592,15 @@ function watchBackgroundIndexBuild(pi: ExtensionAPI, cwd: string, ui?: RebuildSt
 			watchedBackgroundRebuilds.delete(absoluteCwd);
 		}
 		if (status.notified) return;
-		const indexStatus = getIndexStatus(absoluteCwd);
-		pi.sendMessage?.({
-			customType: "semantic-search",
-			content: formatBackgroundRebuildFinished(status, indexStatus),
-			display: true,
-			details: { index: indexStatus, rebuild: status },
-		});
+		if (status.status === "failed") {
+			const indexStatus = getIndexStatus(absoluteCwd);
+			pi.sendMessage?.({
+				customType: "semantic-search",
+				content: formatBackgroundRebuildFailure(status, indexStatus),
+				display: true,
+				details: { index: indexStatus, rebuild: status },
+			});
+		}
 		markBackgroundRebuildNotified(status);
 		scheduleTerminalIndicatorClear(pi, ui, absoluteCwd);
 	};
@@ -3174,7 +3175,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 				watchBackgroundIndexBuild(pi, ctx.cwd, ctx.ui);
 				publishBackgroundRebuildComposerStatus(pi, ctx.ui, currentBackgroundRebuildStatus(ctx.cwd));
 				ctx.ui.notify(`Started semantic index rebuild in background${started.pid ? ` (pid ${started.pid})` : ""}. Log: ${started.logPath}`, "info");
-				pi.sendMessage?.({ customType: "semantic-search", content: `Semantic index rebuild started in background by default${started.pid ? ` (pid ${started.pid})` : ""}.\nLog: ${started.logPath}\nStatus: ${started.statusPath}\nMonitor: /index rebuild --status or the index_rebuild_status tool.\nCompletion: a follow-up message appears when it finishes or fails.\nForeground escape hatch: /index rebuild --foreground.`, display: true, details: started });
+				pi.sendMessage?.({ customType: "semantic-search", content: `Semantic index rebuild started in background by default${started.pid ? ` (pid ${started.pid})` : ""}.\nLog: ${started.logPath}\nStatus: ${started.statusPath}\nMonitor: /index rebuild --status or the index_rebuild_status tool.\nFailure: a follow-up message appears only if the rebuild fails.\nForeground escape hatch: /index rebuild --foreground.`, display: true, details: started });
 				return;
 			}
 			ctx.ui.setStatus?.("semantic-search", lexicalOnly ? "indexing…" : summariesDisabled ? "embedding…" : "summarizing…");

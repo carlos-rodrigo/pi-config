@@ -673,7 +673,7 @@ test("index rebuild writes a local index before Ollama failures", async () => {
 	}
 });
 
-test("background index rebuild sends a follow-up when it finishes", async () => {
+test("background index rebuild stays silent when it succeeds", async () => {
 	const events = new Map<string, any>();
 	const messages: any[] = [];
 	semanticSearchExtension({
@@ -708,7 +708,53 @@ test("background index rebuild sends a follow-up when it finishes", async () => 
 		events.get("session_start")?.({}, { cwd: dir });
 		await new Promise((resolve) => setImmediate(resolve));
 
-		assert.match(messages[messages.length - 1]?.content ?? "", /Semantic index background rebuild finished/);
+		assert.equal(messages.length, 0);
+		const status = JSON.parse(readFileSync(join(statusDir, "rebuild-status.json"), "utf8"));
+		assert.equal(status.notified, true);
+	} finally {
+		events.get("session_shutdown")?.();
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("background index rebuild displays a follow-up when it fails", async () => {
+	const events = new Map<string, any>();
+	const messages: any[] = [];
+	semanticSearchExtension({
+		on(name: string, handler: any) {
+			events.set(name, handler);
+		},
+		registerTool() {},
+		registerCommand() {},
+		sendMessage(message: any) {
+			messages.push(message);
+		},
+	} as any);
+
+	const dir = makeProject({
+		"src/search/index.ts": "export function semanticSearch(query: string) { return vectorIndex.search(query); }\n",
+	});
+	try {
+		buildSearchIndex(dir, { writeToDisk: true });
+		const statusDir = join(dir, ".pi", "semantic-search");
+		const logPath = join(statusDir, "rebuild.log");
+		writeFileSync(logPath, "[2026-05-17T13:09:45.499Z] semantic-search background rebuild failed: Ollama unavailable\n", "utf8");
+		writeFileSync(join(statusDir, "rebuild-status.json"), JSON.stringify({
+			status: "failed",
+			cwd: dir,
+			logPath,
+			pid: process.pid,
+			startedAt: "2026-05-17T13:09:44.855Z",
+			finishedAt: "2026-05-17T13:09:45.499Z",
+			error: "Ollama unavailable",
+		}), "utf8");
+
+		events.get("session_start")?.({}, { cwd: dir });
+		await new Promise((resolve) => setImmediate(resolve));
+
+		assert.equal(messages.length, 1);
+		assert.match(messages[0]?.content ?? "", /Semantic index background rebuild failed/);
+		assert.match(messages[0]?.content ?? "", /Ollama unavailable/);
 		const status = JSON.parse(readFileSync(join(statusDir, "rebuild-status.json"), "utf8"));
 		assert.equal(status.notified, true);
 	} finally {
