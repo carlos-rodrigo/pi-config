@@ -25,8 +25,8 @@ pi install ./extensions/workflow-modes
 | **smart** | `anthropic/claude-fable-5` | low | Default — small/narrow work, repo questions, cheap-to-verify edits |
 | **deep** / **deep2** | `openai-codex/gpt-5.6-sol` | xhigh | Normal deep work: bug fixes, feature work, multi-file edits |
 | **deep3** | `openai-codex/gpt-5.6-sol` | max | Hard debugging, broad/high-risk work, maximum quality |
-| **fast** | `openai-codex/gpt-5.5` | off | No-thinking GPT-5.5 for quick tasks and simple edits |
+| **fast** | `openai-codex/gpt-5.5` | xhigh | Extra-high-thinking GPT-5.5 for quick tasks and simple edits |
 
-GPT-5 modes prefer outcome-focused prompts: state the target, what good means, constraints, and how to verify. `/deep` is the same as `/deep2`; Deep² uses `gpt-5.6-sol` with xhigh thinking, while Deep³ uses it with max thinking. Both fall back to `gpt-5.5`, `gpt-5.4`, and `gpt-5.3-codex` if needed; fallback thinking is capped at the strongest configured level those models support. `/fast` is GPT-5.5 with thinking off for quick, cheap-to-verify work.
+GPT-5 modes prefer outcome-focused prompts: state the target, what good means, constraints, and how to verify. `/deep` is the same as `/deep2`; Deep² uses `gpt-5.6-sol` with xhigh thinking, while Deep³ uses it with max thinking. Both fall back to `gpt-5.5`, `gpt-5.4`, and `gpt-5.3-codex` if needed; fallback thinking is capped at the strongest configured level those models support. `/fast` is GPT-5.5 with xhigh thinking for quick, cheap-to-verify work.
 
 Startup note: if you launch Pi with an explicit model/thinking selection (`--model`, `--models`, or `--thinking`), workflow-modes now preserves that choice unless you also pass `--workflow-mode`.

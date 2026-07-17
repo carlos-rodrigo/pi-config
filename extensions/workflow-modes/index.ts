@@ -56,7 +56,7 @@ const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
 			{ provider: "openai-codex", model: "gpt-5.4" },
 			{ provider: "anthropic", model: "claude-opus-4-5" },
 		],
-		thinking: "minimal",
+		thinking: "xhigh",
 	},
 };
 
