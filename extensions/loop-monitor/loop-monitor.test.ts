@@ -4,16 +4,20 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 
 import loopMonitorExtension, {
 	LoopMonitorComponent,
+	buildTaskSections,
 	extractCurrentIteration,
 	loadLoopMonitorSnapshot,
 	parseActiveTaskBoard,
+	parseTaskBrief,
 	selectCurrentProjectJobs,
+	type LoopMonitorItem,
 	type LoopMonitorSnapshot,
 	type PersistedLoopJob,
+	type ProjectTask,
 } from "./index.ts";
 
 const NOW = new Date("2026-06-01T12:00:00Z");
@@ -32,6 +36,43 @@ function loopJob(overrides: Partial<PersistedLoopJob> = {}): PersistedLoopJob {
 		loopLogPath: "/tmp/project/.features/payments/artifacts/loop/loop.log",
 		...overrides,
 	};
+}
+
+function projectTask(overrides: Partial<ProjectTask> = {}): ProjectTask {
+	return {
+		id: "TASK-002",
+		feature: "payments",
+		title: "Handle retries",
+		status: "ready",
+		filePath: "/tmp/project/.features/payments/tasks/002-handle-retries.md",
+		content: "## Brief\n\n- Goal: Add reliable retries.",
+		...overrides,
+	};
+}
+
+function monitorItem(overrides: Partial<LoopMonitorItem> = {}): LoopMonitorItem {
+	return {
+		job: loopJob(),
+		taskId: "TASK-002",
+		taskTitle: "Handle retries",
+		taskStatus: "ready",
+		association: "explicit",
+		board: { current: "TASK-002", next: "TASK-003", blockers: "none", tasks: new Map() },
+		iteration: { iteration: 2, maxIterations: 5, finished: false, lines: ["Working now"], sourceLineCount: 1 },
+		logUpdatedAt: NOW.getTime() - 2000,
+		...overrides,
+	};
+}
+
+function testTheme(colors?: string[]): Theme {
+	return new Proxy({}, {
+		get: (_target, property) => property === "bold"
+			? (text: string) => text
+			: (color: string, text: string) => {
+				colors?.push(color);
+				return text;
+			},
+	}) as Theme;
 }
 
 test("extractCurrentIteration returns only the latest sanitized iteration", () => {
@@ -74,6 +115,52 @@ test("parseActiveTaskBoard reads current, next, blockers, and task metadata", ()
 	assert.deepEqual(board.tasks.get("TASK-002"), { id: "TASK-002", title: "Handle retries", status: "ready" });
 });
 
+test("parseTaskBrief reads frontmatter, title, and display content", () => {
+	const task = parseTaskBrief(`---
+id: TASK-003
+status: ready
+order: 3
+---
+
+# TASK-003 — Add timeout tests
+
+## Brief
+
+- Goal: Cover timeout behavior.
+`, "payments", "/tmp/project/.features/payments/tasks/003-timeouts.md");
+
+	assert.deepEqual(task, {
+		id: "TASK-003",
+		feature: "payments",
+		title: "Add timeout tests",
+		status: "ready",
+		filePath: "/tmp/project/.features/payments/tasks/003-timeouts.md",
+		content: "## Brief\n\n- Goal: Cover timeout behavior.",
+	});
+});
+
+test("buildTaskSections separates ready tasks from tasks with running loops", () => {
+	const taskTwo = projectTask();
+	const taskThree = projectTask({ id: "TASK-003", title: "Add timeout tests" });
+	const blocked = projectTask({ id: "TASK-004", title: "Blocked work", status: "blocked" });
+	const running = monitorItem();
+	const recent = monitorItem({
+		job: loopJob({ jobId: "loop-recent", task: "TASK-003", state: "completed" }),
+		taskId: "TASK-003",
+	});
+	const unassigned = monitorItem({
+		job: loopJob({ jobId: "loop-unassigned", task: undefined }),
+		taskId: "feature loop",
+		association: "unassigned",
+	});
+
+	const sections = buildTaskSections([taskTwo, taskThree, taskThree, blocked], [running, recent, unassigned]);
+
+	assert.deepEqual(sections.ready.map((entry) => entry.task.id), ["TASK-003"]);
+	assert.deepEqual(sections.inProgress.map((entry) => entry.task.id), ["TASK-002"]);
+	assert.deepEqual(sections.inProgress[0]?.loops.map((item) => item.job.jobId), ["loop-1"]);
+});
+
 test("selectCurrentProjectJobs keeps current-project running jobs and recent terminal jobs", () => {
 	const selected = selectCurrentProjectJobs([
 		loopJob(),
@@ -103,24 +190,49 @@ test("loadLoopMonitorSnapshot reads tasks and live logs only from the current pr
 	const root = await mkdtemp(join(tmpdir(), "pi-loop-monitor-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
 	const jobDir = join(root, ".pi", "loop-jobs", "loop-current");
+	const featureJobDir = join(root, ".pi", "loop-jobs", "loop-feature");
 	const otherJobDir = join(root, ".pi", "loop-jobs", "loop-other");
 	const featureDir = join(root, ".features", "payments");
 	const logPath = join(featureDir, "artifacts", "loop", "loop.log");
 	await mkdir(jobDir, { recursive: true });
+	await mkdir(featureJobDir, { recursive: true });
 	await mkdir(otherJobDir, { recursive: true });
 	await mkdir(join(featureDir, "tasks"), { recursive: true });
 	await mkdir(join(featureDir, "artifacts", "loop"), { recursive: true });
 	await writeFile(join(featureDir, "tasks", "_active.md"), `
 ## Progress
 - [ ] TASK-002 — Handle retries (ready)
+- [ ] TASK-003 — Add timeout tests (ready)
 ## Current / Next
 - Current: TASK-002
-- Next: complete
+- Next: TASK-003
 - Blockers: none
+`, "utf8");
+	await writeFile(join(featureDir, "tasks", "002-handle-retries.md"), `---
+id: TASK-002
+status: ready
+---
+# TASK-002 — Handle retries
+## Brief
+- Goal: Add reliable retries.
+`, "utf8");
+	await writeFile(join(featureDir, "tasks", "003-timeouts.md"), `---
+id: TASK-003
+status: ready
+---
+# TASK-003 — Add timeout tests
+## Brief
+- Goal: Cover timeouts.
 `, "utf8");
 	await writeFile(logPath, "[iteration 3/5] started at 2026-06-01 11:59:00\nWorking now\n", "utf8");
 	await writeFile(join(jobDir, "status.json"), JSON.stringify(loopJob({
 		jobId: "loop-current",
+		cwd: root,
+		loopLogPath: logPath,
+	})), "utf8");
+	await writeFile(join(featureJobDir, "status.json"), JSON.stringify(loopJob({
+		jobId: "loop-feature",
+		task: undefined,
 		cwd: root,
 		loopLogPath: logPath,
 	})), "utf8");
@@ -132,12 +244,20 @@ test("loadLoopMonitorSnapshot reads tasks and live logs only from the current pr
 
 	const snapshot = await loadLoopMonitorSnapshot(root, { now: NOW.getTime() });
 
-	assert.equal(snapshot.items.length, 1);
-	assert.equal(snapshot.items[0]?.job.jobId, "loop-current");
-	assert.equal(snapshot.items[0]?.taskId, "TASK-002");
-	assert.equal(snapshot.items[0]?.taskTitle, "Handle retries");
-	assert.equal(snapshot.items[0]?.iteration.iteration, 3);
-	assert.deepEqual(snapshot.items[0]?.iteration.lines.slice(-1), ["Working now"]);
+	assert.equal(snapshot.items.length, 2);
+	const explicit = snapshot.items.find((item) => item.job.jobId === "loop-current");
+	const inferred = snapshot.items.find((item) => item.job.jobId === "loop-feature");
+	assert.equal(explicit?.taskId, "TASK-002");
+	assert.equal(explicit?.taskTitle, "Handle retries");
+	assert.equal(explicit?.association, "explicit");
+	assert.equal(explicit?.iteration.iteration, 3);
+	assert.deepEqual(explicit?.iteration.lines.slice(-1), ["Working now"]);
+	assert.equal(inferred?.taskId, "TASK-002");
+	assert.equal(inferred?.association, "inferred");
+	assert.deepEqual(snapshot.tasks.map((task) => task.id), ["TASK-002", "TASK-003"]);
+	const sections = buildTaskSections(snapshot.tasks, snapshot.items);
+	assert.deepEqual(sections.ready.map((entry) => entry.task.id), ["TASK-003"]);
+	assert.deepEqual(sections.inProgress[0]?.loops.map((item) => item.job.jobId).sort(), ["loop-current", "loop-feature"]);
 });
 
 test("loadLoopMonitorSnapshot refuses loop logs outside the current project", async (t) => {
@@ -168,28 +288,21 @@ test("LoopMonitorComponent keeps lines within width and preserves paused log pos
 	const snapshot: LoopMonitorSnapshot = {
 		cwd: "/tmp/project",
 		loadedAt: NOW.getTime(),
-		items: [{
-			job: loopJob(),
-			taskId: "TASK-002",
+		tasks: [projectTask({ title: "\u001b[31mHandle retries\u001b[0m" })],
+		items: [monitorItem({
 			taskTitle: "\u001b[31mHandle retries\u001b[0m",
-			taskStatus: "ready",
-			board: { current: "TASK-002", next: "TASK-003", blockers: "none", tasks: new Map() },
 			iteration: { iteration: 2, maxIterations: 5, finished: false, lines, sourceLineCount: lines.length },
-			logUpdatedAt: NOW.getTime() - 2000,
-		}],
+		})],
 		warnings: [],
 	};
 	let loadedSnapshot = snapshot;
-	const theme = new Proxy({}, {
-		get: (_target, property) => property === "bold" ? (text: string) => text : (_color: string, text: string) => text,
-	}) as Theme;
 	const component = new LoopMonitorComponent(
 		{ terminal: { rows: 24 }, requestRender() {} },
-		theme,
+		testTheme(),
 		snapshot,
 		async () => loadedSnapshot,
 		() => {},
-		{ now: () => NOW.getTime(), autoRefresh: false },
+		{ now: () => NOW.getTime(), autoRefresh: false, initialView: "loops" },
 	);
 
 	const initial = component.render(72);
@@ -198,10 +311,11 @@ test("LoopMonitorComponent keeps lines within width and preserves paused log pos
 	assert.match(initial.join("\n"), /Handle retries/);
 	assert.doesNotMatch(initial.join("\n"), /\u001b\[31m/);
 
-	component.handleInput("\u001b[A");
+	component.handleInput("\u001b[5~");
 	const paused = component.render(72).join("\n");
 	assert.match(paused, /PAUSED/);
-	assert.match(paused, /output 492/);
+	const anchor = paused.match(/output \d+/)?.[0];
+	assert.ok(anchor);
 
 	const nextLines = Array.from({ length: 500 }, (_, index) => `output ${index + 11}`);
 	loadedSnapshot = {
@@ -215,22 +329,103 @@ test("LoopMonitorComponent keeps lines within width and preserves paused log pos
 	await new Promise<void>((resolve) => setImmediate(resolve));
 	const refreshed = component.render(72).join("\n");
 	assert.match(refreshed, /PAUSED · 10 new/);
-	assert.match(refreshed, /output 492/);
-	assert.doesNotMatch(refreshed, /output 502/);
+	assert.match(refreshed, new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
 	component.handleInput("G");
 	assert.match(component.render(72).join("\n"), /FOLLOWING/);
 	component.dispose();
 });
 
-test("loopMonitorExtension registers the current-project monitor command and shortcut", () => {
-	const commands = new Set<string>();
+test("LoopMonitorComponent navigates task details and switches to the loops view", () => {
+	const snapshot: LoopMonitorSnapshot = {
+		cwd: "/tmp/project",
+		loadedAt: NOW.getTime(),
+		tasks: [
+			projectTask({ id: "TASK-002", title: "Handle retries", content: "## Brief\nRetry details" }),
+			projectTask({ id: "TASK-003", title: "Add timeout tests", content: "## Brief\nTimeout details" }),
+		],
+		items: [monitorItem()],
+		warnings: [],
+	};
+	const renderedColors: string[] = [];
+	const component = new LoopMonitorComponent(
+		{ terminal: { rows: 30 }, requestRender() {} },
+		testTheme(renderedColors),
+		snapshot,
+		async () => snapshot,
+		() => {},
+		{ now: () => NOW.getTime(), autoRefresh: false, initialView: "tasks" },
+	);
+
+	const initialLines = component.render(110);
+	const initial = initialLines.join("\n");
+	assert.ok(initialLines.every((line) => visibleWidth(line) <= 110));
+	assert.ok(renderedColors.includes("thinkingXhigh"));
+	assert.ok(renderedColors.includes("error"));
+	assert.match(initial, /\[Tasks\].*Loops/);
+	assert.match(initial, /READY · 1/);
+	assert.match(initial, /IN PROGRESS · 1/);
+	assert.match(initial, /TASK-002 — Handle retries/);
+	assert.match(initial, /Working now/);
+
+	component.handleInput("\u001b[A");
+	const readySelected = component.render(110).join("\n");
+	assert.match(readySelected, /TASK-003 — Add timeout tests/);
+	assert.match(readySelected, /Timeout details/);
+
+	component.handleInput("\t");
+	const loops = component.render(110).join("\n");
+	assert.match(loops, /Tasks.*\[Loops\]/);
+	assert.match(loops, /RUNNING · 1/);
+	assert.match(loops, /Current iteration 2\/5/);
+
+	component.handleInput("o");
+	const relatedTask = component.render(110).join("\n");
+	assert.match(relatedTask, /\[Tasks\].*Loops/);
+	assert.match(relatedTask, /TASK-002 — Handle retries/);
+	component.dispose();
+});
+
+test("loopMonitorExtension opens task and loop entry commands without control actions", async (t) => {
+	type CommandDefinition = Parameters<ExtensionAPI["registerCommand"]>[1];
+	type CustomFactory = (
+		tui: { terminal: { rows: number }; requestRender(): void },
+		theme: Theme,
+		keybindings: unknown,
+		done: (value?: void) => void,
+	) => LoopMonitorComponent;
+	const root = await mkdtemp(join(tmpdir(), "pi-loop-monitor-commands-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const commands = new Map<string, CommandDefinition>();
 	const shortcuts = new Set<string>();
+	const renders: string[] = [];
 	loopMonitorExtension({
-		registerCommand(name: string) { commands.add(name); },
+		registerCommand(name: string, definition: CommandDefinition) { commands.set(name, definition); },
 		registerShortcut(key: string) { shortcuts.add(key); },
 	} as unknown as ExtensionAPI);
+	const context = {
+		cwd: root,
+		mode: "tui",
+		ui: {
+			notify() {},
+			async custom(factory: unknown) {
+				const component = (factory as CustomFactory)(
+					{ terminal: { rows: 24 }, requestRender() {} },
+					testTheme(),
+					{},
+					() => {},
+				);
+				renders.push(component.render(90).join("\n"));
+				component.dispose();
+			},
+		},
+	} as unknown as ExtensionContext;
 
-	assert.deepEqual([...commands], ["loops"]);
+	assert.deepEqual([...commands.keys()], ["tasks", "loops"]);
 	assert.deepEqual([...shortcuts], ["ctrl+shift+l"]);
+	assert.equal(commands.has("cancel-loop"), false);
+	await commands.get("tasks")!.handler("", context);
+	await commands.get("loops")!.handler("", context);
+	assert.match(renders[0]!, /\[Tasks\].*Loops/);
+	assert.match(renders[1]!, /Tasks.*\[Loops\]/);
 });
