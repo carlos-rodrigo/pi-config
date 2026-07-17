@@ -32,4 +32,6 @@ Each job gets a directory under `.pi/agent-jobs/<jobId>/` containing:
 
 The extension starts `tmux new-window -d ...`, returns immediately, then watches `exit.json`. When the job finishes it parses the JSON events, writes `result.md`, and sends a follow-up user message into the main Pi session.
 
+Completion delivery is acknowledged only when the follow-up reaches the session. If a reload, session switch, or transient delivery failure interrupts the handoff, the unfinished notification remains in `status.json` and is retried when the project session starts again.
+
 Review jobs snapshot `git status`, staged/unstaged diffs, diff stats, and safe untracked file previews before launching oracle. This lets the read-only oracle review current work without needing shell access.

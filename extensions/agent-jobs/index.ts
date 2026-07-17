@@ -118,8 +118,36 @@ const MAX_UNTRACKED_FILES = 10;
 const MAX_UNTRACKED_FILE_CHARS = 2000;
 const MAX_UNTRACKED_TOTAL_CHARS = 8000;
 
-const watchedJobs = new Map<string, NodeJS.Timeout>();
-const watchedLoopJobs = new Map<string, NodeJS.Timeout>();
+type JobWatch = { interval: NodeJS.Timeout; poll: () => void };
+const watchedJobs = new Map<string, JobWatch>();
+const watchedLoopJobs = new Map<string, JobWatch>();
+type CompletionFollowUpKind = "agent" | "loop";
+type PendingFollowUpAck = { cwd: string };
+const pendingFollowUpAcks = new Map<string, PendingFollowUpAck>();
+const COMPLETION_FOLLOW_UP_MARKER = "pi-agent-jobs-follow-up";
+
+function followUpKey(kind: CompletionFollowUpKind, jobId: string): string {
+	return `${kind}:${jobId}`;
+}
+
+function completionFollowUpMarker(kind: CompletionFollowUpKind, jobId: string): string {
+	return `<!-- ${COMPLETION_FOLLOW_UP_MARKER}:${kind}:${jobId} -->`;
+}
+
+function parseCompletionFollowUpMarker(text: string): { kind: CompletionFollowUpKind; jobId: string } | undefined {
+	const match = text.match(new RegExp(`<!-- ${COMPLETION_FOLLOW_UP_MARKER}:(agent|loop):([a-zA-Z0-9_.-]+) -->\\s*$`));
+	if (!match) return undefined;
+	return { kind: match[1] as CompletionFollowUpKind, jobId: match[2]! };
+}
+
+function needsCompletionFollowUp(status: AgentJobStatus | LoopJobStatus): boolean {
+	return status.state !== "running" && status.followUp && !status.followUpSent;
+}
+
+function pollWaitingFollowUps(): void {
+	for (const watch of watchedJobs.values()) watch.poll();
+	for (const watch of watchedLoopJobs.values()) watch.poll();
+}
 
 function runningJobCount(cwd: string): number {
 	const prefix = `${cwd}:`;
@@ -484,53 +512,45 @@ async function writeStatus(status: AgentJobStatus): Promise<void> {
 }
 
 async function finalizeIfDone(pi: ExtensionAPI, cwd: string, jobId: string, sendFollowUp: boolean): Promise<AgentJobStatus> {
-	const status = await readStatus(cwd, jobId);
-	if (status.state !== "running") return status;
-	if (!fileExists(status.exitPath)) return status;
+	let status = await readStatus(cwd, jobId);
+	if (status.state === "running" && fileExists(status.exitPath)) {
+		const exit = await readJson<{ exitCode: number; finishedAt: string }>(status.exitPath);
+		const events = fileExists(status.eventLogPath) ? await fs.promises.readFile(status.eventLogPath, "utf8") : "";
+		const stderr = fileExists(status.stderrPath) ? await fs.promises.readFile(status.stderrPath, "utf8") : "";
+		const parsed = parseAgentEvents(events);
+		const hasModelError = parsed.stopReason === "error" || Boolean(parsed.errorMessage);
+		const state: AgentJobState = status.cancelRequestedAt
+			? "cancelled"
+			: exit.exitCode === 0 && !hasModelError
+				? "completed"
+				: "failed";
+		const fallbackOutput = state === "cancelled"
+			? "Cancelled by user."
+			: state === "failed" && stderr.trim()
+				? `Agent failed.\n\n## stderr\n\n${truncateTail(stderr, STDERR_TAIL_CHARS)}`
+				: "(no output)";
+		const output = parsed.finalOutput || parsed.errorMessage || fallbackOutput;
+		const resultText = truncateMiddle(output, MAX_RESULT_CHARS);
 
-	const exit = await readJson<{ exitCode: number; finishedAt: string }>(status.exitPath);
-	const events = fileExists(status.eventLogPath) ? await fs.promises.readFile(status.eventLogPath, "utf8") : "";
-	const stderr = fileExists(status.stderrPath) ? await fs.promises.readFile(status.stderrPath, "utf8") : "";
-	const parsed = parseAgentEvents(events);
-	const hasModelError = parsed.stopReason === "error" || Boolean(parsed.errorMessage);
-	const state: AgentJobState = status.cancelRequestedAt
-		? "cancelled"
-		: exit.exitCode === 0 && !hasModelError
-			? "completed"
-			: "failed";
-	const fallbackOutput = state === "cancelled"
-		? "Cancelled by user."
-		: state === "failed" && stderr.trim()
-			? `Agent failed.\n\n## stderr\n\n${truncateTail(stderr, STDERR_TAIL_CHARS)}`
-			: "(no output)";
-	const output = parsed.finalOutput || parsed.errorMessage || fallbackOutput;
-	const resultText = truncateMiddle(output, MAX_RESULT_CHARS);
+		await fs.promises.writeFile(status.resultPath, `${resultText.trim()}\n`, "utf8");
 
-	await fs.promises.writeFile(status.resultPath, `${resultText.trim()}\n`, "utf8");
-
-	const updated: AgentJobStatus = {
-		...status,
-		state,
-		exitCode: exit.exitCode,
-		completedAt: exit.finishedAt,
-		updatedAt: nowIso(),
-		summary: firstNonEmptyLine(resultText) || (state === "completed" ? "Completed with no output." : state === "cancelled" ? "Cancelled by user." : "Failed with no output."),
-		errorMessage: state === "failed" ? parsed.errorMessage || (stderr.trim() ? firstNonEmptyLine(stderr) : `exit code ${exit.exitCode}`) : undefined,
-		usage: parsed.usage,
-	};
-
-	await writeStatus(updated);
-
-	if (sendFollowUp && updated.followUp && !updated.followUpSent) {
-		const wasSent = await sendCompletionFollowUp(pi, updated, resultText);
-		if (wasSent) {
-			const sent = { ...updated, followUpSent: true, updatedAt: nowIso() };
-			await writeStatus(sent);
-			return sent;
-		}
+		status = {
+			...status,
+			state,
+			exitCode: exit.exitCode,
+			completedAt: exit.finishedAt,
+			updatedAt: nowIso(),
+			summary: firstNonEmptyLine(resultText) || (state === "completed" ? "Completed with no output." : state === "cancelled" ? "Cancelled by user." : "Failed with no output."),
+			errorMessage: state === "failed" ? parsed.errorMessage || (stderr.trim() ? firstNonEmptyLine(stderr) : `exit code ${exit.exitCode}`) : undefined,
+			usage: parsed.usage,
+		};
+		await writeStatus(status);
 	}
 
-	return updated;
+	if (sendFollowUp && needsCompletionFollowUp(status)) {
+		await sendCompletionFollowUp(pi, status, await readTextIfExists(status.resultPath));
+	}
+	return status;
 }
 
 async function sendCompletionFollowUp(pi: ExtensionAPI, status: AgentJobStatus, resultText: string): Promise<boolean> {
@@ -550,44 +570,56 @@ async function sendCompletionFollowUp(pi: ExtensionAPI, status: AgentJobStatus, 
 		clipped.trim() || "(no output)",
 		"",
 		"Use this result to continue the user's workflow. If this was the first step of a researcher → oracle workflow, start the oracle step now with the relevant context.",
+		completionFollowUpMarker("agent", status.jobId),
 	]
 		.filter((line): line is string => line !== undefined)
 		.join("\n");
+	const key = followUpKey("agent", status.jobId);
+	if (pendingFollowUpAcks.has(key)) return true;
+	if (pendingFollowUpAcks.size > 0) return false;
+	pendingFollowUpAcks.set(key, { cwd: status.cwd });
 
 	try {
 		pi.sendUserMessage(message, { deliverAs: "followUp" });
 		return true;
 	} catch {
-		try {
-			pi.sendUserMessage(message);
-			return true;
-		} catch {
-			return false;
-		}
+		pendingFollowUpAcks.delete(key);
+		return false;
 	}
+}
+
+function stopWatchingJob(pi: ExtensionAPI, cwd: string, jobId: string): void {
+	const key = `${cwd}:${jobId}`;
+	const watch = watchedJobs.get(key);
+	if (!watch) return;
+	clearInterval(watch.interval);
+	watchedJobs.delete(key);
+	emitRunningJobCount(pi, cwd);
 }
 
 function watchJob(pi: ExtensionAPI, cwd: string, jobId: string): void {
 	const key = `${cwd}:${jobId}`;
 	if (watchedJobs.has(key)) return;
+	let polling = false;
 
-	const interval = setInterval(() => {
+	const poll = () => {
+		if (polling) return;
+		polling = true;
 		void finalizeIfDone(pi, cwd, jobId, true)
 			.then((status) => {
-				if (status.state !== "running") {
-					clearInterval(interval);
-					watchedJobs.delete(key);
-					emitRunningJobCount(pi, cwd);
-				}
+				if (status.state !== "running" && !needsCompletionFollowUp(status)) stopWatchingJob(pi, cwd, jobId);
 			})
 			.catch(() => {
-				clearInterval(interval);
-				watchedJobs.delete(key);
-				emitRunningJobCount(pi, cwd);
+				// Keep watching: status/result files can be transiently unavailable during atomic updates or reloads.
+			})
+			.finally(() => {
+				polling = false;
 			});
-	}, WATCH_INTERVAL_MS);
-	watchedJobs.set(key, interval);
+	};
+	const interval = setInterval(poll, WATCH_INTERVAL_MS);
+	watchedJobs.set(key, { interval, poll });
 	emitRunningJobCount(pi, cwd);
+	poll();
 }
 
 async function resumeRunningJobs(pi: ExtensionAPI, cwd: string): Promise<void> {
@@ -601,7 +633,7 @@ async function resumeRunningJobs(pi: ExtensionAPI, cwd: string): Promise<void> {
 		if (!entry.isDirectory()) continue;
 		try {
 			const status = await readStatus(cwd, entry.name);
-			if (status.state === "running") watchJob(pi, cwd, entry.name);
+			if (status.state === "running" || needsCompletionFollowUp(status)) watchJob(pi, cwd, entry.name);
 		} catch {
 			// Ignore malformed old job dirs.
 		}
@@ -1053,6 +1085,33 @@ async function writeLoopStatus(status: LoopJobStatus): Promise<void> {
 	await writeJson(path.join(status.jobDir, "status.json"), status);
 }
 
+async function acknowledgeCompletionFollowUp(pi: ExtensionAPI, kind: CompletionFollowUpKind, jobId: string): Promise<void> {
+	const key = followUpKey(kind, jobId);
+	const pending = pendingFollowUpAcks.get(key);
+	if (!pending) return;
+
+	try {
+		if (kind === "agent") {
+			const status = await readStatus(pending.cwd, jobId);
+			if (needsCompletionFollowUp(status)) {
+				await writeStatus({ ...status, followUpSent: true, updatedAt: nowIso() });
+			}
+			stopWatchingJob(pi, pending.cwd, jobId);
+		} else {
+			const status = await readLoopStatus(pending.cwd, jobId);
+			if (needsCompletionFollowUp(status)) {
+				await writeLoopStatus({ ...status, followUpSent: true, updatedAt: nowIso() });
+			}
+			stopWatchingLoopJob(pi, pending.cwd, jobId);
+		}
+		pendingFollowUpAcks.delete(key);
+		setTimeout(pollWaitingFollowUps, 0);
+	} catch {
+		pendingFollowUpAcks.delete(key);
+		setTimeout(pollWaitingFollowUps, WATCH_INTERVAL_MS);
+	}
+}
+
 async function readTextIfExists(filePath: string): Promise<string> {
 	return fileExists(filePath) ? fs.promises.readFile(filePath, "utf8") : "";
 }
@@ -1078,42 +1137,35 @@ function formatLoopResult(status: LoopJobStatus, exitCode: number, summary: stri
 }
 
 async function finalizeLoopIfDone(pi: ExtensionAPI, cwd: string, jobId: string, sendFollowUp: boolean): Promise<LoopJobStatus> {
-	const status = await readLoopStatus(cwd, jobId);
-	if (status.state !== "running") return status;
-	if (!fileExists(status.exitPath)) return status;
+	let status = await readLoopStatus(cwd, jobId);
+	if (status.state === "running" && fileExists(status.exitPath)) {
+		const exit = await readJson<{ exitCode: number; finishedAt: string }>(status.exitPath);
+		const [summary, log, stdout, stderr] = await Promise.all([
+			readTextIfExists(status.loopSummaryPath),
+			readTextIfExists(status.loopLogPath),
+			readTextIfExists(status.stdoutPath),
+			readTextIfExists(status.stderrPath),
+		]);
+		const state: AgentJobState = status.cancelRequestedAt ? "cancelled" : exit.exitCode === 0 ? "completed" : "failed";
+		const resultText = truncateMiddle(formatLoopResult(status, exit.exitCode, summary, log, stdout, stderr), MAX_RESULT_CHARS);
+		await fs.promises.writeFile(status.resultPath, `${resultText.trim()}\n`, "utf8");
 
-	const exit = await readJson<{ exitCode: number; finishedAt: string }>(status.exitPath);
-	const [summary, log, stdout, stderr] = await Promise.all([
-		readTextIfExists(status.loopSummaryPath),
-		readTextIfExists(status.loopLogPath),
-		readTextIfExists(status.stdoutPath),
-		readTextIfExists(status.stderrPath),
-	]);
-	const state: AgentJobState = status.cancelRequestedAt ? "cancelled" : exit.exitCode === 0 ? "completed" : "failed";
-	const resultText = truncateMiddle(formatLoopResult(status, exit.exitCode, summary, log, stdout, stderr), MAX_RESULT_CHARS);
-	await fs.promises.writeFile(status.resultPath, `${resultText.trim()}\n`, "utf8");
-
-	const updated: LoopJobStatus = {
-		...status,
-		state,
-		exitCode: exit.exitCode,
-		completedAt: exit.finishedAt,
-		updatedAt: nowIso(),
-		summary: state === "cancelled" ? "Cancelled by user." : firstNonEmptyLine(summary) || firstNonEmptyLine(log) || (state === "completed" ? "Loop completed." : `Loop exited ${exit.exitCode}.`),
-		errorMessage: state === "failed" ? firstNonEmptyLine(stderr) || `exit code ${exit.exitCode}` : undefined,
-	};
-	await writeLoopStatus(updated);
-
-	if (sendFollowUp && updated.followUp && !updated.followUpSent) {
-		const wasSent = await sendLoopCompletionFollowUp(pi, updated, resultText);
-		if (wasSent) {
-			const sent = { ...updated, followUpSent: true, updatedAt: nowIso() };
-			await writeLoopStatus(sent);
-			return sent;
-		}
+		status = {
+			...status,
+			state,
+			exitCode: exit.exitCode,
+			completedAt: exit.finishedAt,
+			updatedAt: nowIso(),
+			summary: state === "cancelled" ? "Cancelled by user." : firstNonEmptyLine(summary) || firstNonEmptyLine(log) || (state === "completed" ? "Loop completed." : `Loop exited ${exit.exitCode}.`),
+			errorMessage: state === "failed" ? firstNonEmptyLine(stderr) || `exit code ${exit.exitCode}` : undefined,
+		};
+		await writeLoopStatus(status);
 	}
 
-	return updated;
+	if (sendFollowUp && needsCompletionFollowUp(status)) {
+		await sendLoopCompletionFollowUp(pi, status, await readTextIfExists(status.resultPath));
+	}
+	return status;
 }
 
 async function sendLoopCompletionFollowUp(pi: ExtensionAPI, status: LoopJobStatus, resultText: string): Promise<boolean> {
@@ -1134,44 +1186,56 @@ async function sendLoopCompletionFollowUp(pi: ExtensionAPI, status: LoopJobStatu
 		clipped.trim() || "(no output)",
 		"",
 		"Use this result to continue the user's workflow.",
+		completionFollowUpMarker("loop", status.jobId),
 	]
 		.filter((line): line is string => line !== undefined)
 		.join("\n");
+	const key = followUpKey("loop", status.jobId);
+	if (pendingFollowUpAcks.has(key)) return true;
+	if (pendingFollowUpAcks.size > 0) return false;
+	pendingFollowUpAcks.set(key, { cwd: status.cwd });
 
 	try {
 		pi.sendUserMessage(message, { deliverAs: "followUp" });
 		return true;
 	} catch {
-		try {
-			pi.sendUserMessage(message);
-			return true;
-		} catch {
-			return false;
-		}
+		pendingFollowUpAcks.delete(key);
+		return false;
 	}
+}
+
+function stopWatchingLoopJob(pi: ExtensionAPI, cwd: string, jobId: string): void {
+	const key = `${cwd}:${jobId}`;
+	const watch = watchedLoopJobs.get(key);
+	if (!watch) return;
+	clearInterval(watch.interval);
+	watchedLoopJobs.delete(key);
+	emitRunningLoopJobCount(pi, cwd);
 }
 
 function watchLoopJob(pi: ExtensionAPI, cwd: string, jobId: string): void {
 	const key = `${cwd}:${jobId}`;
 	if (watchedLoopJobs.has(key)) return;
+	let polling = false;
 
-	const interval = setInterval(() => {
+	const poll = () => {
+		if (polling) return;
+		polling = true;
 		void finalizeLoopIfDone(pi, cwd, jobId, true)
 			.then((status) => {
-				if (status.state !== "running") {
-					clearInterval(interval);
-					watchedLoopJobs.delete(key);
-					emitRunningLoopJobCount(pi, cwd);
-				}
+				if (status.state !== "running" && !needsCompletionFollowUp(status)) stopWatchingLoopJob(pi, cwd, jobId);
 			})
 			.catch(() => {
-				clearInterval(interval);
-				watchedLoopJobs.delete(key);
-				emitRunningLoopJobCount(pi, cwd);
+				// Keep watching: status/result files can be transiently unavailable during atomic updates or reloads.
+			})
+			.finally(() => {
+				polling = false;
 			});
-	}, WATCH_INTERVAL_MS);
-	watchedLoopJobs.set(key, interval);
+	};
+	const interval = setInterval(poll, WATCH_INTERVAL_MS);
+	watchedLoopJobs.set(key, { interval, poll });
 	emitRunningLoopJobCount(pi, cwd);
+	poll();
 }
 
 async function resumeRunningLoopJobs(pi: ExtensionAPI, cwd: string): Promise<void> {
@@ -1185,7 +1249,7 @@ async function resumeRunningLoopJobs(pi: ExtensionAPI, cwd: string): Promise<voi
 		if (!entry.isDirectory()) continue;
 		try {
 			const status = await readLoopStatus(cwd, entry.name);
-			if (status.state === "running") watchLoopJob(pi, cwd, entry.name);
+			if (status.state === "running" || needsCompletionFollowUp(status)) watchLoopJob(pi, cwd, entry.name);
 		} catch {
 			// Ignore malformed old job dirs.
 		}
@@ -1416,11 +1480,19 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 		void resumeRunningLoopJobs(pi, ctx.cwd);
 	});
 
+	pi.on("message_start", async (event) => {
+		if (event.message.role !== "user") return;
+		const marker = parseCompletionFollowUpMarker(textFromMessageContent(event.message.content));
+		if (!marker) return;
+		await acknowledgeCompletionFollowUp(pi, marker.kind, marker.jobId);
+	});
+
 	pi.on("session_shutdown", () => {
-		for (const interval of watchedJobs.values()) clearInterval(interval);
-		for (const interval of watchedLoopJobs.values()) clearInterval(interval);
+		for (const watch of watchedJobs.values()) clearInterval(watch.interval);
+		for (const watch of watchedLoopJobs.values()) clearInterval(watch.interval);
 		watchedJobs.clear();
 		watchedLoopJobs.clear();
+		pendingFollowUpAcks.clear();
 	});
 
 	pi.registerCommand("research-bg", {
@@ -1706,15 +1778,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 				? { ...pending, state: "cancelled" as const, completedAt: requestedAt, summary: "Cancelled by user." }
 				: pending;
 			await writeLoopStatus(updated);
-			if (params.killWindow) {
-				const key = `${status.cwd}:${status.jobId}`;
-				const interval = watchedLoopJobs.get(key);
-				if (interval) {
-					clearInterval(interval);
-					watchedLoopJobs.delete(key);
-					emitRunningLoopJobCount(pi, status.cwd);
-				}
-			}
+			if (params.killWindow) stopWatchingLoopJob(pi, status.cwd, status.jobId);
 			return { content: [{ type: "text" as const, text: params.killWindow ? `Cancelled loop job ${status.jobId}.` : `Cancellation requested for loop job ${status.jobId}.` }], details: updated };
 		},
 	});
@@ -1750,15 +1814,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 				? { ...pending, state: "cancelled" as const, completedAt: requestedAt, summary: "Cancelled by user." }
 				: pending;
 			await writeStatus(updated);
-			if (params.killWindow) {
-				const key = `${status.cwd}:${status.jobId}`;
-				const interval = watchedJobs.get(key);
-				if (interval) {
-					clearInterval(interval);
-					watchedJobs.delete(key);
-					emitRunningJobCount(pi, status.cwd);
-				}
-			}
+			if (params.killWindow) stopWatchingJob(pi, status.cwd, status.jobId);
 			return { content: [{ type: "text" as const, text: params.killWindow ? `Cancelled job ${status.jobId}.` : `Cancellation requested for job ${status.jobId}.` }], details: updated };
 		},
 	});

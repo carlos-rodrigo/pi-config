@@ -30,6 +30,34 @@ const testAgent = {
 	filePath: "/tmp/oracle.md",
 };
 
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (!predicate()) {
+		if (Date.now() >= deadline) throw new Error("Timed out waiting for condition");
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+}
+
+function activateLifecycleHarness(sendUserMessage: (content: string, options?: unknown) => void) {
+	const handlers = new Map<string, Array<(event: any, ctx: any) => unknown>>();
+	agentJobsExtension({
+		on(event: string, handler: (event: any, ctx: any) => unknown) {
+			const registered = handlers.get(event) ?? [];
+			registered.push(handler);
+			handlers.set(event, registered);
+		},
+		registerCommand() {},
+		registerTool() {},
+		sendUserMessage,
+		events: { emit() {} },
+	} as any);
+	return handlers;
+}
+
+async function emitLifecycle(handlers: Map<string, Array<(event: any, ctx: any) => unknown>>, event: string, payload: any, ctx: any): Promise<void> {
+	for (const handler of handlers.get(event) ?? []) await handler(payload, ctx);
+}
+
 test("sanitizeJobPart and createJobId produce tmux-safe names", () => {
 	assert.equal(sanitizeJobPart("Researcher Agent!"), "researcher-agent");
 	assert.match(createJobId("Oracle Agent", new Date("2026-05-04T12:34:56Z"), "abcdef"), /^oracle-agent-20260504123456-abcdef$/);
@@ -225,6 +253,126 @@ test("collectReviewContext snapshots diff context without requiring oracle bash 
 	assert.match(context, /git status --short/);
 	assert.match(context, /diff --git a\/src\/app\.ts b\/src\/app\.ts/);
 	assert.match(context, /read\/grep\/find\/ls/);
+});
+
+test("session start serially delivers pending agent and loop follow-ups and acknowledges them when received", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "agent-job-pending-follow-up-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const createdAt = new Date().toISOString();
+	const agentJobId = "researcher-completed";
+	const agentJobDir = join(root, ".pi", "agent-jobs", agentJobId);
+	const loopJobId = "loop-completed";
+	const loopJobDir = join(root, ".pi", "loop-jobs", loopJobId);
+	await mkdir(agentJobDir, { recursive: true });
+	await mkdir(loopJobDir, { recursive: true });
+	await writeFile(join(agentJobDir, "result.md"), "Agent finished output.\n", "utf8");
+	await writeFile(join(loopJobDir, "result.md"), "Loop finished output.\n", "utf8");
+	await writeFile(join(agentJobDir, "status.json"), JSON.stringify({
+		jobId: agentJobId,
+		agent: "researcher",
+		mode: "standard",
+		cwd: root,
+		createdAt,
+		updatedAt: createdAt,
+		state: "completed",
+		tmuxWindow: "pi-researcher-test",
+		jobDir: agentJobDir,
+		resultPath: join(agentJobDir, "result.md"),
+		eventLogPath: join(agentJobDir, "events.jsonl"),
+		followUp: true,
+		followUpSent: false,
+	}), "utf8");
+	await writeFile(join(loopJobDir, "status.json"), JSON.stringify({
+		jobId: loopJobId,
+		feature: "fixture",
+		task: "TASK-001",
+		cwd: root,
+		createdAt,
+		updatedAt: createdAt,
+		state: "completed",
+		tmuxWindow: "pi-loop-test",
+		jobDir: loopJobDir,
+		resultPath: join(loopJobDir, "result.md"),
+		loopLogPath: join(loopJobDir, "loop.log"),
+		loopSummaryPath: join(loopJobDir, "latest-iteration.md"),
+		followUp: true,
+		followUpSent: false,
+	}), "utf8");
+
+	const sent: Array<{ content: string; options?: unknown }> = [];
+	const handlers = activateLifecycleHarness((content, options) => sent.push({ content, options }));
+	await emitLifecycle(handlers, "session_start", {}, { cwd: root });
+	await waitFor(() => sent.length === 1);
+	assert.equal(JSON.parse(await readFile(join(agentJobDir, "status.json"), "utf8")).followUpSent, false);
+	assert.equal(JSON.parse(await readFile(join(loopJobDir, "status.json"), "utf8")).followUpSent, false);
+
+	await emitLifecycle(handlers, "message_start", {
+		message: { role: "user", content: [{ type: "text", text: sent[0]!.content }] },
+	}, { cwd: root });
+	await waitFor(() => sent.length === 2);
+
+	assert.ok(sent.some(({ content }) => content.includes("Agent finished output.")));
+	assert.ok(sent.some(({ content }) => content.includes("Loop finished output.")));
+	for (const message of sent) assert.deepEqual(message.options, { deliverAs: "followUp" });
+	const deliveryStates = [
+		JSON.parse(await readFile(join(agentJobDir, "status.json"), "utf8")).followUpSent,
+		JSON.parse(await readFile(join(loopJobDir, "status.json"), "utf8")).followUpSent,
+	];
+	assert.equal(deliveryStates.filter(Boolean).length, 1);
+
+	await emitLifecycle(handlers, "message_start", {
+		message: { role: "user", content: [{ type: "text", text: sent[1]!.content }] },
+	}, { cwd: root });
+	assert.equal(JSON.parse(await readFile(join(agentJobDir, "status.json"), "utf8")).followUpSent, true);
+	assert.equal(JSON.parse(await readFile(join(loopJobDir, "status.json"), "utf8")).followUpSent, true);
+	await emitLifecycle(handlers, "session_shutdown", {}, {});
+});
+
+test("a completion follow-up rejected during shutdown is retried by the next session", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "agent-job-follow-up-retry-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const jobId = "researcher-retry";
+	const jobDir = join(root, ".pi", "agent-jobs", jobId);
+	const resultPath = join(jobDir, "result.md");
+	const createdAt = new Date().toISOString();
+	await mkdir(jobDir, { recursive: true });
+	await writeFile(resultPath, "Recovered output.\n", "utf8");
+	await writeFile(join(jobDir, "status.json"), JSON.stringify({
+		jobId,
+		agent: "researcher",
+		mode: "standard",
+		cwd: root,
+		createdAt,
+		updatedAt: createdAt,
+		state: "completed",
+		tmuxWindow: "pi-researcher-test",
+		jobDir,
+		resultPath,
+		eventLogPath: join(jobDir, "events.jsonl"),
+		followUp: true,
+		followUpSent: false,
+	}), "utf8");
+
+	let attempts = 0;
+	const staleHandlers = activateLifecycleHarness(() => {
+		attempts += 1;
+		throw new Error("stale extension runtime");
+	});
+	await emitLifecycle(staleHandlers, "session_start", {}, { cwd: root });
+	await waitFor(() => attempts === 1);
+	assert.equal(JSON.parse(await readFile(join(jobDir, "status.json"), "utf8")).followUpSent, false);
+	await emitLifecycle(staleHandlers, "session_shutdown", {}, {});
+
+	const sent: string[] = [];
+	const resumedHandlers = activateLifecycleHarness((content) => sent.push(content));
+	await emitLifecycle(resumedHandlers, "session_start", {}, { cwd: root });
+	await waitFor(() => sent.length === 1);
+	assert.match(sent[0]!, /Recovered output\./);
+	await emitLifecycle(resumedHandlers, "message_start", {
+		message: { role: "user", content: [{ type: "text", text: sent[0] }] },
+	}, { cwd: root });
+	assert.equal(JSON.parse(await readFile(join(jobDir, "status.json"), "utf8")).followUpSent, true);
+	await emitLifecycle(resumedHandlers, "session_shutdown", {}, {});
 });
 
 test("agent job launch rejects a nonzero tmux result", async (t) => {
