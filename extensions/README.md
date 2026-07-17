@@ -68,12 +68,12 @@ pi install ./extensions/worktree-manager
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
 | [workflow-modes](workflow-modes/) | Fast/smart/deep3/max GPT-5.6 Sol effort switching |
 | [verify](verify/) | Preflight `verification_plan`, back-pressure hook, and `scripts/verify.sh` scaffolding via `/setup-verify` |
-| [worktree-manager](worktree-manager/) | Git worktree management commands |
+| [worktree-manager](worktree-manager/) | Git worktree management with complete local development-environment copying |
 
 ## Notes
 
 - **auto-prompt** + **bordered-editor** work together via `pi.events` — auto-prompt generates suggestions, bordered-editor renders the ghost text.
 - **agent-jobs** requires Pi to be running inside tmux; it uses detached windows and persists results under `.pi/agent-jobs/`.
 - Researcher, oracle, and deep-review prompt templates use **agent-jobs** for non-blocking background work.
-- **worktree-manager** does not copy `.env*` files by default; use `copyEnv: true` or `/ws new <feature> --copy-env` only when the new worktree explicitly needs them.
+- **worktree-manager** copies local root dotfiles/directories, `.env*`, project skills/tasks, and a relocatable semantic index from the invoking worktree, then fills gaps from the primary worktree. Use `copyLocal: false` or `--no-copy-local` for an isolated checkout. Pi runtime histories and caches are excluded, and exact copied paths are added to `.git/info/exclude` so the checkout stays clean.
 - **web-tools** rejects private/local network targets, validates redirects, bounds response bodies, and honors tool cancellation.

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +13,8 @@ import semanticSearchExtension, {
 	formatOllamaTunnelSshCommand,
 	formatRepoMap,
 	formatSearchResults,
+	getIndexStatus,
+	loadSearchIndex,
 	parseIndexCommandArgs,
 	parseOllamaTunnelCommandArgs,
 	parseSearchIndexJson,
@@ -32,6 +34,61 @@ function makeProject(files: Record<string, string>): string {
 	}
 	return dir;
 }
+
+test("semantic indexing never includes local .env secret files", () => {
+	const dir = makeProject({
+		"src/index.ts": "export const value = 1;\n",
+		".env.local": "SECRET=do-not-index\n",
+	});
+	try {
+		const index = buildSearchIndex(dir, { writeToDisk: false });
+		assert.ok(index.files.some((file) => file.path === "src/index.ts"));
+		assert.ok(!index.files.some((file) => file.path === ".env.local"));
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("a copied semantic index relocates to a new worktree and validates unchanged content by hash", () => {
+	const source = makeProject({ "src/index.ts": "export const value = 1;\n" });
+	const target = makeProject({ "src/index.ts": "export const value = 1;\n" });
+
+	try {
+		buildSearchIndex(source, { writeToDisk: true });
+		const targetIndexDir = join(target, ".pi", "semantic-search");
+		mkdirSync(targetIndexDir, { recursive: true });
+		copyFileSync(join(source, ".pi", "semantic-search", "index.json"), join(targetIndexDir, "index.json"));
+		const future = new Date(Date.now() + 60_000);
+		utimesSync(join(target, "src", "index.ts"), future, future);
+
+		const relocated = loadSearchIndex(target);
+
+		assert.ok(relocated, "expected the copied index to load in the target worktree");
+		assert.equal(relocated.cwd, target);
+		assert.deepEqual(relocated.files.map((file) => file.path), ["src/index.ts"]);
+		assert.equal(getIndexStatus(target, relocated).stale, false);
+	} finally {
+		rmSync(source, { recursive: true, force: true });
+		rmSync(target, { recursive: true, force: true });
+	}
+});
+
+test("semantic index freshness detects same-size content changes even when mtimes match", () => {
+	const dir = makeProject({ "src/index.ts": "export const value = 1;\n" });
+	try {
+		const index = buildSearchIndex(dir, { writeToDisk: false });
+		const indexedMtime = index.files[0]!.mtimeMs;
+		writeFileSync(join(dir, "src", "index.ts"), "export const value = 2;\n", "utf8");
+		const indexedTime = new Date(indexedMtime);
+		utimesSync(join(dir, "src", "index.ts"), indexedTime, indexedTime);
+
+		const status = getIndexStatus(dir, index);
+		assert.equal(status.stale, true);
+		assert.equal(status.reason, "changed file: src/index.ts");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
 
 function fakeEmbeddingFor(text: string): number[] {
 	if (/money collection|invoice|ledger|reconcile/i.test(text)) return [1, 0, 0];

@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import {
 	buildWindowName,
 	createFeatureWorktree,
@@ -57,13 +57,34 @@ function formatWorktreeList(
 function wsHelpText(): string {
 	return [
 		"Usage:",
-		"  /ws new <feature name or slug> [--copy-env]",
+		"  /ws new <feature name or slug> [--no-copy-local]",
 		"  /ws list",
 		"  /ws open <slug> [--window]",
 		"  /ws remove <slug> [--force]",
 		"  /ws prune",
 	].join("\n");
 }
+
+const worktreeManageParameters = Type.Object({
+	action: StringEnum(["new", "list", "open", "remove", "prune"] as const),
+	target: Type.Optional(
+		Type.String({
+			description:
+				"Feature brief or slug. Required for new/open/remove. For 'new', this can be a natural-language feature brief.",
+		}),
+	),
+	force: Type.Optional(Type.Boolean({ description: "Force removal of dirty worktrees when action is remove." })),
+	window: Type.Optional(
+		Type.Boolean({ description: "When action=open, launch in a new tmux window instead of the default split pane." }),
+	),
+	copyLocal: Type.Optional(
+		Type.Boolean({
+			description:
+				"When action=new, copy the current worktree's local hidden development environment, then fill missing files from the primary worktree (.env*, skills, .features, reusable semantic index, and tool config). Defaults to true.",
+		}),
+	),
+});
+type WorktreeManageInput = Static<typeof worktreeManageParameters>;
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("ws", {
@@ -89,21 +110,34 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (cleanedInput.startsWith("new ")) {
-				const copyEnv = hasStandaloneFlag(cleanedInput, "--copy-env");
-				const brief = stripPrefix(stripStandaloneFlag(cleanedInput, "--copy-env"), "new");
+				const copyLocalEnvironment = !hasStandaloneFlag(cleanedInput, "--no-copy-local");
+				const withoutCopyFlags = stripStandaloneFlag(
+					stripStandaloneFlag(cleanedInput, "--no-copy-local"),
+					"--copy-env",
+				);
+				const brief = stripPrefix(withoutCopyFlags, "new");
 				if (!brief) {
-					ctx.ui.notify("Usage: /ws new <feature name> [--copy-env]", "error");
+					ctx.ui.notify("Usage: /ws new <feature name> [--no-copy-local]", "error");
 					return;
 				}
 
-				const result = await createFeatureWorktree(pi, ctx.cwd, brief, { copyEnv });
+				const result = await createFeatureWorktree(pi, ctx.cwd, brief, { copyLocalEnvironment });
 				if (!result.ok) {
 					ctx.ui.notify(result.error ?? "Failed to create worktree", "error");
 					return;
 				}
 
-				ctx.ui.notify(`Created ${result.branch} at ${result.worktreePath}`, "info");
-				ctx.ui.setEditorText(`cd ${result.worktreePath}\npi`);
+				const copied = result.environmentCopy?.copied.length ?? 0;
+				const warnings = result.environmentCopy?.warnings ?? [];
+				ctx.ui.notify(
+					`Created ${result.branch} at ${result.worktreePath}; copied ${copied} local environment file(s)`,
+					warnings.length > 0 ? "warning" : "info",
+				);
+				ctx.ui.setEditorText([
+					`cd ${result.worktreePath}`,
+					"pi",
+					...(warnings.length > 0 ? ["", `# Copy warnings: ${warnings.join("; ")}`] : []),
+				].join("\n"));
 				return;
 			}
 
@@ -215,23 +249,15 @@ export default function (pi: ExtensionAPI) {
 		label: "Worktree Manager",
 		description:
 			"Manage git worktrees for feature development. Supports creating, listing, opening, removing, and pruning worktrees.",
-		parameters: Type.Object({
-			action: StringEnum(["new", "list", "open", "remove", "prune"] as const),
-			target: Type.Optional(
-				Type.String({
-					description:
-						"Feature brief or slug. Required for new/open/remove. For 'new', this can be a natural-language feature brief.",
-				}),
-			),
-			force: Type.Optional(Type.Boolean({ description: "Force removal of dirty worktrees when action is remove." })),
-			window: Type.Optional(
-				Type.Boolean({ description: "When action=open, launch in a new tmux window instead of the default split pane." }),
-			),
-			copyEnv: Type.Optional(
-				Type.Boolean({ description: "When action=new, explicitly copy root .env* files into the new worktree. Defaults to false." }),
-			),
-		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		parameters: worktreeManageParameters,
+		prepareArguments(args): WorktreeManageInput {
+			if (!args || typeof args !== "object") return args as WorktreeManageInput;
+			const legacy = args as { copyEnv?: unknown; copyLocal?: unknown };
+			if (typeof legacy.copyEnv !== "boolean" || legacy.copyLocal !== undefined) return args as WorktreeManageInput;
+			const { copyEnv, ...current } = legacy;
+			return { ...current, copyLocal: copyEnv } as WorktreeManageInput;
+		},
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			if (params.action === "list") {
 				const listing = await listWorktrees(pi, ctx.cwd);
 				if (!listing) {
@@ -244,12 +270,24 @@ export default function (pi: ExtensionAPI) {
 				if (!params.target?.trim()) {
 					throw new Error("target is required for action=new");
 				}
-				const created = await createFeatureWorktree(pi, ctx.cwd, params.target, { copyEnv: params.copyEnv ?? false });
+				const created = await createFeatureWorktree(pi, ctx.cwd, params.target, {
+					copyLocalEnvironment: params.copyLocal ?? true,
+					signal,
+				});
 				if (!created.ok) {
 					throw new Error(created.error ?? "Failed to create worktree.");
 				}
+				const copied = created.environmentCopy?.copied.length ?? 0;
+				const warnings = created.environmentCopy?.warnings ?? [];
 				return {
-					content: [{ type: "text", text: `Created ${created.branch} at ${created.worktreePath}` }],
+					content: [{
+						type: "text",
+						text: [
+							`Created ${created.branch} at ${created.worktreePath}`,
+							`Copied ${copied} local environment file(s).`,
+							...(warnings.length > 0 ? [`Copy warnings: ${warnings.join("; ")}`] : []),
+						].join("\n"),
+					}],
 					details: created,
 				};
 			}

@@ -12,6 +12,7 @@ export const DEFAULT_SLUG_DUPLICATE_ATTEMPTS = 20;
 
 export interface RepoContext {
 	gitRoot: string;
+	currentRoot: string;
 	repoName: string;
 	parentDir: string;
 }
@@ -26,12 +27,19 @@ export interface WorktreeInfo {
 	dirty: boolean;
 }
 
+export interface WorktreeEnvironmentCopyResult {
+	copied: string[];
+	skipped: string[];
+	warnings: string[];
+}
+
 export interface CreateWorktreeResult {
 	ok: boolean;
 	slug: string;
 	branch: string;
 	worktreePath: string;
 	repoContext?: RepoContext;
+	environmentCopy?: WorktreeEnvironmentCopyResult;
 	error?: string;
 }
 
@@ -209,10 +217,20 @@ async function git(pi: ExtensionAPI, cwd: string, args: string[]) {
 export async function getRepoContext(pi: ExtensionAPI, cwd: string): Promise<RepoContext | null> {
 	const rootResult = await git(pi, cwd, ["rev-parse", "--show-toplevel"]);
 	if (rootResult.code !== 0) return null;
-	const gitRoot = rootResult.stdout.trim();
-	if (!gitRoot) return null;
+	const currentRoot = rootResult.stdout.trim();
+	if (!currentRoot) return null;
+
+	// Git lists the primary worktree first. Using it keeps sibling naming and
+	// local-environment copying stable even when /ws new runs in another worktree.
+	const worktrees = await git(pi, currentRoot, ["worktree", "list", "--porcelain"]);
+	const primaryRoot = worktrees.code === 0
+		? worktrees.stdout.split("\n").find((line) => line.startsWith("worktree "))?.slice("worktree ".length).trim()
+		: undefined;
+	const gitRoot = primaryRoot || currentRoot;
+
 	return {
 		gitRoot,
+		currentRoot,
 		repoName: path.basename(gitRoot),
 		parentDir: path.dirname(gitRoot),
 	};
@@ -325,7 +343,7 @@ export async function createFeatureWorktree(
 	pi: ExtensionAPI,
 	cwd: string,
 	briefOrSlug: string,
-	options?: { baseBranch?: string; branchPrefix?: string; copyEnv?: boolean },
+	options?: { baseBranch?: string; branchPrefix?: string; copyLocalEnvironment?: boolean; signal?: AbortSignal },
 ): Promise<CreateWorktreeResult> {
 	const baseBranch = options?.baseBranch ?? DEFAULT_BASE_BRANCH;
 	const branchPrefix = options?.branchPrefix ?? DEFAULT_BRANCH_PREFIX;
@@ -377,36 +395,195 @@ export async function createFeatureWorktree(
 		};
 	}
 
-	// Copying secret-bearing .env files is explicit so disposable worktrees do not receive credentials by default.
-	if (options?.copyEnv) await copyEnvFiles(repo.gitRoot, worktreePath);
+	let environmentCopy: WorktreeEnvironmentCopyResult | undefined;
+	if (options?.copyLocalEnvironment ?? true) {
+		environmentCopy = { copied: [], skipped: [], warnings: [] };
+		const mergeCopy = (source: string, sourceCopy: WorktreeEnvironmentCopyResult) => {
+			environmentCopy!.copied.push(...sourceCopy.copied);
+			environmentCopy!.skipped.push(...sourceCopy.skipped);
+			environmentCopy!.warnings.push(...sourceCopy.warnings.map((warning) => `${source}: ${warning}`));
+		};
 
-	return { ok: true, slug, branch, worktreePath, repoContext: repo };
+		if (repo.currentRoot === repo.gitRoot) {
+			mergeCopy(repo.gitRoot, await copyWorktreeEnvironment(repo.gitRoot, worktreePath, options?.signal));
+		} else {
+			// Current task/skill context wins, while the primary index matches the
+			// main-based checkout. Fall back to the current index only if primary has none.
+			mergeCopy(
+				repo.currentRoot,
+				await copyWorktreeEnvironment(repo.currentRoot, worktreePath, options?.signal, { includeSemanticIndex: false }),
+			);
+			mergeCopy(repo.gitRoot, await copyWorktreeEnvironment(repo.gitRoot, worktreePath, options?.signal));
+			if (!fs.existsSync(path.join(worktreePath, ".pi", "semantic-search", "index.json"))) {
+				mergeCopy(
+					repo.currentRoot,
+					await copyWorktreeEnvironment(repo.currentRoot, worktreePath, options?.signal, { includeRootArtifacts: false }),
+				);
+			}
+		}
+		environmentCopy.copied = [...new Set(environmentCopy.copied)].sort();
+		environmentCopy.skipped = [...new Set(environmentCopy.skipped)].sort();
+	}
+	if (environmentCopy?.copied.length) {
+		const warning = await excludeCopiedEnvironmentFromGit(pi, repo.gitRoot, environmentCopy.copied);
+		if (warning) environmentCopy.warnings.push(warning);
+	}
+
+	return { ok: true, slug, branch, worktreePath, repoContext: repo, environmentCopy };
+}
+
+function gitExcludePattern(relativePath: string): string {
+	const normalized = relativePath.split(path.sep).join("/");
+	return `/${normalized.replace(/([\\ \t#*!?\[\]])/g, "\\$1")}`;
+}
+
+async function excludeCopiedEnvironmentFromGit(
+	pi: ExtensionAPI,
+	repoRoot: string,
+	copiedPaths: string[],
+): Promise<string | undefined> {
+	const gitPath = await git(pi, repoRoot, ["rev-parse", "--git-path", "info/exclude"]);
+	if (gitPath.code !== 0 || !gitPath.stdout.trim()) return "Could not locate .git/info/exclude for copied local files";
+
+	const excludePath = path.resolve(repoRoot, gitPath.stdout.trim());
+	try {
+		let existing = "";
+		try {
+			existing = await fsp.readFile(excludePath, "utf8");
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		}
+		const existingLines = new Set(existing.split("\n"));
+		const patterns = copiedPaths.map(gitExcludePattern).filter((pattern) => !existingLines.has(pattern));
+		if (patterns.length === 0) return undefined;
+
+		await fsp.mkdir(path.dirname(excludePath), { recursive: true });
+		const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+		const marker = existing.includes("# pi worktree-manager local environment")
+			? ""
+			: "# pi worktree-manager local environment\n";
+		await fsp.appendFile(excludePath, `${prefix}${marker}${patterns.join("\n")}\n`, "utf8");
+		return undefined;
+	} catch (error) {
+		return `Could not exclude copied local files from Git status: ${(error as Error).message}`;
+	}
+}
+
+const EXCLUDED_ROOT_DOT_ENTRIES = new Set([
+	".git",
+	".cache",
+	".DS_Store",
+	".ruby-lsp",
+	".solargraph-cache",
+	".yardoc",
+]);
+
+const PI_ENVIRONMENT_FILES = new Set([
+	"semantic-search/index.json",
+	"semantic-search/summaries.json",
+]);
+
+function throwIfAborted(signal?: AbortSignal): void {
+	if (!signal?.aborted) return;
+	const error = new Error("Worktree environment copy aborted");
+	error.name = "AbortError";
+	throw error;
+}
+
+async function copyLocalEntry(
+	sourceRoot: string,
+	targetRoot: string,
+	relativePath: string,
+	result: WorktreeEnvironmentCopyResult,
+	signal?: AbortSignal,
+): Promise<void> {
+	throwIfAborted(signal);
+	const sourcePath = path.join(sourceRoot, relativePath);
+	const targetPath = path.join(targetRoot, relativePath);
+	const sourceStat = await fsp.lstat(sourcePath);
+
+	try {
+		const targetStat = await fsp.lstat(targetPath);
+		if (!(sourceStat.isDirectory() && targetStat.isDirectory())) {
+			result.skipped.push(relativePath);
+			return;
+		}
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+
+	if (sourceStat.isDirectory()) {
+		await fsp.mkdir(targetPath, { recursive: true, mode: sourceStat.mode });
+		const entries = await fsp.readdir(sourcePath, { withFileTypes: true });
+		for (const entry of entries) {
+			await copyLocalEntry(sourceRoot, targetRoot, path.join(relativePath, entry.name), result, signal);
+		}
+		return;
+	}
+
+	await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+	if (sourceStat.isSymbolicLink()) {
+		await fsp.symlink(await fsp.readlink(sourcePath), targetPath);
+		result.copied.push(relativePath);
+		return;
+	}
+	if (sourceStat.isFile()) {
+		await fsp.copyFile(sourcePath, targetPath, fs.constants.COPYFILE_FICLONE);
+		result.copied.push(relativePath);
+		return;
+	}
+
+	result.skipped.push(relativePath);
 }
 
 /**
- * Copy .env files from source to target directory.
- * These are typically gitignored so they don't appear in worktrees.
+ * Copy local root dotfiles and dot-directories into a new worktree without
+ * overwriting checked-out files. Pi runtime histories stay local to their
+ * originating worktree; only the reusable semantic index crosses over.
  */
-export async function copyEnvFiles(sourceDir: string, targetDir: string): Promise<void> {
+export async function copyWorktreeEnvironment(
+	sourceDir: string,
+	targetDir: string,
+	signal?: AbortSignal,
+	options: { includeRootArtifacts?: boolean; includeSemanticIndex?: boolean } = {},
+): Promise<WorktreeEnvironmentCopyResult> {
+	const result: WorktreeEnvironmentCopyResult = { copied: [], skipped: [], warnings: [] };
+	let entries: fs.Dirent[];
 	try {
-		const entries = await fsp.readdir(sourceDir, { withFileTypes: true });
-		const envFiles = entries.filter((entry) => {
-			if (!entry.isFile()) return false;
-			return entry.name.toLowerCase().startsWith(".env");
-		});
-
-		for (const file of envFiles) {
-			const sourcePath = path.join(sourceDir, file.name);
-			const targetPath = path.join(targetDir, file.name);
-
-			// Don't overwrite if already exists (git might have checked it out)
-			if (!fs.existsSync(targetPath)) {
-				await fsp.copyFile(sourcePath, targetPath);
-			}
-		}
-	} catch {
-		// Non-fatal: worktree still works without the copied files
+		entries = await fsp.readdir(sourceDir, { withFileTypes: true });
+	} catch (error) {
+		result.warnings.push(`Could not read local environment source: ${(error as Error).message}`);
+		return result;
 	}
+
+	const includeRootArtifacts = options.includeRootArtifacts ?? true;
+	const includeSemanticIndex = options.includeSemanticIndex ?? true;
+	for (const entry of entries) {
+		if (!entry.name.startsWith(".") || EXCLUDED_ROOT_DOT_ENTRIES.has(entry.name)) continue;
+		try {
+			if (entry.name === ".pi") {
+				if (!includeSemanticIndex) continue;
+				for (const relativePath of PI_ENVIRONMENT_FILES) {
+					const sourcePath = path.join(sourceDir, ".pi", relativePath);
+					try {
+						await fsp.access(sourcePath);
+						await copyLocalEntry(sourceDir, targetDir, path.join(".pi", relativePath), result, signal);
+					} catch (error) {
+						if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+					}
+				}
+				continue;
+			}
+			if (includeRootArtifacts) await copyLocalEntry(sourceDir, targetDir, entry.name, result, signal);
+		} catch (error) {
+			if ((error as Error).name === "AbortError") throw error;
+			result.warnings.push(`${entry.name}: ${(error as Error).message}`);
+		}
+	}
+
+	result.copied.sort();
+	result.skipped.sort();
+	return result;
 }
 
 export async function ensureFeatureBranchFromMain(

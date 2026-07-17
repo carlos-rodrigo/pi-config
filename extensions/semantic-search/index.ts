@@ -686,8 +686,10 @@ function configExcludePatterns(config: SemanticSearchConfig): RegExp[] {
 function shouldSkipPath(relativePath: string, excludePatterns: readonly RegExp[] = []): boolean {
 	const normalized = normalizeRelativePath(relativePath);
 	const parts = normalized.split("/");
+	const fileName = basename(normalized);
 	if (parts.some((part) => SKIP_DIRS.has(part))) return true;
-	if (basename(normalized).startsWith(".DS_Store")) return true;
+	if (/^\.env(?:\.|$)/i.test(fileName) || fileName === ".envrc") return true;
+	if (fileName.startsWith(".DS_Store")) return true;
 	if (SKIP_EXTENSIONS.has(extname(normalized).toLowerCase())) return true;
 	if (excludePatterns.some((pattern) => pattern.test(normalized))) return true;
 	return false;
@@ -1878,7 +1880,11 @@ export function loadSearchIndex(cwd: string): SearchIndex | undefined {
 	if (!existsSync(indexPath)) return undefined;
 	try {
 		const parsed = parseSearchIndexJson(readFileSync(indexPath, "utf8"));
-		if (parsed.version !== INDEX_VERSION || parsed.cwd !== absoluteCwd) return undefined;
+		if (parsed.version !== INDEX_VERSION) return undefined;
+
+		// Index contents use project-relative paths, so a copy can be reused by a
+		// sibling Git worktree. Freshness validation below still rejects drift.
+		parsed.cwd = absoluteCwd;
 		memoryIndexes.set(absoluteCwd, parsed);
 		return parsed;
 	} catch {
@@ -1886,8 +1892,8 @@ export function loadSearchIndex(cwd: string): SearchIndex | undefined {
 	}
 }
 
-function currentIndexableFileStats(cwd: string, maxFileBytes: number): Array<{ path: string; size: number; mtimeMs: number }> {
-	const files: Array<{ path: string; size: number; mtimeMs: number }> = [];
+function currentIndexableFileStats(cwd: string, maxFileBytes: number): Array<{ path: string; hash: string; size: number }> {
+	const files: Array<{ path: string; hash: string; size: number }> = [];
 	for (const path of discoverProjectFiles(cwd)) {
 		try {
 			const stat = statSync(join(cwd, path));
@@ -1895,7 +1901,7 @@ function currentIndexableFileStats(cwd: string, maxFileBytes: number): Array<{ p
 			const buffer = readFileSync(join(cwd, path));
 			if (isLikelyBinary(buffer)) continue;
 			if (!buffer.toString("utf8").trim()) continue;
-			files.push({ path, size: stat.size, mtimeMs: stat.mtimeMs });
+			files.push({ path, hash: hashBuffer(buffer), size: stat.size });
 		} catch {
 			// Ignore files that disappear while checking status.
 		}
@@ -1939,7 +1945,7 @@ export function getIndexStatus(cwd: string, index = loadSearchIndex(cwd)): Index
 	for (const file of current) {
 		const indexed = byPath.get(file.path);
 		if (!indexed) return { ...baseStatus, stale: true, reason: `new file: ${file.path}` };
-		if (indexed.size !== file.size || Math.abs(indexed.mtimeMs - file.mtimeMs) > 1) {
+		if (indexed.size !== file.size || indexed.hash !== file.hash) {
 			return { ...baseStatus, stale: true, reason: `changed file: ${file.path}` };
 		}
 	}

@@ -28,7 +28,7 @@ Local hybrid code search for Pi, backed by required local Ollama semantic-card s
 /ollama-tunnel stop      # kill matching SSH tunnel processes and point Pi at local Ollama
 ```
 
-The index is stored under `.pi/semantic-search/index.json` in each project and is ignored by this repo's git settings.
+The index is stored under `.pi/semantic-search/index.json` in each project and is ignored by this repo's git settings. `worktree-manager` copy-on-write clones this index into new worktrees; relative paths and content-hash freshness checks make the clone reusable even though its absolute project path and checkout mtimes differ.
 
 ## Requirements
 
@@ -136,6 +136,7 @@ Configuration:
 ## Notes
 
 - Calls only your local Ollama server; no cloud embedding service is used.
+- Never indexes `.env`, `.env.*`, or `.envrc` files, even when they are not gitignored.
 - Default search/index rebuilds require Ollama summaries and embeddings; missing Ollama/models are treated as setup errors, not automatic lexical fallback.
 - Builds semantic cards for each file and detected symbols (classes, modules, methods, functions, markdown headings). Cards include path role, symbols, calls/references, comments, inferred concepts, and an Ollama-generated concise summary for meaning-oriented queries.
 - Summary generation runs in parallel during embedding index builds and caches unchanged card summaries under `.pi/semantic-search/summaries.json`.
