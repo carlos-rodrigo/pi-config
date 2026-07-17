@@ -75,12 +75,23 @@ export function formatBackgroundJobIndicator(count: number): string | null {
 	return count === 1 ? "1 bg job" : `${count} bg jobs`;
 }
 
-export function formatComposerActivityIndicator(indexRebuildIndicator: string | null | undefined, backgroundJobCount: number): string | null {
+export function formatLoopJobIndicator(count: number): string | null {
+	if (!Number.isFinite(count) || count <= 0) return null;
+	return count === 1 ? "1 loop" : `${count} loops`;
+}
+
+export function formatComposerActivityIndicator(
+	indexRebuildIndicator: string | null | undefined,
+	backgroundJobCount: number,
+	loopJobCount = 0,
+): string | null {
 	const labels: string[] = [];
 	const indexLabel = indexRebuildIndicator?.trim();
 	if (indexLabel) labels.push(indexLabel);
 	const jobLabel = formatBackgroundJobIndicator(backgroundJobCount);
 	if (jobLabel) labels.push(jobLabel);
+	const loopLabel = formatLoopJobIndicator(loopJobCount);
+	if (loopLabel) labels.push(loopLabel);
 	return labels.length > 0 ? labels.join(" · ") : null;
 }
 
@@ -233,6 +244,7 @@ class BorderedEditor extends CustomEditor {
 	private getThinkingLevel: () => string = () => "off";
 	private getExtensionStatus: () => string | null = () => null;
 	private backgroundJobCount = 0;
+	private loopJobCount = 0;
 	private indexRebuildIndicator: string | null = null;
 
 	// --- Mode label state ---
@@ -270,6 +282,10 @@ class BorderedEditor extends CustomEditor {
 
 	setBackgroundJobCount(count: number): void {
 		this.backgroundJobCount = Math.max(0, Math.floor(count));
+	}
+
+	setLoopJobCount(count: number): void {
+		this.loopJobCount = Math.max(0, Math.floor(count));
 	}
 
 	setIndexRebuildIndicator(indicator: string | null): void {
@@ -382,7 +398,7 @@ class BorderedEditor extends CustomEditor {
 				: this.ctx.cwd;
 			const branch = this.getGitBranch();
 			const worktreeInfo = this.getWorktreeInfo();
-			const activityIndicator = formatComposerActivityIndicator(this.indexRebuildIndicator, this.backgroundJobCount);
+			const activityIndicator = formatComposerActivityIndicator(this.indexRebuildIndicator, this.backgroundJobCount, this.loopJobCount);
 			bottomRight = activityIndicator ? theme.fg("warning", activityIndicator) + theme.fg("dim", " · ") : "";
 			bottomRight += theme.fg("muted", cwd);
 			if (worktreeInfo) {
@@ -482,6 +498,7 @@ export default function (pi: ExtensionAPI) {
 	let editorInstance: BorderedEditor | undefined;
 	let requestRender: (() => void) | undefined;
 	let backgroundJobCount = 0;
+	let loopJobCount = 0;
 	let indexRebuildIndicator: string | null = null;
 
 	// --- Agent mode events ---
@@ -501,6 +518,15 @@ export default function (pi: ExtensionAPI) {
 		backgroundJobCount = count ?? 0;
 		if (editorInstance) {
 			editorInstance.setBackgroundJobCount(backgroundJobCount);
+			requestRender?.();
+		}
+	});
+
+	pi.events.on("loop-jobs:running-count", (data) => {
+		const { count } = data as { count?: number };
+		loopJobCount = count ?? 0;
+		if (editorInstance) {
+			editorInstance.setLoopJobCount(loopJobCount);
 			requestRender?.();
 		}
 	});
@@ -567,6 +593,7 @@ export default function (pi: ExtensionAPI) {
 			requestRender = () => tui.requestRender();
 			const editor = new BorderedEditor(tui, theme, kb, { paddingX: PADDING_X });
 			editor.setBackgroundJobCount(backgroundJobCount);
+			editor.setLoopJobCount(loopJobCount);
 			editor.setIndexRebuildIndicator(indexRebuildIndicator);
 			editor.setDataProviders(
 				ctx,

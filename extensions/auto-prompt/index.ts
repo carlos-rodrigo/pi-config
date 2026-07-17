@@ -36,7 +36,6 @@ import {
 	getModels,
 	getProviders,
 	type Api,
-	type KnownProvider,
 	type Model,
 } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -616,8 +615,8 @@ function resolveModel(config: ModelSelection): Model<Api> | null {
 	if (!config.provider || !config.id) return null;
 
 	try {
-		const provider = config.provider as KnownProvider;
-		if (!getProviders().includes(provider)) return null;
+		const provider = getProviders().find((candidate) => candidate === config.provider);
+		if (!provider) return null;
 		const candidates = getModels(provider) as Array<Model<Api>>;
 		return candidates.find((m) => m.id === config.id) ?? null;
 	} catch {

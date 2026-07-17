@@ -5,6 +5,7 @@ import {
 	formatBackgroundJobIndicator,
 	formatBottomLeftUsage,
 	formatComposerActivityIndicator,
+	formatLoopJobIndicator,
 	formatTokenCount,
 	formatWorkflowModeLabel,
 	getAssistantUsageTotals,
@@ -128,10 +129,17 @@ test("formatBackgroundJobIndicator only appears for running jobs", () => {
 	assert.equal(formatBackgroundJobIndicator(2), "2 bg jobs");
 });
 
-test("formatComposerActivityIndicator combines index rebuilds and background jobs", () => {
+test("formatLoopJobIndicator only appears for running loops", () => {
+	assert.equal(formatLoopJobIndicator(0), null);
+	assert.equal(formatLoopJobIndicator(1), "1 loop");
+	assert.equal(formatLoopJobIndicator(2), "2 loops");
+});
+
+test("formatComposerActivityIndicator combines index rebuilds, agent jobs, and loops", () => {
 	assert.equal(formatComposerActivityIndicator(null, 0), null);
 	assert.equal(formatComposerActivityIndicator("idx: embedding 60% · ~11s", 0), "idx: embedding 60% · ~11s");
-	assert.equal(formatComposerActivityIndicator("idx: embedding 60% · ~11s", 2), "idx: embedding 60% · ~11s · 2 bg jobs");
+	assert.equal(formatComposerActivityIndicator(null, 0, 2), "2 loops");
+	assert.equal(formatComposerActivityIndicator("idx: embedding 60% · ~11s", 2, 1), "idx: embedding 60% · ~11s · 2 bg jobs · 1 loop");
 });
 
 test("formatTokenCount keeps token totals compact", () => {

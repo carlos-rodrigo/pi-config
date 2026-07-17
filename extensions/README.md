@@ -29,6 +29,7 @@ pi install ./extensions/document-reviewer
 pi install ./extensions/file-opener
 pi install ./extensions/git-blame
 pi install ./extensions/lazygit
+pi install ./extensions/loop-monitor
 pi install ./extensions/overseer
 pi install ./extensions/prompt-queue
 pi install ./extensions/review-mode
@@ -57,6 +58,7 @@ pi install ./extensions/worktree-manager
 | [file-opener](file-opener/) | Syntax-highlighted file viewer with diff support |
 | [git-blame](git-blame/) | Interactive git blame overlay |
 | [lazygit](lazygit/) | LazyGit launcher via tmux |
+| [loop-monitor](loop-monitor/) | Live current-project loop task dashboard with current-iteration log tail |
 | [overseer](overseer/) | Warning-only event watchdog for repeated tool failures and risky large mutations |
 | [prompt-queue](prompt-queue/) | Interactive queue palette for staging prompts, pasting them into the editor, or running them serially |
 | [review-mode](review-mode/) | Overlay review workbench for local/staged/unstaged/outgoing diffs with colorized preview, hunk/file/all scopes, same-session questions, and saved review notes |
