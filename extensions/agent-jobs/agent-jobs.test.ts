@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import agentJobsExtension, {
+	buildAgentTask,
 	buildLoopCommandArgs,
 	buildLoopRunScript,
 	buildRunScript,
@@ -88,6 +89,13 @@ test("buildRunScript launches pi in json mode with prompt and persistent logs", 
 	assert.match(script, /'@\/tmp\/repo\/\.pi\/agent-jobs\/oracle-1\/prompt\.md' 'Execute the task described in the attached prompt file\.'/);
 	assert.match(script, /> '\/tmp\/repo\/\.pi\/agent-jobs\/oracle-1\/events\.jsonl' 2> '\/tmp\/repo\/\.pi\/agent-jobs\/oracle-1\/stderr\.log'/);
 	assert.match(script, /exit\.json/);
+});
+
+test("buildAgentTask makes Are You Proud validation mandatory for review jobs only", () => {
+	const reviewTask = buildAgentTask("current work", "review", "/tmp/review-context.md");
+	assert.match(reviewTask, /Run the Are You Proud validation/);
+	assert.match(reviewTask, /five-topic quality review/);
+	assert.doesNotMatch(buildAgentTask("an architecture question", "standard"), /Are You Proud/);
 });
 
 test("buildTmuxNewWindowArgs creates a detached window that exits when the job finishes", () => {

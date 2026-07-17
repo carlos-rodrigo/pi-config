@@ -6,6 +6,7 @@ Use the agent_job_start tool to start the "oracle" agent in a detached tmux back
 
 Set mode="review" and followUp=true. Do not use the synchronous subagent tool for this prompt.
 The agent-jobs launcher will snapshot git status/diffs into review-context.md before oracle starts; require oracle to read that file first.
+Every Oracle review must run the Are You Proud validation and synthesize its five focused quality checks.
 
 Task:
 

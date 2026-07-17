@@ -13,7 +13,7 @@ const researchPrompt = readFileSync(new URL("../prompts/research.md", import.met
 const researchAndPlanPrompt = readFileSync(new URL("../prompts/research-and-plan.md", import.meta.url), "utf8");
 
 test("oracle agent emphasizes concise, evidence-first, high-signal feedback", () => {
-	assert.match(oracleAgent, /model: openai-codex\/gpt-5\.6-sol/);
+	assert.match(oracleAgent, /model: openai-codex\/gpt-5\.6-sol:xhigh/);
 	assert.match(oracleAgent, /tools: read, grep, find, ls, agent_job_start, agent_job_status/);
 	assert.match(oracleAgent, /Feedback style:/);
 	assert.match(oracleAgent, /Lead with the conclusion/);
@@ -26,8 +26,10 @@ test("oracle agent emphasizes concise, evidence-first, high-signal feedback", ()
 	assert.match(oracleAgent, /Documentation Destination[\s\S]*none/);
 });
 
-test("oracle coordinates Are You Proud validation with five focused child jobs", () => {
-	assert.match(oracleAgent, /Are You Proud validation mode:/);
+test("oracle runs Are You Proud validation for every review with five focused child jobs", () => {
+	assert.match(oracleAgent, /Are You Proud review mode:/);
+	assert.match(oracleAgent, /every code\/change review/i);
+	assert.match(oracleAgent, /At the start of every review/i);
 	assert.match(oracleAgent, /\/Users\/carlosrodrigo\/agents\/skills\/are-you-proud\/SKILL\.md/);
 	assert.match(oracleAgent, /Correctness and intent/);
 	assert.match(oracleAgent, /Simplicity \/ YAGNI \/ overengineering/);
@@ -37,11 +39,13 @@ test("oracle coordinates Are You Proud validation with five focused child jobs",
 	assert.match(oracleAgent, /Start exactly five child agent jobs/);
 	assert.match(oracleAgent, /followUp: false/);
 	assert.match(oracleAgent, /Do not spawn subagents/);
+	assert.match(oracleAgent, /child review must not spawn/i);
 	assert.match(oracleAgent, /agent_job_status/);
 	assert.match(oracleAgent, /Proud[\s\S]*Mostly proud[\s\S]*Not proud yet[\s\S]*Would not ship/);
 });
 
 test("oracle prompt templates require repo-specific evidence and interactive-flow feedback", () => {
+	assert.match(deepReviewPrompt, /Are You Proud/i);
 	for (const prompt of [askOraclePrompt, oraclePrompt, deepReviewPrompt, oracleCheckpointPrompt]) {
 		assert.match(prompt, /repo-specific/i);
 		assert.match(prompt, /concise by default/i);

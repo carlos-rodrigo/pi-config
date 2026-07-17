@@ -485,13 +485,14 @@ export async function collectReviewContext(pi: ExtensionAPI, cwd: string, focus:
 	].join("\n");
 }
 
-function buildAgentTask(task: string, mode: AgentJobMode, reviewContextPath?: string): string {
+export function buildAgentTask(task: string, mode: AgentJobMode, reviewContextPath?: string): string {
 	if (mode !== "review") return `Task: ${task}`;
 	return [
 		`Review the current work relevant to: ${task || "current work"}`,
 		"",
 		`A parent Pi process wrote a review context snapshot at: ${reviewContextPath}`,
 		"First read that file, then inspect directly related local files as needed.",
+		"Run the Are You Proud validation as part of this review, including its five-topic quality review.",
 		"Keep the review evidence-first, repo-specific, concise, and action-oriented.",
 		"Do not modify code.",
 	].join("\n");
