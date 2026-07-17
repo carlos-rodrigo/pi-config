@@ -37,7 +37,7 @@ These never happen unless invoked:
 - Benchmarks: `/bench run`, `/bench run <tier>`, or `agent_benchmark`.
 - Improvement proposal: `/propose-improvement`, `/improve-archive proposal`, or `archive_analysis` with `action: proposal`.
 - Background agents/loops: `agent_job_start`, `/research-bg`, `/ask-oracle-bg`, `/loop-bg`, etc.
-- Mode switching: `/mode smart|deep2|deep3|fast`; `/mode recommend` only explains a recommendation.
+- Mode switching: `/mode fast|smart|deep3|max`; `/mode recommend` only explains a recommendation.
 
 ## Commands
 

@@ -413,7 +413,7 @@ test("archive guidance and mode recommendation degrade safely", (t) => {
 	t.after(() => fixture.cleanup());
 
 	assert.equal(buildArchiveGuidance(fixture.root), undefined);
-	assert.equal(recommendModeFromArchive(fixture.root).mode, "smart");
+	assert.equal(recommendModeFromArchive(fixture.root).mode, "fast");
 
 	for (let i = 0; i < 3; i++) {
 		appendArchiveRecord(

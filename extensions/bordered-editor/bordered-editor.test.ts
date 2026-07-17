@@ -9,6 +9,7 @@ import {
 	formatTokenCount,
 	formatWorkflowModeLabel,
 	getAssistantUsageTotals,
+	getThinkingLevelColor,
 	getWorkflowModeColor,
 	pickPrimaryExtensionStatus,
 } from "./index.ts";
@@ -106,21 +107,32 @@ test("pickPrimaryExtensionStatus prefers prompt queue over ambient mode status",
 	);
 });
 
-test("formatWorkflowModeLabel displays all workflow modes", () => {
-	assert.equal(formatWorkflowModeLabel("smart"), "Smart");
-	assert.equal(formatWorkflowModeLabel("deep1"), "deep1");
-	assert.equal(formatWorkflowModeLabel("deep"), "Deep²");
-	assert.equal(formatWorkflowModeLabel("deep2"), "Deep²");
-	assert.equal(formatWorkflowModeLabel("deep3"), "Deep³");
+test("formatWorkflowModeLabel displays the simplified workflow modes", () => {
 	assert.equal(formatWorkflowModeLabel("fast"), "Fast");
+	assert.equal(formatWorkflowModeLabel("smart"), "Smart");
+	assert.equal(formatWorkflowModeLabel("deep"), "Deep³");
+	assert.equal(formatWorkflowModeLabel("deep3"), "Deep³");
+	assert.equal(formatWorkflowModeLabel("max"), "Max");
+	assert.equal(formatWorkflowModeLabel("deep2"), "deep2");
 	assert.equal(formatWorkflowModeLabel(null), null);
 });
 
-test("getWorkflowModeColor colors deep levels as deep mode", () => {
-	assert.equal(getWorkflowModeColor("Smart"), "success");
-	assert.equal(getWorkflowModeColor("Deep²"), "error");
-	assert.equal(getWorkflowModeColor("Deep³"), "error");
-	assert.equal(getWorkflowModeColor("Fast"), "warning");
+test("getWorkflowModeColor follows the reasoning-level palette", () => {
+	assert.equal(getWorkflowModeColor("Fast"), "thinkingMedium");
+	assert.equal(getWorkflowModeColor("Smart"), "thinkingHigh");
+	assert.equal(getWorkflowModeColor("Deep³"), "thinkingXhigh");
+	assert.equal(getWorkflowModeColor("Max"), "thinkingMax");
+});
+
+test("getThinkingLevelColor maps composer effort labels to theme tokens", () => {
+	assert.equal(getThinkingLevelColor("off"), "thinkingOff");
+	assert.equal(getThinkingLevelColor("minimal"), "thinkingMinimal");
+	assert.equal(getThinkingLevelColor("low"), "thinkingLow");
+	assert.equal(getThinkingLevelColor("medium"), "thinkingMedium");
+	assert.equal(getThinkingLevelColor("high"), "thinkingHigh");
+	assert.equal(getThinkingLevelColor("xhigh"), "thinkingXhigh");
+	assert.equal(getThinkingLevelColor("max"), "thinkingMax");
+	assert.equal(getThinkingLevelColor("unknown"), "muted");
 });
 
 test("formatBackgroundJobIndicator only appears for running jobs", () => {
@@ -182,24 +194,22 @@ test("getAssistantUsageTotals sums assistant token burn and cost", () => {
 	assert.deepEqual(getAssistantUsageTotals(entries), {
 		cost: 0.46,
 		tokensBurned: 1460,
-		inputTokens: 101,
-		cacheReadTokens: 300,
 	});
 });
 
-test("formatBottomLeftUsage shows prompt-cache hit rate after context usage", () => {
+test("formatBottomLeftUsage keeps only context capacity, cumulative burn, and cost", () => {
 	assert.equal(
 		formatBottomLeftUsage(
 			{ percent: 42.4, tokens: 84_200, contextWindow: 200_000 },
-			{ cost: 1.14, tokensBurned: 1_250_000, inputTokens: 20_000, cacheReadTokens: 80_000 },
+			{ cost: 1.14, tokensBurned: 1_250_000 },
 		),
-		"42% of 200k · 84k ctx · 80% cache · 1.3M burned · $1.14",
+		"42% of 200k · 1.3M burned · $1.14",
 	);
 });
 
-test("formatBottomLeftUsage omits cache rate when no prompt tokens are reported", () => {
+test("formatBottomLeftUsage handles missing context without restoring removed metrics", () => {
 	assert.equal(
-		formatBottomLeftUsage(undefined, { cost: 0, tokensBurned: 0, inputTokens: 0, cacheReadTokens: 0 }),
-		"— of — · — ctx · 0 burned · $0.00",
+		formatBottomLeftUsage(undefined, { cost: 0, tokensBurned: 0 }),
+		"— of — · 0 burned · $0.00",
 	);
 });

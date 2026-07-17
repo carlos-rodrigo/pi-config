@@ -435,20 +435,20 @@ export function readBenchmarkEvidence(cwd: string): BenchmarkEvidence {
 	}
 }
 
-export function recommendModeFromArchive(cwd: string): { mode: "smart" | "deep2" | "deep3" | "fast"; reason: string } {
+export function recommendModeFromArchive(cwd: string): { mode: "fast" | "smart" | "deep3"; reason: string } {
 	const { records, errors } = readArchiveRecords(cwd);
-	if (errors.length > 0) return { mode: "smart", reason: `Archive has ${errors.length} parse/read issue(s); stay in Smart until evidence is clean.` };
+	if (errors.length > 0) return { mode: "smart", reason: `Archive has ${errors.length} parse/read issue(s); use Smart until evidence is clean.` };
 	const summary = summarizeArchive(records);
 	if (summary.failedVerifications >= 3 || summary.toolFailures >= 5) {
-		return { mode: "deep3", reason: "Recent verification/tool failures suggest a high-quality diagnosis pass before more edits." };
+		return { mode: "deep3", reason: "Recent verification/tool failures suggest a quality-first diagnosis pass before more edits." };
 	}
 	if (summary.failedVerifications > 0 || summary.recentWarnings.length > 0) {
-		return { mode: "deep2", reason: "Recent failures/warnings suggest a normal deep pass with explicit verification." };
+		return { mode: "smart", reason: "Recent failures/warnings justify extra reasoning and explicit verification." };
 	}
 	if (summary.runs > 0 && summary.failedVerifications === 0 && summary.toolFailures === 0) {
-		return { mode: "fast", reason: "Recent archived runs have no recorded failures; fast mode is reasonable for tiny follow-ups." };
+		return { mode: "fast", reason: "Recent archived runs have no recorded failures; the Fast default remains appropriate." };
 	}
-	return { mode: "smart", reason: "Not enough archive evidence yet; use the balanced default." };
+	return { mode: "fast", reason: "Not enough archive evidence yet; use the Fast default." };
 }
 
 export function formatArchiveReport(action: string, readResult: ArchiveReadResult, limit = DEFAULT_LIMIT): string {

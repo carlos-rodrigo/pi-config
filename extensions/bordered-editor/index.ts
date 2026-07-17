@@ -4,11 +4,11 @@
  *
  * ╭─ mode:smart ──────────────── claude-opus-4-6 · high ─╮
  * │   ▌Implement the error handling changes                │  ← gray ghost text
- * ╰─ 42% of 200k · 84k ctx · 1.2M burned · $1.14 ─ ~/project (main) ─╯
+ * ╰─ 42% of 200k · 1.2M burned · $1.14 ─ ~/project (main) ─╯
  *
- * Top left:     agent mode (Smart in green, Deep²/³ in red, Fast in yellow)
- * Top right:    model · thinking-level (level in green)
- * Bottom left:  context% of Nk · current context tokens · cumulative tokens burned · $cost - status
+ * Top left:     agent mode (medium blue → high mauve → xhigh pink → max gold)
+ * Top right:    model · thinking-level (level uses the matching thinking color)
+ * Bottom left:  context% of Nk · cumulative tokens burned · $cost - status
  * Bottom right: cwd plus git state — branch (main checkout) or worktree info
  *
  * Ghost text: appears when editor is empty, right arrow accepts, any key dismisses.
@@ -49,25 +49,56 @@ export function pickPrimaryExtensionStatus(statuses: ReadonlyMap<string, string>
 	return memoryStatus ?? statuses.get("workflow-mode") ?? statuses.values().next().value ?? null;
 }
 
-export type WorkflowModeColor = "success" | "error" | "warning";
+export type WorkflowModeColor = "thinkingMedium" | "thinkingHigh" | "thinkingXhigh" | "thinkingMax";
+export type ThinkingLevelColor =
+	| "thinkingOff"
+	| "thinkingMinimal"
+	| "thinkingLow"
+	| "thinkingMedium"
+	| "thinkingHigh"
+	| "thinkingXhigh"
+	| "thinkingMax"
+	| "muted";
 
 export function formatWorkflowModeLabel(rawMode: string | null | undefined): string | null {
 	const value = rawMode?.trim();
 	if (!value) return null;
 
 	const normalized = value.toLowerCase();
-	if (["smart", "s"].includes(normalized)) return "Smart";
-	if (["deep", "deep2", "deep²", "d", "d2"].includes(normalized)) return "Deep²";
-	if (["deep3", "deep³", "d3"].includes(normalized)) return "Deep³";
 	if (["fast", "f", "rush", "r"].includes(normalized)) return "Fast";
+	if (["smart", "s"].includes(normalized)) return "Smart";
+	if (["deep", "deep3", "deep³", "d", "d3"].includes(normalized)) return "Deep³";
+	if (["max", "maximum"].includes(normalized)) return "Max";
 	return value;
 }
 
 export function getWorkflowModeColor(label: string | null | undefined): WorkflowModeColor {
 	const normalized = label?.toLowerCase() ?? "";
-	if (normalized.startsWith("deep")) return "error";
-	if (normalized === "fast") return "warning";
-	return "success";
+	if (normalized === "max") return "thinkingMax";
+	if (normalized.startsWith("deep")) return "thinkingXhigh";
+	if (normalized === "smart") return "thinkingHigh";
+	return "thinkingMedium";
+}
+
+export function getThinkingLevelColor(level: string | null | undefined): ThinkingLevelColor {
+	switch (level?.toLowerCase()) {
+		case "off":
+			return "thinkingOff";
+		case "minimal":
+			return "thinkingMinimal";
+		case "low":
+			return "thinkingLow";
+		case "medium":
+			return "thinkingMedium";
+		case "high":
+			return "thinkingHigh";
+		case "xhigh":
+			return "thinkingXhigh";
+		case "max":
+			return "thinkingMax";
+		default:
+			return "muted";
+	}
 }
 
 export function formatBackgroundJobIndicator(count: number): string | null {
@@ -114,13 +145,9 @@ function objectFrom(value: unknown): Record<string, unknown> | undefined {
 export function getAssistantUsageTotals(entries: readonly unknown[]): {
 	cost: number;
 	tokensBurned: number;
-	inputTokens: number;
-	cacheReadTokens: number;
 } {
 	let cost = 0;
 	let tokensBurned = 0;
-	let inputTokens = 0;
-	let cacheReadTokens = 0;
 
 	for (const entryValue of entries) {
 		const entry = objectFrom(entryValue);
@@ -133,25 +160,20 @@ export function getAssistantUsageTotals(entries: readonly unknown[]): {
 		cost += numberFrom(objectFrom(usage.cost)?.total);
 		const input = numberFrom(usage.input);
 		const cacheRead = numberFrom(usage.cacheRead);
-		inputTokens += input;
-		cacheReadTokens += cacheRead;
 		const explicitTotal = numberFrom(usage.totalTokens);
 		tokensBurned += explicitTotal || input + numberFrom(usage.output) + cacheRead + numberFrom(usage.cacheWrite);
 	}
 
-	return { cost, tokensBurned, inputTokens, cacheReadTokens };
+	return { cost, tokensBurned };
 }
 
 export function formatBottomLeftUsage(
 	usage: { percent?: number; tokens: number; contextWindow: number } | undefined,
-	session: { cost: number; tokensBurned: number; inputTokens: number; cacheReadTokens: number },
+	session: { cost: number; tokensBurned: number },
 ): string {
 	const pct = usage?.percent != null ? `${Math.round(usage.percent)}%` : "—";
 	const ctxWin = usage ? `${Math.round(usage.contextWindow / 1000)}k` : "—";
-	const ctxTokens = usage ? formatTokenCount(usage.tokens) : "—";
-	const promptTokens = session.inputTokens + session.cacheReadTokens;
-	const cacheRate = promptTokens > 0 ? ` · ${Math.round(session.cacheReadTokens / promptTokens * 100)}% cache` : "";
-	return `${pct} of ${ctxWin} · ${ctxTokens} ctx${cacheRate} · ${formatTokenCount(session.tokensBurned)} burned · $${session.cost.toFixed(2)}`;
+	return `${pct} of ${ctxWin} · ${formatTokenCount(session.tokensBurned)} burned · $${session.cost.toFixed(2)}`;
 }
 
 interface WorktreeEntry {
@@ -249,7 +271,7 @@ class BorderedEditor extends CustomEditor {
 
 	// --- Mode label state ---
 	private modeLabel: string | null = null;
-	private modeColor: "success" | "error" | "warning" = "success";
+	private modeColor: WorkflowModeColor = "thinkingMedium";
 
 	// --- Ghost text state ---
 	private ghostText: string | null = null;
@@ -363,7 +385,7 @@ class BorderedEditor extends CustomEditor {
 		let topLeft = "";
 		if (this.modeLabel && theme) {
 			const mode = this.modeLabel.toLowerCase();
-			topLeft = theme.fg("dim", "mode:") + theme.fg(getWorkflowModeColor(this.modeLabel), mode);
+			topLeft = theme.fg("dim", "mode:") + theme.fg(getWorkflowModeColor(this.modeLabel), theme.bold(mode));
 		}
 
 		// --- Top right: model · level ---
@@ -374,7 +396,7 @@ class BorderedEditor extends CustomEditor {
 			topRight =
 				theme.fg("muted", name) +
 				theme.fg("dim", " · ") +
-				theme.fg("success", level);
+				theme.fg(getThinkingLevelColor(level), theme.bold(level));
 		}
 
 		// --- Bottom-left: context · tokens burned · cost - primary extension status ---
@@ -399,12 +421,12 @@ class BorderedEditor extends CustomEditor {
 			const branch = this.getGitBranch();
 			const worktreeInfo = this.getWorktreeInfo();
 			const activityIndicator = formatComposerActivityIndicator(this.indexRebuildIndicator, this.backgroundJobCount, this.loopJobCount);
-			bottomRight = activityIndicator ? theme.fg("warning", activityIndicator) + theme.fg("dim", " · ") : "";
+			bottomRight = activityIndicator ? theme.fg("accent", activityIndicator) + theme.fg("dim", " · ") : "";
 			bottomRight += theme.fg("muted", cwd);
 			if (worktreeInfo) {
-				bottomRight += theme.fg("dim", " ") + theme.fg("thinkingHigh", `[WT ${worktreeInfo}]`);
+				bottomRight += theme.fg("dim", " ") + theme.fg("accent", `[WT ${worktreeInfo}]`);
 			} else if (branch) {
-				bottomRight += theme.fg("dim", " ") + theme.fg("thinkingHigh", `(${branch})`);
+				bottomRight += theme.fg("dim", " ") + theme.fg("accent", `(${branch})`);
 			}
 		}
 

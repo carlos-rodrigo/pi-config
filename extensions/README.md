@@ -66,7 +66,7 @@ pi install ./extensions/worktree-manager
 | [self-improvement-archive](self-improvement-archive/) | Quiet local archive of run, verification, benchmark, warning, and proposal evidence |
 | [session-query](session-query/) | Query previous Pi session files for context and decisions |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
-| [workflow-modes](workflow-modes/) | Smart/deep2/deep3/fast mode switching |
+| [workflow-modes](workflow-modes/) | Fast/smart/deep3/max GPT-5.6 Sol effort switching |
 | [verify](verify/) | Preflight `verification_plan`, back-pressure hook, and `scripts/verify.sh` scaffolding via `/setup-verify` |
 | [worktree-manager](worktree-manager/) | Git worktree management commands |
 

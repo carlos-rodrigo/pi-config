@@ -417,19 +417,19 @@ function getFeaturePacketGuidance(featurePacketState?: FeaturePacketSuggestionSt
 
 function getWorkflowModeGuidance(workflowMode?: string): string {
 	switch (workflowMode) {
+		case "fast":
+			return `
+- In Fast mode, prefer a bounded outcome and the cheapest useful verification check for rapid feedback`;
 		case "smart":
 			return `
-- In Smart mode, prefer a narrow next action plus one focused check`;
+- In Smart mode, explore plausible causes or tradeoffs before choosing a focused implementation and verification path`;
 		case "deep":
-		case "deep2":
-			return `
-- In Deep² mode, prefer a clear outcome, relevant constraints, and an observable success check for behavior-changing work`;
 		case "deep3":
 			return `
 - In Deep³ mode, prefer a quality-first prompt: reproduce or diagnose first, state material tradeoffs, patch only if localized, and verify with focused and regression checks`;
-		case "fast":
+		case "max":
 			return `
-- In Fast mode, prefer a tiny concrete action with a cheap verification check`;
+- In Max mode, prefer a bounded quality-first prompt with explicit risks, required evidence, verification, and stopping criteria`;
 		default:
 			return "";
 	}

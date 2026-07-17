@@ -10,6 +10,7 @@
     "maroon": "#ee99a0",
     "peach": "#f5a97f",
     "yellow": "#eed49f",
+    "gold": "#f4c95d",
     "green": "#a6da95",
     "teal": "#8bd5ca",
     "sky": "#91d7e3",
@@ -85,6 +86,7 @@
     "thinkingMedium": "blue",
     "thinkingHigh": "mauve",
     "thinkingXhigh": "pink",
+    "thinkingMax": "gold",
 
     "bashMode": "green"
   },

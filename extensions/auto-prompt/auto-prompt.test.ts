@@ -81,19 +81,19 @@ test("buildSuggestionPrompt is mode-aware for fast work", () => {
 	);
 
 	assert.match(prompt, /Current agent mode: fast/i);
-	assert.match(prompt, /tiny concrete action/i);
-	assert.match(prompt, /cheap verification check/i);
+	assert.match(prompt, /bounded outcome/i);
+	assert.match(prompt, /rapid feedback/i);
 });
 
-test("buildSuggestionPrompt is mode-aware for deep work", () => {
+test("buildSuggestionPrompt maps the deep alias to Deep³ guidance", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: We need to find edge cases before shipping.\n\nAssistant: Let's inspect failure modes.",
 		"deep",
 	);
 
 	assert.match(prompt, /Current agent mode: deep/i);
-	assert.match(prompt, /clear outcome/i);
-	assert.match(prompt, /observable success check/i);
+	assert.match(prompt, /quality-first/i);
+	assert.match(prompt, /reproduce or diagnose first/i);
 });
 
 test("buildSuggestionPrompt is mode-aware for deep3 work", () => {
@@ -107,6 +107,18 @@ test("buildSuggestionPrompt is mode-aware for deep3 work", () => {
 	assert.match(prompt, /reproduce or diagnose first/i);
 });
 
+test("buildSuggestionPrompt is mode-aware for max work", () => {
+	const prompt = buildSuggestionPrompt(
+		"User: Review this critical migration for hidden data-loss risks.\n\nAssistant: I'll perform an adversarial pass.",
+		"max",
+	);
+
+	assert.match(prompt, /Current agent mode: max/i);
+	assert.match(prompt, /quality-first/i);
+	assert.match(prompt, /required evidence/i);
+	assert.match(prompt, /stopping criteria/i);
+});
+
 test("buildSuggestionPrompt is mode-aware for smart work", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: Let's build this properly.\n\nAssistant: Agreed, balanced approach.",
@@ -114,8 +126,8 @@ test("buildSuggestionPrompt is mode-aware for smart work", () => {
 	);
 
 	assert.match(prompt, /Current agent mode: smart/i);
-	assert.match(prompt, /narrow next action/i);
-	assert.match(prompt, /focused check/i);
+	assert.match(prompt, /plausible causes/i);
+	assert.match(prompt, /tradeoffs/i);
 });
 
 test("buildSuggestionPrompt can include compact archive guidance", () => {

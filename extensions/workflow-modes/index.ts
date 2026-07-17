@@ -3,72 +3,50 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 import { recommendModeFromArchive } from "../self-improvement-archive/index.ts";
 
-type AgentMode = "smart" | "deep2" | "deep3" | "fast";
+type AgentMode = "fast" | "smart" | "deep3" | "max";
 type ModelLike = { provider?: string; id?: string; model?: string } | undefined;
 
 const MODE_LABEL: Record<AgentMode, string> = {
-	smart: "Smart",
-	deep2: "Deep²",
-	deep3: "Deep³",
 	fast: "Fast",
+	smart: "Smart",
+	deep3: "Deep³",
+	max: "Max",
 };
 
-const MODE_STATUS_COLOR: Record<AgentMode, "success" | "error" | "warning"> = {
-	smart: "success",
-	deep2: "error",
-	deep3: "error",
-	fast: "warning",
+type ModeStatusColor = "thinkingMedium" | "thinkingHigh" | "thinkingXhigh" | "thinkingMax";
+
+const MODE_STATUS_COLOR: Record<AgentMode, ModeStatusColor> = {
+	fast: "thinkingMedium",
+	smart: "thinkingHigh",
+	deep3: "thinkingXhigh",
+	max: "thinkingMax",
 };
 
-type ModeModelCandidate = { provider: string; model: string; thinking?: ThinkingLevel };
+type ModeModel = { provider: string; model: string };
 
 type ModeProfile = {
-	models: ModeModelCandidate[];
+	model: ModeModel;
 	thinking: ThinkingLevel;
 };
 
+const SOL_MODEL: ModeModel = { provider: "openai-codex", model: "gpt-5.6-sol" };
+
 const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
-	smart: {
-		models: [{ provider: "anthropic", model: "claude-fable-5" }],
-		thinking: "low",
-	},
-	deep2: {
-		models: [
-			{ provider: "openai-codex", model: "gpt-5.6-sol" },
-			{ provider: "openai-codex", model: "gpt-5.5" },
-			{ provider: "openai-codex", model: "gpt-5.4", thinking: "high" },
-			{ provider: "openai-codex", model: "gpt-5.3-codex", thinking: "xhigh" },
-		],
-		thinking: "xhigh",
-	},
-	deep3: {
-		models: [
-			{ provider: "openai-codex", model: "gpt-5.6-sol" },
-			{ provider: "openai-codex", model: "gpt-5.5", thinking: "xhigh" },
-			{ provider: "openai-codex", model: "gpt-5.4", thinking: "xhigh" },
-			{ provider: "openai-codex", model: "gpt-5.3-codex", thinking: "xhigh" },
-		],
-		thinking: "max",
-	},
-	fast: {
-		models: [
-			{ provider: "openai-codex", model: "gpt-5.5" },
-			{ provider: "openai-codex", model: "gpt-5.4" },
-			{ provider: "anthropic", model: "claude-opus-4-5" },
-		],
-		thinking: "xhigh",
-	},
+	fast: { model: SOL_MODEL, thinking: "medium" },
+	smart: { model: SOL_MODEL, thinking: "high" },
+	deep3: { model: SOL_MODEL, thinking: "xhigh" },
+	max: { model: SOL_MODEL, thinking: "max" },
 };
 
-const MODE_CYCLE: AgentMode[] = ["smart", "fast", "deep2", "deep3"];
+const MODE_CYCLE: AgentMode[] = ["fast", "smart", "deep3", "max"];
 
 export function normalizeMode(raw: string | undefined): AgentMode | undefined {
 	if (!raw) return undefined;
 	const value = raw.trim().toLowerCase();
-	if (["smart", "s"].includes(value)) return "smart";
-	if (["deep", "deep2", "deep²", "d", "d2"].includes(value)) return "deep2";
-	if (["deep3", "deep³", "d3"].includes(value)) return "deep3";
 	if (["fast", "f", "rush", "r"].includes(value)) return "fast";
+	if (["smart", "s"].includes(value)) return "smart";
+	if (["deep", "deep3", "deep³", "d", "d3"].includes(value)) return "deep3";
+	if (["max", "maximum"].includes(value)) return "max";
 	return undefined;
 }
 
@@ -88,21 +66,19 @@ function getModelId(model: ModelLike): string | undefined {
 	return model.id ?? model.model;
 }
 
-function inferModeFromModel(model: ModelLike): AgentMode | undefined {
+function inferModeFromModel(model: ModelLike, thinking?: ThinkingLevel | "off"): AgentMode | undefined {
 	const modelId = getModelId(model);
 	if (!model?.provider || !modelId) return undefined;
 
-	for (const [mode, profile] of Object.entries(MODE_PROFILE) as [AgentMode, ModeProfile][]) {
-		if (profile.models.some((candidate) => candidate.provider === model.provider && candidate.model === modelId)) {
-			return mode;
-		}
-	}
+	const matches = (Object.entries(MODE_PROFILE) as [AgentMode, ModeProfile][]).filter(([, profile]) =>
+		profile.model.provider === model.provider && profile.model.model === modelId,
+	);
 
-	return undefined;
+	return matches.find(([, profile]) => profile.thinking === thinking)?.[0] ?? matches[0]?.[0];
 }
 
 export default function (pi: ExtensionAPI) {
-	let currentMode: AgentMode = "smart";
+	let currentMode: AgentMode = "fast";
 	let currentCtx: ExtensionContext | undefined;
 
 	function updateStatus(ctx: ExtensionContext): void {
@@ -129,40 +105,22 @@ export default function (pi: ExtensionAPI) {
 		currentMode = mode;
 
 		const profile = MODE_PROFILE[mode];
-		let selectedModelCandidate: ModeModelCandidate | undefined;
-		let selectedThinking = profile.thinking;
-		let firstUnavailableModel: ModeModelCandidate | undefined;
+		const targetModel = ctx.modelRegistry.find(profile.model.provider, profile.model.model);
+		const modelApplied = targetModel ? await pi.setModel(targetModel) : false;
 
-		for (const candidate of profile.models) {
-			const targetModel = ctx.modelRegistry.find(candidate.provider, candidate.model);
-			if (!targetModel) continue;
-
-			const ok = await pi.setModel(targetModel);
-			if (ok) {
-				selectedModelCandidate = candidate;
-				selectedThinking = candidate.thinking ?? profile.thinking;
-				break;
-			}
-
-			if (!firstUnavailableModel) firstUnavailableModel = candidate;
+		if (!targetModel) {
+			ctx.ui.notify(
+				`Mode ${MODE_LABEL[mode]}: model ${profile.model.provider}/${profile.model.model} not found. Keeping current model.`,
+				"warning",
+			);
+		} else if (!modelApplied) {
+			ctx.ui.notify(
+				`Mode ${MODE_LABEL[mode]}: no API key for ${profile.model.provider}/${profile.model.model}. Keeping current model.`,
+				"warning",
+			);
 		}
 
-		if (!selectedModelCandidate) {
-			if (firstUnavailableModel) {
-				ctx.ui.notify(
-					`Mode ${MODE_LABEL[mode]}: no API key for ${firstUnavailableModel.provider}/${firstUnavailableModel.model}. Keeping current model.`,
-					"warning",
-				);
-			} else {
-				const requestedModels = profile.models.map((candidate) => `${candidate.provider}/${candidate.model}`).join(" or ");
-				ctx.ui.notify(
-					`Mode ${MODE_LABEL[mode]}: models ${requestedModels} not found. Keeping current model.`,
-					"warning",
-				);
-			}
-		}
-
-		pi.setThinkingLevel(selectedThinking);
+		pi.setThinkingLevel(profile.thinking);
 		syncModeState(ctx);
 
 		if (options?.persist !== false) {
@@ -170,16 +128,14 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		if (options?.notify !== false) {
-			const appliedModel = selectedModelCandidate
-				? `${selectedModelCandidate.provider}/${selectedModelCandidate.model}`
-				: "current model";
-			ctx.ui.notify(`Switched to Mode: ${MODE_LABEL[mode]} (${appliedModel}, ${selectedThinking})`, "info");
+			const appliedModel = modelApplied ? `${profile.model.provider}/${profile.model.model}` : "current model";
+			ctx.ui.notify(`Switched to Mode: ${MODE_LABEL[mode]} (${appliedModel}, ${profile.thinking})`, "info");
 		}
 	}
 
 	async function cycleMode(ctx: ExtensionContext): Promise<void> {
 		const currentIndex = MODE_CYCLE.indexOf(currentMode);
-		const next = MODE_CYCLE[(currentIndex + 1) % MODE_CYCLE.length] ?? "smart";
+		const next = MODE_CYCLE[(currentIndex + 1) % MODE_CYCLE.length] ?? "fast";
 		await applyMode(next, ctx);
 	}
 
@@ -195,19 +151,19 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.registerFlag("workflow-mode", {
-		description: "Start in agent mode (smart | deep2 | deep3 | fast)",
+		description: "Start in agent mode (fast | smart | deep3 | max)",
 		type: "string",
 	});
 
 	pi.registerShortcut("ctrl+shift+m", {
-		description: "Cycle agent mode (Smart/Deep²/Deep³/Fast)",
+		description: "Cycle agent mode (Fast/Smart/Deep³/Max)",
 		handler: async (ctx: ExtensionContext) => {
 			await cycleMode(ctx);
 		},
 	});
 
 	pi.registerCommand("mode", {
-		description: "Switch agent mode: smart | deep2 | deep3 | fast",
+		description: "Switch agent mode: fast | smart | deep3 | max",
 		handler: async (args, ctx) => {
 			const input = args.trim();
 			if (!input) {
@@ -220,25 +176,25 @@ export default function (pi: ExtensionAPI) {
 				const selected = await ctx.ui.select("Choose agent mode", choices);
 				if (!selected) return;
 				const selectedIndex = choices.indexOf(selected);
-				await applyMode(MODE_CYCLE[selectedIndex] ?? "smart", ctx);
+				await applyMode(MODE_CYCLE[selectedIndex] ?? "fast", ctx);
 				return;
 			}
 
 			if (input.toLowerCase() === "help") {
-				ctx.ui.notify("Usage: /mode smart | /mode deep2 | /mode deep3 | /mode fast | /mode recommend", "info");
+				ctx.ui.notify("Usage: /mode fast | /mode smart | /mode deep3 | /mode max | /mode recommend", "info");
 				return;
 			}
 
 			if (["recommend", "why"].includes(input.toLowerCase())) {
 				const recommendation = recommendModeFromArchive(ctx.cwd);
 				ctx.ui.notify(`Recommended mode: ${MODE_LABEL[recommendation.mode]} — ${recommendation.reason}`, "info");
-				ctx.ui.setEditorText?.(`Recommended mode: ${recommendation.mode}\n\n${recommendation.reason}\n\nRun /${recommendation.mode === "deep2" ? "deep2" : recommendation.mode} to switch if you agree.`);
+				ctx.ui.setEditorText?.(`Recommended mode: ${recommendation.mode}\n\n${recommendation.reason}\n\nRun /${recommendation.mode} to switch if you agree.`);
 				return;
 			}
 
 			const mode = normalizeMode(input);
 			if (!mode) {
-				ctx.ui.notify("Unknown mode. Use: smart, deep2, deep3, or fast", "error");
+				ctx.ui.notify("Unknown mode. Use: fast, smart, deep3, or max", "error");
 				return;
 			}
 
@@ -247,35 +203,35 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("smart", {
-		description: "Switch agent mode to Smart",
+		description: "Switch agent mode to Smart (high reasoning)",
 		handler: async (_args, ctx) => {
 			await applyMode("smart", ctx);
 		},
 	});
 
 	pi.registerCommand("deep", {
-		description: "Switch agent mode to Deep² (xhigh reasoning)",
-		handler: async (_args, ctx) => {
-			await applyMode("deep2", ctx);
-		},
-	});
-
-	pi.registerCommand("deep2", {
-		description: "Switch agent mode to Deep² (xhigh reasoning)",
-		handler: async (_args, ctx) => {
-			await applyMode("deep2", ctx);
-		},
-	});
-
-	pi.registerCommand("deep3", {
-		description: "Switch agent mode to Deep³ (max reasoning)",
+		description: "Switch agent mode to Deep³ (xhigh reasoning)",
 		handler: async (_args, ctx) => {
 			await applyMode("deep3", ctx);
 		},
 	});
 
+	pi.registerCommand("deep3", {
+		description: "Switch agent mode to Deep³ (xhigh reasoning)",
+		handler: async (_args, ctx) => {
+			await applyMode("deep3", ctx);
+		},
+	});
+
+	pi.registerCommand("max", {
+		description: "Switch agent mode to Max (max reasoning)",
+		handler: async (_args, ctx) => {
+			await applyMode("max", ctx);
+		},
+	});
+
 	pi.registerCommand("fast", {
-		description: "Switch agent mode to Fast",
+		description: "Switch agent mode to Fast (medium reasoning)",
 		handler: async (_args, ctx) => {
 			await applyMode("fast", ctx);
 		},
@@ -286,7 +242,7 @@ export default function (pi: ExtensionAPI) {
 
 		const flagMode = getModeFlag(pi);
 		const restoredMode = restoreModeFromSession(ctx);
-		const inferredMode = inferModeFromModel(ctx.model as ModelLike);
+		const inferredMode = inferModeFromModel(ctx.model as ModelLike, pi.getThinkingLevel());
 
 		if (hasExplicitStartupOverrides() && !flagMode) {
 			currentMode = inferredMode ?? currentMode;
@@ -294,7 +250,7 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		const mode = flagMode ?? restoredMode ?? inferredMode ?? currentMode;
+		const mode = flagMode ?? restoredMode ?? currentMode;
 		await applyMode(mode, ctx, { persist: false, notify: false });
 	});
 

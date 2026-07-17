@@ -84,11 +84,11 @@ Example: If the agent says "Done! I've created the webhook handler" without ment
 - **Default model:** `openai-codex/gpt-5.6-terra` with low thinking
 - **Fallback model:** `openai-codex/gpt-5.4` with low thinking (if primary unavailable or unsupported)
 - State (enabled/disabled, model) persists across session restarts
-- Agent mode context (smart/deep2/deep3/fast) is included in the suggestion prompt for relevance:
-  - `fast`: GPT-5.5 with thinking off for tiny actions + cheap verification check
-  - `smart`: narrow next action + focused check
-  - `deep`/`deep2`: clear outcome + relevant constraints + observable success check
-  - `deep3`: reproduce/diagnose first, patch only if localized, then focused + regression checks
+- Agent mode context (fast/smart/deep3/max) is included in the suggestion prompt for relevance:
+  - `fast`: bounded outcome + cheapest useful verification for rapid feedback
+  - `smart`: explore plausible causes or trade-offs, then choose a focused implementation and verification path
+  - `deep`/`deep3`: reproduce/diagnose first, patch only if localized, then focused + regression checks
+  - `max`: bounded quality-first work with explicit risks, required evidence, verification, and stopping criteria
 
 ## Architecture
 
