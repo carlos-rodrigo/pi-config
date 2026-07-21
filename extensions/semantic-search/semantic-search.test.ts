@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -70,6 +71,66 @@ test("a copied semantic index relocates to a new worktree and validates unchange
 	} finally {
 		rmSync(source, { recursive: true, force: true });
 		rmSync(target, { recursive: true, force: true });
+	}
+});
+
+test("a linked worktree reuses the primary index and skips automatic full rebuilds", async () => {
+	const container = mkdtempSync(join(tmpdir(), "pi-semantic-worktree-test-"));
+	const source = join(container, "primary");
+	const target = join(container, "linked");
+	mkdirSync(join(source, "src"), { recursive: true });
+	writeFileSync(join(source, "src", "index.ts"), "export const value = 1;\n", "utf8");
+	const git = (cwd: string, args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+	git(source, ["init"]);
+	git(source, ["config", "user.email", "semantic-search-test@example.com"]);
+	git(source, ["config", "user.name", "Semantic Search Test"]);
+	git(source, ["add", "src/index.ts"]);
+	git(source, ["commit", "-m", "initial"]);
+	buildSearchIndex(source, { writeToDisk: true });
+	writeFileSync(join(source, ".pi", "semantic-search", "summaries.json"), "{}\n", "utf8");
+	git(source, ["worktree", "add", "-b", "semantic-search-linked-test", target]);
+
+	const events = new Map<string, any>();
+	const notifications: string[] = [];
+	let starts = 0;
+	semanticSearchExtension({
+		on(name: string, handler: any) {
+			events.set(name, handler);
+		},
+		registerTool() {},
+		registerCommand() {},
+	} as any, {
+		startBackgroundIndexBuild() {
+			starts += 1;
+			return { logPath: "unused", statusPath: "unused" };
+		},
+	});
+
+	try {
+		assert.equal(existsSync(join(target, ".pi", "semantic-search", "index.json")), false);
+		await events.get("session_start")?.({}, {
+			cwd: target,
+			ui: { notify(message: string) { notifications.push(message); }, setStatus() {} },
+		});
+
+		assert.equal(existsSync(join(target, ".pi", "semantic-search", "index.json")), true);
+		assert.equal(existsSync(join(target, ".pi", "semantic-search", "summaries.json")), true);
+		assert.equal(getIndexStatus(target).stale, false);
+		assert.match(notifications[0] ?? "", /Reused semantic index from primary worktree \(index.json, summaries.json\)/);
+
+		writeFileSync(join(target, "src", "index.ts"), "export const value = 2;\n", "utf8");
+		await events.get("tool_result")?.({ toolName: "write", input: { path: "src/index.ts" }, isError: false }, { cwd: target });
+		await events.get("agent_end")?.({}, { cwd: target, ui: { notify() {}, setStatus() {} } });
+
+		assert.equal(getIndexStatus(target).stale, true);
+		assert.equal(starts, 0, "linked worktrees should not auto-rebuild the entire index");
+		assert.equal(notifications.length, 1);
+	} finally {
+		events.get("session_shutdown")?.();
+		try {
+			git(source, ["worktree", "remove", "--force", target]);
+		} catch {}
+		rmSync(container, { recursive: true, force: true });
 	}
 });
 

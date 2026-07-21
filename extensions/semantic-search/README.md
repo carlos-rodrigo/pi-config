@@ -28,7 +28,7 @@ Local hybrid code search for Pi, backed by required local Ollama semantic-card s
 /ollama-tunnel stop      # kill matching SSH tunnel processes and point Pi at local Ollama
 ```
 
-The index is stored under `.pi/semantic-search/index.json` in each project and is ignored by this repo's git settings. `worktree-manager` copy-on-write clones this index into new worktrees; relative paths and content-hash freshness checks make the clone reusable even though its absolute project path and checkout mtimes differ.
+The index is stored under `.pi/semantic-search/index.json` in each project and is ignored by this repo's git settings. `worktree-manager` copy-on-write clones this index into new worktrees. For worktrees created by other means, semantic-search copies a missing index and summary cache from the primary worktree at session start. Relative paths and content-hash freshness checks make the copy reusable even though its absolute project path and checkout mtimes differ.
 
 ## Requirements
 
@@ -130,6 +130,7 @@ Configuration:
 - `PI_OLLAMA_SSH_HOST` — override the configured SSH target for `/ollama-tunnel`
 - `PI_OLLAMA_TUNNEL_LOCAL_PORT` / `PI_OLLAMA_TUNNEL_REMOTE_PORT` — override configured tunnel ports
 - `PI_SEMANTIC_SEARCH_AUTO_REBUILD=false` — disable the automatic background rebuild after successful `write`/`edit` tool changes leave the index stale
+- `PI_SEMANTIC_SEARCH_AUTO_REBUILD_WORKTREES=true` — opt linked worktrees into automatic full background rebuilds; disabled by default because they reuse the primary worktree's index
 - `PI_SEMANTIC_SEARCH_EMBED_MAX_CHARS` — max characters sent per Ollama embedding input before adaptive retries; defaults to `6000`
 - `PI_SEMANTIC_SEARCH_SUMMARY_MAX_CHARS` — max characters sent per Ollama summary prompt; defaults to `10000`
 
@@ -141,7 +142,7 @@ Configuration:
 - Builds semantic cards for each file and detected symbols (classes, modules, methods, functions, markdown headings). Cards include path role, symbols, calls/references, comments, inferred concepts, and an Ollama-generated concise summary for meaning-oriented queries.
 - Summary generation runs in parallel during embedding index builds and caches unchanged card summaries under `.pi/semantic-search/summaries.json`.
 - `/index rebuild` starts the slower summary+embedding rebuild in a detached Node process by default, so the main session does not block. While it runs, the composer/footer status shows a compact `idx: ...` indicator. Use `/index rebuild --foreground` only when you explicitly want to wait in-session.
-- After successful `write`/`edit` tool changes, `agent_end` checks freshness and starts the same background rebuild automatically when the index is stale. The composer/footer indicator shows running progress and briefly shows `idx: done` or `idx: failed`; only failures display a follow-up message with the final status/log path.
+- After successful `write`/`edit` tool changes in a primary checkout, `agent_end` checks freshness and starts the same background rebuild automatically when the index is stale. Linked worktrees skip this expensive automatic full rebuild by default; manual `/index rebuild` remains available, and `PI_SEMANTIC_SEARCH_AUTO_REBUILD_WORKTREES=true` restores the old behavior. The composer/footer indicator shows running progress and briefly shows `idx: done` or `idx: failed`; only failures display a follow-up message with the final status/log path.
 - `/index rebuild --status` reports whether the last background rebuild is running, succeeded, failed, or unknown, plus progress phase/count/ETA when available, recent log lines, and current index freshness.
 - Caps and adaptively shrinks embedding inputs before retrying Ollama context-length failures, so one oversized code chunk or semantic card should not abort the whole index build.
 - Combines Ollama embedding similarity over raw chunks and semantic cards, lexical terms, paths, symbols, lightweight vector scoring, and code-concept expansion.

@@ -2,6 +2,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	closeSync,
+	copyFileSync,
 	existsSync,
 	mkdirSync,
 	openSync,
@@ -614,6 +615,43 @@ function getIndexRebuildLogPath(cwd: string): string {
 
 function getIndexRebuildStatusPath(cwd: string): string {
 	return join(cwd, INDEX_DIR, INDEX_REBUILD_STATUS_FILE);
+}
+
+type LinkedWorktree = {
+	currentRoot: string;
+	primaryRoot: string;
+};
+
+export function getLinkedWorktree(cwd: string): LinkedWorktree | undefined {
+	try {
+		const currentRoot = resolve(execFileSync("git", ["-C", resolve(cwd), "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+		const output = execFileSync("git", ["-C", currentRoot, "worktree", "list", "--porcelain", "-z"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+		const primaryEntry = output.split("\0").find((entry) => entry.startsWith("worktree "));
+		if (!primaryEntry) return undefined;
+		const primaryRoot = resolve(primaryEntry.slice("worktree ".length));
+		return primaryRoot === currentRoot ? undefined : { currentRoot, primaryRoot };
+	} catch {
+		return undefined;
+	}
+}
+
+export function reusePrimaryWorktreeIndex(cwd: string): { primaryRoot: string; copied: string[] } | undefined {
+	const linked = getLinkedWorktree(cwd);
+	if (!linked) return undefined;
+	const targetIndexPath = getIndexPath(linked.currentRoot);
+	const sourceIndexPath = getIndexPath(linked.primaryRoot);
+	if (existsSync(targetIndexPath) || !existsSync(sourceIndexPath)) return { primaryRoot: linked.primaryRoot, copied: [] };
+
+	mkdirSync(dirname(targetIndexPath), { recursive: true });
+	copyFileSync(sourceIndexPath, targetIndexPath);
+	const copied = [INDEX_FILE];
+	const sourceSummaryPath = getSummaryCachePath(linked.primaryRoot);
+	const targetSummaryPath = getSummaryCachePath(linked.currentRoot);
+	if (existsSync(sourceSummaryPath) && !existsSync(targetSummaryPath)) {
+		copyFileSync(sourceSummaryPath, targetSummaryPath);
+		copied.push(SUMMARY_CACHE_FILE);
+	}
+	return { primaryRoot: linked.primaryRoot, copied };
 }
 
 function languageForPath(path: string): string {
@@ -3065,6 +3103,7 @@ async function formatOllamaTunnelStatus(config: Pick<OllamaTunnelConfig, "localH
 
 export type SemanticSearchExtensionOptions = {
 	autoRebuild?: boolean;
+	autoRebuildWorktrees?: boolean;
 	startBackgroundIndexBuild?: BackgroundIndexBuildStarter;
 	startOllamaTunnel?: OllamaTunnelStarter;
 	stopOllamaTunnel?: OllamaTunnelStopper;
@@ -3076,7 +3115,9 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 	const configuredSummaryModel = configuredDefaultSummaryModel(config);
 	const configuredSshTarget = configuredDefaultSshTarget(config);
 	const changedPathsByCwd = new Map<string, Set<string>>();
+	const linkedWorktreesByCwd = new Map<string, LinkedWorktree | undefined>();
 	const autoRebuildEnabled = options.autoRebuild ?? envFlagEnabled(process.env.PI_SEMANTIC_SEARCH_AUTO_REBUILD, true);
+	const autoRebuildWorktrees = options.autoRebuildWorktrees ?? envFlagEnabled(process.env.PI_SEMANTIC_SEARCH_AUTO_REBUILD_WORKTREES, false);
 	const startIndexBuild = options.startBackgroundIndexBuild ?? startBackgroundIndexBuild;
 	const startTunnel = options.startOllamaTunnel ?? startOllamaTunnel;
 	const stopTunnel = options.stopOllamaTunnel ?? stopOllamaTunnel;
@@ -3094,6 +3135,12 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 	function tryStartAutoRebuild(cwd: string, ui?: RebuildStatusUI & { notify?: (message: string, level?: string) => void }): void {
 		if (!autoRebuildEnabled) return;
 		const absoluteCwd = resolve(cwd);
+		const linkedWorktree = linkedWorktreesByCwd.has(absoluteCwd) ? linkedWorktreesByCwd.get(absoluteCwd) : getLinkedWorktree(absoluteCwd);
+		linkedWorktreesByCwd.set(absoluteCwd, linkedWorktree);
+		if (linkedWorktree && !autoRebuildWorktrees) {
+			changedPathsByCwd.delete(absoluteCwd);
+			return;
+		}
 		const changedPaths = changedPathsByCwd.get(absoluteCwd);
 		if (!changedPaths || changedPaths.size === 0) return;
 		const runningStatus = currentBackgroundRebuildStatus(absoluteCwd);
@@ -3121,7 +3168,13 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 	}
 
 	pi.on?.("session_start", (_event, ctx) => {
-		watchBackgroundIndexBuild(pi, ctx.cwd, ctx.ui);
+		const absoluteCwd = resolve(ctx.cwd);
+		const reused = reusePrimaryWorktreeIndex(absoluteCwd);
+		linkedWorktreesByCwd.set(absoluteCwd, reused ? { currentRoot: absoluteCwd, primaryRoot: reused.primaryRoot } : getLinkedWorktree(absoluteCwd));
+		if (reused?.copied.length) {
+			ctx.ui.notify?.(`Reused semantic index from primary worktree (${reused.copied.join(", ")}).`, "info");
+		}
+		watchBackgroundIndexBuild(pi, absoluteCwd, ctx.ui);
 	});
 	pi.on?.("session_shutdown", () => {
 		for (const interval of watchedBackgroundRebuilds.values()) clearInterval(interval);
@@ -3129,6 +3182,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 		for (const timer of terminalIndicatorTimers.values()) clearTimeout(timer);
 		terminalIndicatorTimers.clear();
 		changedPathsByCwd.clear();
+		linkedWorktreesByCwd.clear();
 	});
 
 	pi.on?.("tool_result", async (event, ctx) => {
