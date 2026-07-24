@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
 import { Text } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -43,7 +44,11 @@ export interface AgentJobStatus {
 	createdAt: string;
 	updatedAt: string;
 	state: AgentJobState;
-	tmuxWindow: string;
+	launcher?: "process" | "tmux";
+	processId?: number;
+	tmuxWindow?: string;
+	originSessionId?: string;
+	originSessionFile?: string;
 	jobDir: string;
 	runScriptPath: string;
 	eventLogPath: string;
@@ -74,7 +79,11 @@ export interface LoopJobStatus {
 	createdAt: string;
 	updatedAt: string;
 	state: AgentJobState;
-	tmuxWindow: string;
+	launcher?: "process" | "tmux";
+	processId?: number;
+	tmuxWindow?: string;
+	originSessionId?: string;
+	originSessionFile?: string;
 	jobDir: string;
 	runScriptPath: string;
 	stdoutPath: string;
@@ -123,6 +132,7 @@ const watchedJobs = new Map<string, JobWatch>();
 const watchedLoopJobs = new Map<string, JobWatch>();
 type CompletionFollowUpKind = "agent" | "loop";
 type PendingFollowUpAck = { cwd: string };
+type SessionIdentity = { id?: string; file?: string };
 const pendingFollowUpAcks = new Map<string, PendingFollowUpAck>();
 const COMPLETION_FOLLOW_UP_MARKER = "pi-agent-jobs-follow-up";
 
@@ -142,6 +152,19 @@ function parseCompletionFollowUpMarker(text: string): { kind: CompletionFollowUp
 
 function needsCompletionFollowUp(status: AgentJobStatus | LoopJobStatus): boolean {
 	return status.state !== "running" && status.followUp && !status.followUpSent;
+}
+
+function sessionIdentityFromContext(ctx: { sessionManager?: { getSessionId?(): string; getSessionFile?(): string | undefined } }): SessionIdentity {
+	return {
+		id: ctx.sessionManager?.getSessionId?.(),
+		file: ctx.sessionManager?.getSessionFile?.(),
+	};
+}
+
+function isOriginSession(status: AgentJobStatus | LoopJobStatus, session: SessionIdentity): boolean {
+	if (status.originSessionId) return status.originSessionId === session.id;
+	if (status.originSessionFile) return status.originSessionFile === session.file;
+	return true;
 }
 
 function pollWaitingFollowUps(): void {
@@ -335,7 +358,6 @@ export function buildRunScript(params: {
 	return `#!/usr/bin/env bash
 set -u
 cd ${shellQuote(params.cwd)}
-echo "$$" > ${shellQuote(params.pidPath)}
 echo "pi background agent job: ${params.jobId}"
 echo "agent: ${params.agent.name}"
 echo "events: ${params.eventLogPath}"
@@ -343,8 +365,23 @@ echo "stderr: ${params.stderrPath}"
 echo "result: ${params.resultPath}"
 echo ""
 echo "Running agent in JSON mode..."
-${piCommand} > ${shellQuote(params.eventLogPath)} 2> ${shellQuote(params.stderrPath)}
+child_pid=""
+forward_signal() {
+  if [ -n "$child_pid" ]; then kill -"$1" "$child_pid" 2>/dev/null || true; fi
+}
+trap 'forward_signal INT' INT
+trap 'forward_signal TERM' TERM
+${piCommand} > ${shellQuote(params.eventLogPath)} 2> ${shellQuote(params.stderrPath)} &
+child_pid=$!
+echo "$$" > ${shellQuote(params.pidPath)}
+wait "$child_pid"
 code=$?
+if kill -0 "$child_pid" 2>/dev/null; then
+  wait "$child_pid"
+  child_code=$?
+  if [ "$child_code" -ne 0 ]; then code=$child_code; fi
+fi
+trap - INT TERM
 finished_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 exit_tmp=${shellQuote(`${params.exitPath}.tmp`)}
 printf '{"exitCode":%s,"finishedAt":"%s"}\n' "$code" "$finished_at" > "$exit_tmp"
@@ -356,9 +393,55 @@ exit "$code"
 `;
 }
 
-export function buildTmuxNewWindowArgs(windowName: string, cwd: string, runScriptPath: string): string[] {
-	const command = `bash ${shellQuote(runScriptPath)}`;
-	return ["new-window", "-d", "-n", windowName, "-c", cwd, command];
+export async function launchDetachedRunScript(cwd: string, runScriptPath: string, readyPath?: string): Promise<number> {
+	const processId = await new Promise<number>((resolve, reject) => {
+		const child = spawn("bash", [runScriptPath], {
+			cwd,
+			detached: true,
+			stdio: "ignore",
+		});
+		const onError = (error: Error) => reject(error);
+		child.once("error", onError);
+		child.once("spawn", () => {
+			child.off("error", onError);
+			if (!child.pid) {
+				reject(new Error("Detached background process started without a process id."));
+				return;
+			}
+			child.unref();
+			resolve(child.pid);
+		});
+	});
+	if (!readyPath) return processId;
+
+	const deadline = Date.now() + 2000;
+	while (!fileExists(readyPath)) {
+		if (Date.now() >= deadline) {
+			signalDetachedProcess(processId, "SIGKILL");
+			throw new Error(`Detached background process did not become ready: ${readyPath}`);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+	return processId;
+}
+
+function signalDetachedProcess(processId: number, signal: NodeJS.Signals): boolean {
+	if (!Number.isInteger(processId) || processId <= 0) throw new Error(`Invalid background process id: ${processId}`);
+	try {
+		process.kill(-processId, signal);
+		return true;
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ESRCH") return false;
+		if (code !== "EINVAL" && code !== "EPERM") throw error;
+	}
+	try {
+		process.kill(processId, signal);
+		return true;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+		throw error;
+	}
 }
 
 function isSensitivePath(filePath: string): boolean {
@@ -512,7 +595,7 @@ async function writeStatus(status: AgentJobStatus): Promise<void> {
 	await writeJson(path.join(status.jobDir, "status.json"), status);
 }
 
-async function finalizeIfDone(pi: ExtensionAPI, cwd: string, jobId: string, sendFollowUp: boolean): Promise<AgentJobStatus> {
+async function finalizeIfDone(pi: ExtensionAPI, cwd: string, jobId: string, sendFollowUp: boolean, session: SessionIdentity = {}): Promise<AgentJobStatus> {
 	let status = await readStatus(cwd, jobId);
 	if (status.state === "running" && fileExists(status.exitPath)) {
 		const exit = await readJson<{ exitCode: number; finishedAt: string }>(status.exitPath);
@@ -548,7 +631,7 @@ async function finalizeIfDone(pi: ExtensionAPI, cwd: string, jobId: string, send
 		await writeStatus(status);
 	}
 
-	if (sendFollowUp && needsCompletionFollowUp(status)) {
+	if (sendFollowUp && needsCompletionFollowUp(status) && isOriginSession(status, session)) {
 		await sendCompletionFollowUp(pi, status, await readTextIfExists(status.resultPath));
 	}
 	return status;
@@ -598,7 +681,7 @@ function stopWatchingJob(pi: ExtensionAPI, cwd: string, jobId: string): void {
 	emitRunningJobCount(pi, cwd);
 }
 
-function watchJob(pi: ExtensionAPI, cwd: string, jobId: string): void {
+function watchJob(pi: ExtensionAPI, cwd: string, jobId: string, session: SessionIdentity = {}): void {
 	const key = `${cwd}:${jobId}`;
 	if (watchedJobs.has(key)) return;
 	let polling = false;
@@ -606,9 +689,9 @@ function watchJob(pi: ExtensionAPI, cwd: string, jobId: string): void {
 	const poll = () => {
 		if (polling) return;
 		polling = true;
-		void finalizeIfDone(pi, cwd, jobId, true)
+		void finalizeIfDone(pi, cwd, jobId, true, session)
 			.then((status) => {
-				if (status.state !== "running" && !needsCompletionFollowUp(status)) stopWatchingJob(pi, cwd, jobId);
+				if (status.state !== "running" && (!needsCompletionFollowUp(status) || !isOriginSession(status, session))) stopWatchingJob(pi, cwd, jobId);
 			})
 			.catch(() => {
 				// Keep watching: status/result files can be transiently unavailable during atomic updates or reloads.
@@ -623,7 +706,7 @@ function watchJob(pi: ExtensionAPI, cwd: string, jobId: string): void {
 	poll();
 }
 
-async function resumeRunningJobs(pi: ExtensionAPI, cwd: string): Promise<void> {
+async function resumeRunningJobs(pi: ExtensionAPI, cwd: string, session: SessionIdentity): Promise<void> {
 	const root = jobsRoot(cwd);
 	if (!fileExists(root)) {
 		emitRunningJobCount(pi, cwd);
@@ -634,7 +717,7 @@ async function resumeRunningJobs(pi: ExtensionAPI, cwd: string): Promise<void> {
 		if (!entry.isDirectory()) continue;
 		try {
 			const status = await readStatus(cwd, entry.name);
-			if (status.state === "running" || needsCompletionFollowUp(status)) watchJob(pi, cwd, entry.name);
+			if (status.state === "running" || (needsCompletionFollowUp(status) && isOriginSession(status, session))) watchJob(pi, cwd, entry.name, session);
 		} catch {
 			// Ignore malformed old job dirs.
 		}
@@ -662,6 +745,10 @@ type LaunchContext = {
 	cwd: string;
 	signal?: AbortSignal;
 	hasUI?: boolean;
+	sessionManager?: {
+		getSessionId?(): string;
+		getSessionFile?(): string | undefined;
+	};
 	ui?: {
 		confirm(title: string, message: string): Promise<boolean>;
 	};
@@ -680,8 +767,6 @@ async function launchAgentJob(
 		followUp?: boolean;
 	},
 ): Promise<AgentJobStatus> {
-	if (!process.env.TMUX) throw new Error("Not inside tmux — cannot start a background agent window.");
-
 	const cwd = params.cwd ? (path.isAbsolute(params.cwd) ? params.cwd : path.resolve(ctx.cwd, params.cwd)) : ctx.cwd;
 	const stat = await fs.promises.stat(cwd).catch(() => undefined);
 	if (!stat?.isDirectory()) throw new Error(`Working directory not found: ${cwd}`);
@@ -742,7 +827,7 @@ async function launchAgentJob(
 	});
 	await fs.promises.writeFile(runScriptPath, runScript, { encoding: "utf8", mode: 0o700 });
 
-	const tmuxWindow = `pi-${sanitizeJobPart(agent.name).slice(0, 12)}-${jobId.slice(-6)}`;
+	const originSession = sessionIdentityFromContext(ctx);
 	const createdAt = nowIso();
 	const status: AgentJobStatus = {
 		jobId,
@@ -754,7 +839,9 @@ async function launchAgentJob(
 		createdAt,
 		updatedAt: createdAt,
 		state: "running",
-		tmuxWindow,
+		launcher: "process",
+		originSessionId: originSession.id,
+		originSessionFile: originSession.file,
 		jobDir,
 		runScriptPath,
 		eventLogPath,
@@ -773,26 +860,28 @@ async function launchAgentJob(
 	await writeStatus(status);
 
 	try {
-		await execChecked(pi, "tmux", buildTmuxNewWindowArgs(tmuxWindow, cwd, runScriptPath), { signal: ctx.signal, timeout: 10_000 });
+		status.processId = await launchDetachedRunScript(cwd, runScriptPath, pidPath);
+		status.updatedAt = nowIso();
+		await writeStatus(status);
 	} catch (error) {
 		const failed = {
 			...status,
 			state: "failed" as const,
 			updatedAt: nowIso(),
 			completedAt: nowIso(),
-			summary: "Failed to launch tmux window.",
+			summary: "Failed to launch detached background process.",
 			errorMessage: error instanceof Error ? error.message : String(error),
 		};
 		await writeStatus(failed);
 		throw error;
 	}
-	watchJob(pi, cwd, jobId);
+	watchJob(pi, cwd, jobId, originSession);
 	return status;
 }
 
 function formatStarted(status: AgentJobStatus): string {
 	return [
-		`Started background ${status.agent} job ${status.jobId} in tmux window ${status.tmuxWindow}.`,
+		`Started background ${status.agent} job ${status.jobId} as detached process ${status.processId}.`,
 		`Mode: ${status.mode}`,
 		`Status: ${path.join(status.jobDir, "status.json")}`,
 		`Result: ${status.resultPath}`,
@@ -814,7 +903,7 @@ function formatStatus(status: AgentJobStatus, resultPreview?: string): string {
 		status.completedAt ? `Completed: ${status.completedAt}` : undefined,
 		status.summary ? `Summary: ${status.summary}` : undefined,
 		status.errorMessage ? `Error: ${status.errorMessage}` : undefined,
-		`Tmux window: ${status.tmuxWindow}`,
+		status.processId ? `Process: ${status.processId}` : status.tmuxWindow ? `Legacy tmux window: ${status.tmuxWindow}` : undefined,
 		`Result: ${status.resultPath}`,
 		`Events: ${status.eventLogPath}`,
 		resultPreview ? `\n## Result Preview\n\n${resultPreview}` : undefined,
@@ -899,15 +988,29 @@ export function buildLoopRunScript(params: {
 	return `#!/usr/bin/env bash
 set -u
 cd ${shellQuote(params.cwd)}
-echo "$$" > ${shellQuote(params.pidPath)}
 echo "pi background loop job: ${params.jobId}"
 echo "stdout: ${params.stdoutPath}"
 echo "stderr: ${params.stderrPath}"
 echo "result: ${params.resultPath}"
 echo ""
 echo "Running loop..."
-${command} > ${shellQuote(params.stdoutPath)} 2> ${shellQuote(params.stderrPath)}
+child_pid=""
+forward_signal() {
+  if [ -n "$child_pid" ]; then kill -"$1" "$child_pid" 2>/dev/null || true; fi
+}
+trap 'forward_signal INT' INT
+trap 'forward_signal TERM' TERM
+${command} > ${shellQuote(params.stdoutPath)} 2> ${shellQuote(params.stderrPath)} &
+child_pid=$!
+echo "$$" > ${shellQuote(params.pidPath)}
+wait "$child_pid"
 code=$?
+if kill -0 "$child_pid" 2>/dev/null; then
+  wait "$child_pid"
+  child_code=$?
+  if [ "$child_code" -ne 0 ]; then code=$child_code; fi
+fi
+trap - INT TERM
 finished_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 exit_tmp=${shellQuote(`${params.exitPath}.tmp`)}
 printf '{"exitCode":%s,"finishedAt":"%s"}\n' "$code" "$finished_at" > "$exit_tmp"
@@ -1137,7 +1240,7 @@ function formatLoopResult(status: LoopJobStatus, exitCode: number, summary: stri
 	return sections.filter((section): section is string => section !== undefined).join("\n").trim();
 }
 
-async function finalizeLoopIfDone(pi: ExtensionAPI, cwd: string, jobId: string, sendFollowUp: boolean): Promise<LoopJobStatus> {
+async function finalizeLoopIfDone(pi: ExtensionAPI, cwd: string, jobId: string, sendFollowUp: boolean, session: SessionIdentity = {}): Promise<LoopJobStatus> {
 	let status = await readLoopStatus(cwd, jobId);
 	if (status.state === "running" && fileExists(status.exitPath)) {
 		const exit = await readJson<{ exitCode: number; finishedAt: string }>(status.exitPath);
@@ -1163,7 +1266,7 @@ async function finalizeLoopIfDone(pi: ExtensionAPI, cwd: string, jobId: string, 
 		await writeLoopStatus(status);
 	}
 
-	if (sendFollowUp && needsCompletionFollowUp(status)) {
+	if (sendFollowUp && needsCompletionFollowUp(status) && isOriginSession(status, session)) {
 		await sendLoopCompletionFollowUp(pi, status, await readTextIfExists(status.resultPath));
 	}
 	return status;
@@ -1214,7 +1317,7 @@ function stopWatchingLoopJob(pi: ExtensionAPI, cwd: string, jobId: string): void
 	emitRunningLoopJobCount(pi, cwd);
 }
 
-function watchLoopJob(pi: ExtensionAPI, cwd: string, jobId: string): void {
+function watchLoopJob(pi: ExtensionAPI, cwd: string, jobId: string, session: SessionIdentity = {}): void {
 	const key = `${cwd}:${jobId}`;
 	if (watchedLoopJobs.has(key)) return;
 	let polling = false;
@@ -1222,9 +1325,9 @@ function watchLoopJob(pi: ExtensionAPI, cwd: string, jobId: string): void {
 	const poll = () => {
 		if (polling) return;
 		polling = true;
-		void finalizeLoopIfDone(pi, cwd, jobId, true)
+		void finalizeLoopIfDone(pi, cwd, jobId, true, session)
 			.then((status) => {
-				if (status.state !== "running" && !needsCompletionFollowUp(status)) stopWatchingLoopJob(pi, cwd, jobId);
+				if (status.state !== "running" && (!needsCompletionFollowUp(status) || !isOriginSession(status, session))) stopWatchingLoopJob(pi, cwd, jobId);
 			})
 			.catch(() => {
 				// Keep watching: status/result files can be transiently unavailable during atomic updates or reloads.
@@ -1239,7 +1342,7 @@ function watchLoopJob(pi: ExtensionAPI, cwd: string, jobId: string): void {
 	poll();
 }
 
-async function resumeRunningLoopJobs(pi: ExtensionAPI, cwd: string): Promise<void> {
+async function resumeRunningLoopJobs(pi: ExtensionAPI, cwd: string, session: SessionIdentity): Promise<void> {
 	const root = loopJobsRoot(cwd);
 	if (!fileExists(root)) {
 		emitRunningLoopJobCount(pi, cwd);
@@ -1250,7 +1353,7 @@ async function resumeRunningLoopJobs(pi: ExtensionAPI, cwd: string): Promise<voi
 		if (!entry.isDirectory()) continue;
 		try {
 			const status = await readLoopStatus(cwd, entry.name);
-			if (status.state === "running" || needsCompletionFollowUp(status)) watchLoopJob(pi, cwd, entry.name);
+			if (status.state === "running" || (needsCompletionFollowUp(status) && isOriginSession(status, session))) watchLoopJob(pi, cwd, entry.name, session);
 		} catch {
 			// Ignore malformed old job dirs.
 		}
@@ -1344,8 +1447,6 @@ export async function resolveLoopFeature(cwd: string, feature?: string, task?: s
 }
 
 async function launchLoopJob(pi: ExtensionAPI, ctx: LaunchContext, params: LoopLaunchParams): Promise<LoopJobStatus> {
-	if (!process.env.TMUX) throw new Error("Not inside tmux — cannot start a background loop window.");
-
 	const cwd = params.cwd ? (path.isAbsolute(params.cwd) ? params.cwd : path.resolve(ctx.cwd, params.cwd)) : ctx.cwd;
 	const stat = await fs.promises.stat(cwd).catch(() => undefined);
 	if (!stat?.isDirectory()) throw new Error(`Working directory not found: ${cwd}`);
@@ -1388,7 +1489,7 @@ async function launchLoopJob(pi: ExtensionAPI, ctx: LaunchContext, params: LoopL
 	const runScript = buildLoopRunScript({ cwd, jobId, command, stdoutPath, stderrPath, exitPath, pidPath, resultPath });
 	await fs.promises.writeFile(runScriptPath, runScript, { encoding: "utf8", mode: 0o700 });
 
-	const tmuxWindow = `pi-loop-${jobId.slice(-6)}`;
+	const originSession = sessionIdentityFromContext(ctx);
 	const createdAt = nowIso();
 	const status: LoopJobStatus = {
 		jobId,
@@ -1398,7 +1499,9 @@ async function launchLoopJob(pi: ExtensionAPI, ctx: LaunchContext, params: LoopL
 		createdAt,
 		updatedAt: createdAt,
 		state: "running",
-		tmuxWindow,
+		launcher: "process",
+		originSessionId: originSession.id,
+		originSessionFile: originSession.file,
 		jobDir,
 		runScriptPath,
 		stdoutPath,
@@ -1424,26 +1527,28 @@ async function launchLoopJob(pi: ExtensionAPI, ctx: LaunchContext, params: LoopL
 	await writeLoopStatus(status);
 
 	try {
-		await execChecked(pi, "tmux", buildTmuxNewWindowArgs(tmuxWindow, cwd, runScriptPath), { signal: ctx.signal, timeout: 10_000 });
+		status.processId = await launchDetachedRunScript(cwd, runScriptPath, pidPath);
+		status.updatedAt = nowIso();
+		await writeLoopStatus(status);
 	} catch (error) {
 		const failed = {
 			...status,
 			state: "failed" as const,
 			updatedAt: nowIso(),
 			completedAt: nowIso(),
-			summary: "Failed to launch tmux window.",
+			summary: "Failed to launch detached background process.",
 			errorMessage: error instanceof Error ? error.message : String(error),
 		};
 		await writeLoopStatus(failed);
 		throw error;
 	}
-	watchLoopJob(pi, cwd, jobId);
+	watchLoopJob(pi, cwd, jobId, originSession);
 	return status;
 }
 
 function formatLoopStarted(status: LoopJobStatus): string {
 	return [
-		`Started background loop job ${status.jobId} in tmux window ${status.tmuxWindow}.`,
+		`Started background loop job ${status.jobId} as detached process ${status.processId}.`,
 		`Feature: ${status.feature}`,
 		status.task ? `Task: ${status.task}` : "Task: next ready task",
 		`Status: ${path.join(status.jobDir, "status.json")}`,
@@ -1466,7 +1571,7 @@ function formatLoopStatus(status: LoopJobStatus, resultPreview?: string): string
 		status.completedAt ? `Completed: ${status.completedAt}` : undefined,
 		status.summary ? `Summary: ${status.summary}` : undefined,
 		status.errorMessage ? `Error: ${status.errorMessage}` : undefined,
-		`Tmux window: ${status.tmuxWindow}`,
+		status.processId ? `Process: ${status.processId}` : status.tmuxWindow ? `Legacy tmux window: ${status.tmuxWindow}` : undefined,
 		`Result: ${status.resultPath}`,
 		`Loop log: ${status.loopLogPath}`,
 		`Latest iteration: ${status.loopSummaryPath}`,
@@ -1477,8 +1582,9 @@ function formatLoopStatus(status: LoopJobStatus, resultPreview?: string): string
 
 export default function agentJobsExtension(pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
-		void resumeRunningJobs(pi, ctx.cwd);
-		void resumeRunningLoopJobs(pi, ctx.cwd);
+		const session = sessionIdentityFromContext(ctx);
+		void resumeRunningJobs(pi, ctx.cwd, session);
+		void resumeRunningLoopJobs(pi, ctx.cwd, session);
 	});
 
 	pi.on("message_start", async (event) => {
@@ -1497,7 +1603,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("research-bg", {
-		description: "Run the researcher agent in a background tmux window",
+		description: "Run the researcher agent as a detached background process",
 		handler: async (args, ctx) => {
 			const task = args.trim();
 			if (!task) {
@@ -1514,7 +1620,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("ask-oracle-bg", {
-		description: "Run the oracle agent in a background tmux window",
+		description: "Run the oracle agent as a detached background process",
 		handler: async (args, ctx) => {
 			const task = args.trim();
 			if (!task) {
@@ -1531,7 +1637,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("deep-review-bg", {
-		description: "Run an oracle review with a git diff snapshot in a background tmux window",
+		description: "Run an oracle review with a git diff snapshot as a detached background process",
 		handler: async (args, ctx) => {
 			const task = args.trim() || "current work";
 			try {
@@ -1563,7 +1669,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("loop-bg", {
-		description: "Run loop.sh for a feature in a background tmux window",
+		description: "Run loop.sh for a feature as a detached background process",
 		handler: async (args, ctx) => {
 			try {
 				const parsed = parseLoopBgCommandArgs(args.trim());
@@ -1607,7 +1713,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 		name: "agent_job_start",
 		label: "Agent Job Start",
 		description:
-			"Start a specialized agent in a detached tmux window and return immediately. " +
+			"Start a specialized agent as a detached OS process and return immediately. " +
 			"The job writes status, JSON events, stderr, and final result files under .pi/agent-jobs, then sends a follow-up message when finished.",
 		parameters: Type.Object({
 			agent: Type.String({ description: 'Agent name to run, e.g. "researcher" or "oracle".' }),
@@ -1619,7 +1725,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			followUp: Type.Optional(Type.Boolean({ description: "Send a follow-up user message when the job finishes. Default: true.", default: true })),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const status = await launchAgentJob(pi, { cwd: ctx.cwd, signal }, {
+			const status = await launchAgentJob(pi, { cwd: ctx.cwd, signal, sessionManager: ctx.sessionManager }, {
 				agent: params.agent,
 				task: params.task,
 				cwd: params.cwd,
@@ -1669,10 +1775,10 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 		name: "loop_job_start",
 		label: "Loop Job Start",
 		description:
-			"Start loop.sh for a project feature/task in a detached tmux window and return immediately. " +
+			"Start loop.sh for a project feature/task as a detached OS process and return immediately. " +
 			"Use when the user says things like 'run a loop for this task in background'. " +
 			"The job writes status and result files under .pi/loop-jobs, reuses .features/{feature}/artifacts/loop/, and sends a follow-up message when finished.",
-		promptSnippet: "Run loop.sh for a feature/task in a background tmux window and notify when it finishes",
+		promptSnippet: "Run loop.sh for a feature/task as a detached background process and notify when it finishes",
 		promptGuidelines: [
 			"Use loop_job_start when the user asks to run/start/continue a task loop in the background or says 'run a loop for this task in background'.",
 			"For loop_job_start, infer feature/task from the current task context when possible; if missing, inspect .features/*/tasks/_active.md or pass task only and let the tool infer the feature.",
@@ -1693,7 +1799,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			followUp: Type.Optional(Type.Boolean({ description: "Send a follow-up user message when the loop finishes. Default: true.", default: true })),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const status = await launchLoopJob(pi, { cwd: ctx.cwd, signal }, {
+			const status = await launchLoopJob(pi, { cwd: ctx.cwd, signal, sessionManager: ctx.sessionManager }, {
 				feature: params.feature,
 				task: params.task,
 				cwd: params.cwd,
@@ -1749,74 +1855,78 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "loop_job_cancel",
 		label: "Loop Job Cancel",
-		description: "Cancel a running background loop job by sending Ctrl+C to its tmux window.",
+		description: "Cancel a running background loop process.",
 		parameters: Type.Object({
 			jobId: Type.String({ description: "Job id returned by loop_job_start." }),
 			cwd: Type.Optional(Type.String({ description: "Project root where the loop job was started. Defaults to current cwd." })),
-			killWindow: Type.Optional(Type.Boolean({ description: "Also kill the tmux window after sending Ctrl+C. Default: false.", default: false })),
+			killWindow: Type.Optional(Type.Boolean({ description: "Force-kill the process after requesting cancellation. Retained for compatibility; default false.", default: false })),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const cwd = params.cwd ? (path.isAbsolute(params.cwd) ? params.cwd : path.resolve(ctx.cwd, params.cwd)) : ctx.cwd;
-			const status = await readLoopStatus(cwd, params.jobId);
+			const status = await finalizeLoopIfDone(pi, cwd, params.jobId, false);
 			if (status.state !== "running") {
 				return { content: [{ type: "text" as const, text: `Loop job ${status.jobId} is already ${status.state}.` }], details: status };
 			}
 			if (status.cancelRequestedAt) {
 				return { content: [{ type: "text" as const, text: `Cancellation is already pending for loop job ${status.jobId}.` }], details: status };
 			}
-			await execChecked(pi, "tmux", ["send-keys", "-t", status.tmuxWindow, "C-c"], { signal, timeout: 5000 });
+			let signalled = false;
+			if (status.processId) signalled = signalDetachedProcess(status.processId, "SIGTERM");
+			else if (status.tmuxWindow && process.env.TMUX) {
+				await execChecked(pi, "tmux", ["send-keys", "-t", status.tmuxWindow, "C-c"], { signal, timeout: 5000 });
+				signalled = true;
+			} else throw new Error(`Loop job ${status.jobId} has no cancellable process.`);
 			const requestedAt = nowIso();
 			const pending = { ...status, cancelRequestedAt: requestedAt, updatedAt: requestedAt, summary: "Cancellation requested; waiting for the process to exit." };
-			if (params.killWindow) {
-				try {
-					await execChecked(pi, "tmux", ["kill-window", "-t", status.tmuxWindow], { signal, timeout: 5000 });
-				} catch (error) {
-					await writeLoopStatus(pending);
-					throw new Error(`Hard cancellation failed for loop job ${status.jobId}; soft cancellation remains pending.`, { cause: error });
-				}
+			if (params.killWindow && signalled) {
+				if (status.processId) signalDetachedProcess(status.processId, "SIGKILL");
+				else if (status.tmuxWindow) await execChecked(pi, "tmux", ["kill-window", "-t", status.tmuxWindow], { signal, timeout: 5000 });
 			}
-			const updated = params.killWindow
+			const stopped = !signalled || params.killWindow;
+			const updated = stopped
 				? { ...pending, state: "cancelled" as const, completedAt: requestedAt, summary: "Cancelled by user." }
 				: pending;
 			await writeLoopStatus(updated);
-			if (params.killWindow) stopWatchingLoopJob(pi, status.cwd, status.jobId);
-			return { content: [{ type: "text" as const, text: params.killWindow ? `Cancelled loop job ${status.jobId}.` : `Cancellation requested for loop job ${status.jobId}.` }], details: updated };
+			if (stopped) stopWatchingLoopJob(pi, status.cwd, status.jobId);
+			return { content: [{ type: "text" as const, text: stopped ? `Cancelled loop job ${status.jobId}.` : `Cancellation requested for loop job ${status.jobId}.` }], details: updated };
 		},
 	});
 
 	pi.registerTool({
 		name: "agent_job_cancel",
 		label: "Agent Job Cancel",
-		description: "Cancel a running background agent job by sending Ctrl+C to its tmux window.",
+		description: "Cancel a running background agent process.",
 		parameters: Type.Object({
 			jobId: Type.String({ description: "Job id returned by agent_job_start." }),
-			killWindow: Type.Optional(Type.Boolean({ description: "Also kill the tmux window after sending Ctrl+C. Default: false.", default: false })),
+			killWindow: Type.Optional(Type.Boolean({ description: "Force-kill the process after requesting cancellation. Retained for compatibility; default false.", default: false })),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const status = await readStatus(ctx.cwd, params.jobId);
+			const status = await finalizeIfDone(pi, ctx.cwd, params.jobId, false);
 			if (status.state !== "running") {
 				return { content: [{ type: "text" as const, text: `Job ${status.jobId} is already ${status.state}.` }], details: status };
 			}
 			if (status.cancelRequestedAt) {
 				return { content: [{ type: "text" as const, text: `Cancellation is already pending for job ${status.jobId}.` }], details: status };
 			}
-			await execChecked(pi, "tmux", ["send-keys", "-t", status.tmuxWindow, "C-c"], { signal, timeout: 5000 });
+			let signalled = false;
+			if (status.processId) signalled = signalDetachedProcess(status.processId, "SIGTERM");
+			else if (status.tmuxWindow && process.env.TMUX) {
+				await execChecked(pi, "tmux", ["send-keys", "-t", status.tmuxWindow, "C-c"], { signal, timeout: 5000 });
+				signalled = true;
+			} else throw new Error(`Job ${status.jobId} has no cancellable process.`);
 			const requestedAt = nowIso();
 			const pending = { ...status, cancelRequestedAt: requestedAt, updatedAt: requestedAt, summary: "Cancellation requested; waiting for the process to exit." };
-			if (params.killWindow) {
-				try {
-					await execChecked(pi, "tmux", ["kill-window", "-t", status.tmuxWindow], { signal, timeout: 5000 });
-				} catch (error) {
-					await writeStatus(pending);
-					throw new Error(`Hard cancellation failed for job ${status.jobId}; soft cancellation remains pending.`, { cause: error });
-				}
+			if (params.killWindow && signalled) {
+				if (status.processId) signalDetachedProcess(status.processId, "SIGKILL");
+				else if (status.tmuxWindow) await execChecked(pi, "tmux", ["kill-window", "-t", status.tmuxWindow], { signal, timeout: 5000 });
 			}
-			const updated = params.killWindow
+			const stopped = !signalled || params.killWindow;
+			const updated = stopped
 				? { ...pending, state: "cancelled" as const, completedAt: requestedAt, summary: "Cancelled by user." }
 				: pending;
 			await writeStatus(updated);
-			if (params.killWindow) stopWatchingJob(pi, status.cwd, status.jobId);
-			return { content: [{ type: "text" as const, text: params.killWindow ? `Cancelled job ${status.jobId}.` : `Cancellation requested for job ${status.jobId}.` }], details: updated };
+			if (stopped) stopWatchingJob(pi, status.cwd, status.jobId);
+			return { content: [{ type: "text" as const, text: stopped ? `Cancelled job ${status.jobId}.` : `Cancellation requested for job ${status.jobId}.` }], details: updated };
 		},
 	});
 }

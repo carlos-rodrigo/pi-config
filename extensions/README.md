@@ -46,7 +46,7 @@ pi install ./extensions/worktree-manager
 
 | Extension | Description |
 |-----------|-------------|
-| [agent-jobs](agent-jobs/) | Non-blocking tmux-backed researcher/oracle jobs with persisted logs/results |
+| [agent-jobs](agent-jobs/) | Non-blocking detached researcher/oracle processes with persisted logs/results |
 | [agent-benchmark](agent-benchmark/) | Cheap local benchmark suite for evidence-based Pi config improvement |
 | [agent-memory](agent-memory/) | Default-on local project/global memory with bounded recall, review controls, and verification feedback |
 | [auto-prompt](auto-prompt/) | Inline ghost text prompt suggestions (fish-style) |
@@ -73,7 +73,7 @@ pi install ./extensions/worktree-manager
 ## Notes
 
 - **auto-prompt** + **bordered-editor** work together via `pi.events` — auto-prompt generates suggestions, bordered-editor renders the ghost text.
-- **agent-jobs** requires Pi to be running inside tmux; it uses detached windows and persists results under `.pi/agent-jobs/`.
+- **agent-jobs** is terminal-multiplexer agnostic; it launches detached OS processes and persists results under `.pi/agent-jobs/`.
 - Researcher, oracle, and deep-review prompt templates use **agent-jobs** for non-blocking background work.
 - **worktree-manager** copies local root dotfiles/directories, `.env*`, project skills/tasks, and a relocatable semantic index from the invoking worktree, then fills gaps from the primary worktree. Use `copyLocal: false` or `--no-copy-local` for an isolated checkout. Pi runtime histories and caches are excluded, and exact copied paths are added to `.git/info/exclude` so the checkout stays clean.
 - **web-tools** rejects private/local network targets, validates redirects, bounds response bodies, and honors tool cancellation.

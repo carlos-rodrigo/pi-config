@@ -10,9 +10,9 @@ import agentJobsExtension, {
 	buildLoopCommandArgs,
 	buildLoopRunScript,
 	buildRunScript,
-	buildTmuxNewWindowArgs,
 	collectReviewContext,
 	createJobId,
+	launchDetachedRunScript,
 	parseAgentEvents,
 	parseLoopBgCommandArgs,
 	parseLoopJobStatusCommandArgs,
@@ -31,9 +31,9 @@ const testAgent = {
 	filePath: "/tmp/oracle.md",
 };
 
-async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 1000): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
-	while (!predicate()) {
+	while (!(await predicate())) {
 		if (Date.now() >= deadline) throw new Error("Timed out waiting for condition");
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
@@ -59,7 +59,7 @@ async function emitLifecycle(handlers: Map<string, Array<(event: any, ctx: any) 
 	for (const handler of handlers.get(event) ?? []) await handler(payload, ctx);
 }
 
-test("sanitizeJobPart and createJobId produce tmux-safe names", () => {
+test("sanitizeJobPart and createJobId produce process-safe names", () => {
 	assert.equal(sanitizeJobPart("Researcher Agent!"), "researcher-agent");
 	assert.match(createJobId("Oracle Agent", new Date("2026-05-04T12:34:56Z"), "abcdef"), /^oracle-agent-20260504123456-abcdef$/);
 });
@@ -98,12 +98,27 @@ test("buildAgentTask makes Are You Proud validation mandatory for review jobs on
 	assert.doesNotMatch(buildAgentTask("an architecture question", "standard"), /Are You Proud/);
 });
 
-test("buildTmuxNewWindowArgs creates a detached window that exits when the job finishes", () => {
-	const args = buildTmuxNewWindowArgs("pi-oracle-abcdef", "/tmp/repo", "/tmp/repo/.pi/agent-jobs/job/run.sh");
+test("launchDetachedRunScript runs independently without tmux", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "agent-job-detached-launch-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const scriptPath = join(root, "run.sh");
+	const markerPath = join(root, "finished");
+	await writeFile(scriptPath, `#!/usr/bin/env bash\nprintf 'done' > ${JSON.stringify(markerPath)}\n`, "utf8");
 
-	assert.deepEqual(args.slice(0, 6), ["new-window", "-d", "-n", "pi-oracle-abcdef", "-c", "/tmp/repo"]);
-	assert.equal(args[6], "bash '/tmp/repo/.pi/agent-jobs/job/run.sh'");
-	assert.doesNotMatch(args[6]!, /read _|Press Enter to close/);
+	const previousTmux = process.env.TMUX;
+	delete process.env.TMUX;
+	t.after(() => {
+		if (previousTmux === undefined) delete process.env.TMUX;
+		else process.env.TMUX = previousTmux;
+	});
+
+	const pid = await launchDetachedRunScript(root, scriptPath);
+	assert.ok(Number.isInteger(pid) && pid > 0);
+	await waitFor(async () => (await readFile(markerPath, "utf8").catch(() => "")) === "done");
+});
+
+test("launchDetachedRunScript reports spawn failures", async () => {
+	await assert.rejects(launchDetachedRunScript("/path/that/does/not/exist", "/tmp/run.sh"), /spawn|ENOENT/i);
 });
 
 test("buildLoopCommandArgs and buildLoopRunScript launch loop.sh with durable logs", () => {
@@ -336,6 +351,56 @@ test("session start serially delivers pending agent and loop follow-ups and ackn
 	await emitLifecycle(handlers, "session_shutdown", {}, {});
 });
 
+test("a completion follow-up is delivered only to its originating Pi session", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "agent-job-origin-session-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const jobId = "researcher-origin";
+	const jobDir = join(root, ".pi", "agent-jobs", jobId);
+	const resultPath = join(jobDir, "result.md");
+	const createdAt = new Date().toISOString();
+	await mkdir(jobDir, { recursive: true });
+	await writeFile(resultPath, "Origin-only output.\n", "utf8");
+	await writeFile(join(jobDir, "status.json"), JSON.stringify({
+		jobId,
+		agent: "researcher",
+		mode: "standard",
+		cwd: root,
+		createdAt,
+		updatedAt: createdAt,
+		state: "completed",
+		jobDir,
+		resultPath,
+		eventLogPath: join(jobDir, "events.jsonl"),
+		originSessionId: "session-origin",
+		followUp: true,
+		followUpSent: false,
+	}), "utf8");
+
+	const unrelatedMessages: string[] = [];
+	const unrelatedHandlers = activateLifecycleHarness((content) => unrelatedMessages.push(content));
+	await emitLifecycle(unrelatedHandlers, "session_start", {}, {
+		cwd: root,
+		sessionManager: { getSessionId: () => "session-other", getSessionFile: () => "/tmp/other.jsonl" },
+	});
+	await new Promise((resolve) => setTimeout(resolve, 50));
+	assert.deepEqual(unrelatedMessages, []);
+	await emitLifecycle(unrelatedHandlers, "session_shutdown", {}, {});
+
+	const originMessages: string[] = [];
+	const originHandlers = activateLifecycleHarness((content) => originMessages.push(content));
+	await emitLifecycle(originHandlers, "session_start", {}, {
+		cwd: root,
+		sessionManager: { getSessionId: () => "session-origin", getSessionFile: () => "/tmp/origin.jsonl" },
+	});
+	await waitFor(() => originMessages.length === 1);
+	assert.match(originMessages[0]!, /Origin-only output\./);
+	await emitLifecycle(originHandlers, "message_start", {
+		message: { role: "user", content: [{ type: "text", text: originMessages[0] }] },
+	}, { cwd: root });
+	assert.equal(JSON.parse(await readFile(join(jobDir, "status.json"), "utf8")).followUpSent, true);
+	await emitLifecycle(originHandlers, "session_shutdown", {}, {});
+});
+
 test("a completion follow-up rejected during shutdown is retried by the next session", async (t) => {
 	const root = await mkdtemp(join(tmpdir(), "agent-job-follow-up-retry-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
@@ -383,60 +448,28 @@ test("a completion follow-up rejected during shutdown is retried by the next ses
 	await emitLifecycle(resumedHandlers, "session_shutdown", {}, {});
 });
 
-test("agent job launch rejects a nonzero tmux result", async (t) => {
-	const root = await mkdtemp(join(tmpdir(), "agent-job-launch-"));
-	t.after(() => rm(root, { recursive: true, force: true }));
-	await mkdir(join(root, ".pi", "agents"), { recursive: true });
-	await writeFile(
-		join(root, ".pi", "agents", "fixture.md"),
-		"---\nname: fixture\ndescription: fixture agent\n---\n\nReview the task.\n",
-		"utf8",
-	);
-	const tools = new Map<string, any>();
-	const previousTmux = process.env.TMUX;
-	process.env.TMUX = "/tmp/tmux-test";
-	t.after(() => {
-		if (previousTmux === undefined) delete process.env.TMUX;
-		else process.env.TMUX = previousTmux;
-	});
-
-	agentJobsExtension({
-		on() {},
-		registerCommand() {},
-		registerTool(definition: any) {
-			tools.set(definition.name, definition);
-		},
-		getAllTools() {
-			return [];
-		},
-		exec: async () => ({ stdout: "", stderr: "tmux launch failed", code: 1, killed: false }),
-	} as any);
-
-	await assert.rejects(
-		tools.get("agent_job_start").execute(
-			"call-1",
-			{ agent: "fixture", task: "check launch", cwd: root, agentScope: "project", confirmProjectAgents: false, followUp: false },
-			undefined,
-			undefined,
-			{ cwd: root, signal: undefined, hasUI: false, ui: {} },
-		),
-		/tmux launch failed/,
-	);
-});
-
 test("agent job cancellation stays pending until the process exits", async (t) => {
 	const root = await mkdtemp(join(tmpdir(), "agent-job-cancel-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
 	const jobId = "fixture-job";
 	const jobDir = join(root, ".pi", "agent-jobs", jobId);
+	const runScriptPath = join(jobDir, "run.sh");
 	await mkdir(jobDir, { recursive: true });
+	const readyPath = join(jobDir, "pid");
+	await writeFile(runScriptPath, `#!/usr/bin/env bash\ntrap 'exit 130' INT TERM\necho $$ > ${JSON.stringify(readyPath)}\nwhile :; do sleep 1; done\n`, "utf8");
+	const processId = await launchDetachedRunScript(root, runScriptPath, readyPath);
+	t.after(() => {
+		try { process.kill(-processId, "SIGKILL"); } catch {}
+	});
 	await writeFile(join(jobDir, "status.json"), JSON.stringify({
 		jobId,
 		cwd: root,
 		state: "running",
-		tmuxWindow: "pi-fixture",
+		processId,
 		jobDir,
 		updatedAt: new Date().toISOString(),
+		followUp: false,
+		followUpSent: false,
 	}), "utf8");
 	const tools = new Map<string, any>();
 	agentJobsExtension({
@@ -445,7 +478,6 @@ test("agent job cancellation stays pending until the process exits", async (t) =
 		registerTool(definition: any) {
 			tools.set(definition.name, definition);
 		},
-		exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
 	} as any);
 
 	const result = await tools.get("agent_job_cancel").execute("call-1", { jobId }, undefined, undefined, { cwd: root });
@@ -454,49 +486,63 @@ test("agent job cancellation stays pending until the process exits", async (t) =
 	assert.match(result.content[0].text, /Cancellation requested/);
 });
 
-for (const fixture of [
-	{ kind: "agent", directory: "agent-jobs", tool: "agent_job_cancel" },
-	{ kind: "loop", directory: "loop-jobs", tool: "loop_job_cancel" },
-] as const) {
-	test(`${fixture.kind} hard cancellation failure remains pending`, async (t) => {
-		const root = await mkdtemp(join(tmpdir(), `${fixture.kind}-job-hard-cancel-`));
-		t.after(() => rm(root, { recursive: true, force: true }));
-		const jobId = "fixture-job";
-		const jobDir = join(root, ".pi", fixture.directory, jobId);
-		await mkdir(jobDir, { recursive: true });
-		await writeFile(join(jobDir, "status.json"), JSON.stringify({
-			jobId,
-			cwd: root,
-			state: "running",
-			tmuxWindow: "pi-fixture",
-			jobDir,
-			updatedAt: new Date().toISOString(),
-		}), "utf8");
-		const tools = new Map<string, any>();
-		let execCalls = 0;
-		agentJobsExtension({
-			on() {},
-			registerCommand() {},
-			registerTool(definition: any) {
-				tools.set(definition.name, definition);
-			},
-			exec: async () => {
-				execCalls += 1;
-				return execCalls === 1
-					? { stdout: "", stderr: "", code: 0, killed: false }
-					: { stdout: "", stderr: "kill failed", code: 1, killed: false };
-			},
-		} as any);
-
-		await assert.rejects(
-			tools.get(fixture.tool).execute("call-1", { jobId, cwd: root, killWindow: true }, undefined, undefined, { cwd: root }),
-			/soft cancellation remains pending/,
-		);
-		const status = JSON.parse(await readFile(join(jobDir, "status.json"), "utf8"));
-		assert.equal(status.state, "running");
-		assert.ok(status.cancelRequestedAt);
+test("loop cancellation preserves an exit marker for later finalization", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "loop-job-cancel-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const jobId = "loop-fixture";
+	const jobDir = join(root, ".pi", "loop-jobs", jobId);
+	const runScriptPath = join(jobDir, "run.sh");
+	const exitPath = join(jobDir, "exit.json");
+	await mkdir(jobDir, { recursive: true });
+	const runScript = buildLoopRunScript({
+		cwd: root,
+		jobId,
+		command: ["bash", "-c", "trap 'exit 130' INT TERM; while :; do sleep 1; done"],
+		stdoutPath: join(jobDir, "stdout.log"),
+		stderrPath: join(jobDir, "stderr.log"),
+		exitPath,
+		pidPath: join(jobDir, "pid"),
+		resultPath: join(jobDir, "result.md"),
 	});
-}
+	await writeFile(runScriptPath, runScript, "utf8");
+	const processId = await launchDetachedRunScript(root, runScriptPath, join(jobDir, "pid"));
+	t.after(() => {
+		try { process.kill(-processId, "SIGKILL"); } catch {}
+	});
+	const createdAt = new Date().toISOString();
+	await writeFile(join(jobDir, "status.json"), JSON.stringify({
+		jobId,
+		feature: "fixture",
+		cwd: root,
+		createdAt,
+		updatedAt: createdAt,
+		state: "running",
+		processId,
+		jobDir,
+		runScriptPath,
+		stdoutPath: join(jobDir, "stdout.log"),
+		stderrPath: join(jobDir, "stderr.log"),
+		resultPath: join(jobDir, "result.md"),
+		exitPath,
+		pidPath: join(jobDir, "pid"),
+		loopLogPath: join(jobDir, "loop.log"),
+		loopSummaryPath: join(jobDir, "latest-iteration.md"),
+		followUp: false,
+		followUpSent: false,
+	}), "utf8");
+	const tools = new Map<string, any>();
+	agentJobsExtension({
+		on() {},
+		registerCommand() {},
+		registerTool(definition: any) { tools.set(definition.name, definition); },
+	} as any);
+
+	const cancellation = await tools.get("loop_job_cancel").execute("call-1", { jobId, cwd: root }, undefined, undefined, { cwd: root });
+	assert.equal(cancellation.details.state, "running");
+	await waitFor(async () => Boolean(await readFile(exitPath, "utf8").catch(() => "")), 2000);
+	const finalized = await tools.get("loop_job_status").execute("call-2", { jobId, cwd: root }, undefined, undefined, { cwd: root });
+	assert.equal(finalized.details.state, "cancelled");
+});
 
 test("agentJobsExtension registers background job tools and commands", () => {
 	const tools = new Set<string>();

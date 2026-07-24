@@ -2,7 +2,7 @@
 description: Concise Oracle review of current work
 ---
 
-Use the agent_job_start tool to start the "oracle" agent in a detached tmux background job.
+Use the agent_job_start tool to start the "oracle" agent in a detached background job.
 
 Set mode="review" and followUp=true. Do not use the synchronous subagent tool for this prompt.
 The agent-jobs launcher will snapshot git status/diffs into review-context.md before oracle starts; require oracle to read that file first.

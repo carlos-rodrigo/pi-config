@@ -1,7 +1,7 @@
 ---
 description: Run a researcher → oracle checkpoint for high-uncertainty decisions
 ---
-Use background tmux agent jobs for this workflow. Do not use the synchronous subagent tool.
+Use detached background agent jobs for this workflow. Do not use the synchronous subagent tool.
 
 Step 1 now: use agent_job_start to start the "researcher" agent with mode="standard" and followUp=true for this task:
 

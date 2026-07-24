@@ -1,7 +1,7 @@
 ---
 description: Ask the oracle for a second opinion on complex problems
 ---
-Use the agent_job_start tool to start the "oracle" agent in a detached tmux background job with this task:
+Use the agent_job_start tool to start the "oracle" agent in a detached background job with this task:
 
 $@
 

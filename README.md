@@ -60,7 +60,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 
 ### [Extensions](extensions/)
 
-- **[agent-jobs](extensions/agent-jobs/)** — Run researcher/oracle jobs in detached tmux windows and resume via follow-up messages.
+- **[agent-jobs](extensions/agent-jobs/)** — Run researcher/oracle jobs as detached processes and resume via session-aware follow-up messages.
 - **[auto-prompt](extensions/auto-prompt/)** — Inline ghost-text prompt suggestions.
 - **[bordered-editor](extensions/bordered-editor/)** — Bordered composer with model, context, cost, and git status.
 - **[branch-switcher](extensions/branch-switcher/)** — Interactive `/branch` command for local and remote branches.

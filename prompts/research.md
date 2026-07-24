@@ -1,7 +1,7 @@
 ---
 description: Research a technology, codebase, or library via the researcher agent
 ---
-Use the agent_job_start tool to start the "researcher" agent in a detached tmux background job with this task: $@
+Use the agent_job_start tool to start the "researcher" agent in a detached background job with this task: $@
 
 Set mode="standard" and followUp=true. Do not use the synchronous subagent tool for this prompt.
 
