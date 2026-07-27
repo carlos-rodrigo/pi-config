@@ -19,6 +19,7 @@ import agentJobsExtension, {
 	resolveLoopFeature,
 	sanitizeJobPart,
 	shellQuote,
+	shouldTerminateAfterAgentJobStart,
 } from "./index.ts";
 
 const testAgent = {
@@ -66,6 +67,11 @@ test("sanitizeJobPart and createJobId produce process-safe names", () => {
 
 test("shellQuote escapes single quotes for shell commands", () => {
 	assert.equal(shellQuote("/tmp/it's fine"), `'/tmp/it'"'"'s fine'`);
+});
+
+test("agent job start keeps explicit polling workflows active", () => {
+	assert.equal(shouldTerminateAfterAgentJobStart(true), true);
+	assert.equal(shouldTerminateAfterAgentJobStart(false), false);
 });
 
 test("buildRunScript launches pi in json mode with prompt and persistent logs", () => {

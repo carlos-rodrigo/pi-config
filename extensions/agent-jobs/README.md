@@ -32,6 +32,8 @@ Each job gets a directory under `.pi/agent-jobs/<jobId>/` containing:
 
 The extension spawns `bash run.sh` as a detached process group, returns immediately, then watches `exit.json`. The same process launcher is used for background loop jobs. When an agent finishes, the extension parses the JSON events, writes `result.md`, and sends a follow-up user message into the originating Pi session.
 
+Jobs with `followUp: true` end the calling agent turn and resume through that completion message. Jobs with `followUp: false` keep the caller active so a parent agent can launch several children, poll them with `agent_job_status`, and synthesize their results. Do not disable the follow-up unless the caller will poll explicitly.
+
 Each new job records its originating Pi session id and session file. A different session may finalize the durable result, but it will not consume the completion follow-up. Delivery is acknowledged only when the follow-up reaches the originating session. If a reload, session switch, or transient delivery failure interrupts the handoff, the unfinished notification remains in `status.json` and is retried when that project session starts again. Jobs created before session routing was added retain the legacy project-session delivery behavior.
 
 Cancellation sends an interrupt to the detached process group. The existing `killWindow` option is retained for tool-call compatibility and now means force-kill the process after requesting cancellation.

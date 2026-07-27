@@ -222,6 +222,10 @@ export function createJobId(agentName: string, timestamp = new Date(), random = 
 	return `${sanitizeJobPart(agentName)}-${stamp}-${random}`;
 }
 
+export function shouldTerminateAfterAgentJobStart(followUp: boolean): boolean {
+	return followUp;
+}
+
 function assertSafeJobId(jobId: string): void {
 	if (!/^[a-zA-Z0-9_.-]+$/.test(jobId) || jobId.includes("..")) {
 		throw new Error(`Invalid job id: ${jobId}`);
@@ -1715,6 +1719,11 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 		description:
 			"Start a specialized agent as a detached OS process and return immediately. " +
 			"The job writes status, JSON events, stderr, and final result files under .pi/agent-jobs, then sends a follow-up message when finished.",
+		promptSnippet: "Start a specialized agent as a detached background process and optionally resume via a completion follow-up",
+		promptGuidelines: [
+			"Use agent_job_start with followUp=true when the current workflow should resume after one background job finishes.",
+			"Use agent_job_start with followUp=false only when the current agent will explicitly poll agent_job_status to completion, such as a parent coordinating several child jobs.",
+		],
 		parameters: Type.Object({
 			agent: Type.String({ description: 'Agent name to run, e.g. "researcher" or "oracle".' }),
 			task: Type.String({ description: "Task to delegate to the background agent." }),
@@ -1737,7 +1746,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			return {
 				content: [{ type: "text" as const, text: formatStarted(status) }],
 				details: status,
-				terminate: true,
+				terminate: shouldTerminateAfterAgentJobStart(status.followUp),
 			};
 		},
 		renderCall(args, theme) {
