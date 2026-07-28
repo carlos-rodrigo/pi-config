@@ -8,6 +8,7 @@ import {
 	openSync,
 	readdirSync,
 	readFileSync,
+	renameSync,
 	statSync,
 	writeFileSync,
 	type Dirent,
@@ -57,6 +58,9 @@ const DEFAULT_OLLAMA_SUMMARY_TIMEOUT_MS = 180_000;
 const DEFAULT_OLLAMA_EMBED_INPUT_MAX_CHARS = 6_000;
 const DEFAULT_OLLAMA_SUMMARY_INPUT_MAX_CHARS = 10_000;
 const DEFAULT_OLLAMA_SUMMARY_CONCURRENCY = 2;
+const OLLAMA_SUMMARY_MAX_ATTEMPTS = 3;
+const OLLAMA_SUMMARY_RETRY_DELAY_MS = 250;
+const SUMMARY_CACHE_CHECKPOINT_INTERVAL = 100;
 const MIN_OLLAMA_EMBED_INPUT_CHARS = 128;
 const MAX_OLLAMA_EMBED_INPUT_MAX_CHARS = 100_000;
 const MIN_OLLAMA_SUMMARY_INPUT_CHARS = 512;
@@ -1179,8 +1183,10 @@ function loadSummaryCache(cwd: string): SummaryCache {
 
 function saveSummaryCache(cwd: string, cache: SummaryCache): void {
 	const cachePath = getSummaryCachePath(cwd);
+	const temporaryPath = `${cachePath}.tmp-${process.pid}`;
 	mkdirSync(dirname(cachePath), { recursive: true });
-	writeFileSync(cachePath, JSON.stringify(cache), "utf8");
+	writeFileSync(temporaryPath, JSON.stringify(cache), "utf8");
+	renameSync(temporaryPath, cachePath);
 }
 
 function summaryInputForCard(card: IndexedCard, config: OllamaSummaryConfig): string {
@@ -1239,6 +1245,46 @@ async function fetchOllamaSummary(card: IndexedCard, input: string, config: Olla
 	return cleanGeneratedSummary(response);
 }
 
+function isTransientOllamaSummaryError(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /timed out calling ollama|fetch failed|failed with (?:429|5\d\d)|ECONNRESET|socket hang up/i.test(message);
+}
+
+async function waitForOllamaSummaryRetry(attempt: number, signal?: AbortSignal): Promise<void> {
+	if (signal?.aborted) {
+		const aborted = new Error("Ollama request cancelled.");
+		aborted.name = "AbortError";
+		throw aborted;
+	}
+	await new Promise<void>((resolvePromise, rejectPromise) => {
+		const timeout = setTimeout(() => {
+			signal?.removeEventListener("abort", abort);
+			resolvePromise();
+		}, OLLAMA_SUMMARY_RETRY_DELAY_MS * attempt);
+		const abort = () => {
+			clearTimeout(timeout);
+			const aborted = new Error("Ollama request cancelled.");
+			aborted.name = "AbortError";
+			rejectPromise(aborted);
+		};
+		signal?.addEventListener("abort", abort, { once: true });
+	});
+}
+
+async function fetchOllamaSummaryWithRetry(card: IndexedCard, input: string, config: OllamaSummaryConfig, signal?: AbortSignal): Promise<string> {
+	let lastError: unknown;
+	for (let attempt = 1; attempt <= OLLAMA_SUMMARY_MAX_ATTEMPTS; attempt++) {
+		try {
+			return await fetchOllamaSummary(card, input, config, signal);
+		} catch (error) {
+			lastError = error;
+			if (signal?.aborted || !isTransientOllamaSummaryError(error) || attempt === OLLAMA_SUMMARY_MAX_ATTEMPTS) throw error;
+			await waitForOllamaSummaryRetry(attempt, signal);
+		}
+	}
+	throw lastError;
+}
+
 function cardWithGeneratedSummary(card: IndexedCard, summary: string): IndexedCard {
 	const text = card.text.includes("Summary:")
 		? card.text.replace(/^Summary:.*$/m, `Summary: ${summary}`)
@@ -1259,13 +1305,21 @@ function cardWithGeneratedSummary(card: IndexedCard, summary: string): IndexedCa
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T, index: number) => Promise<R>): Promise<R[]> {
 	const results = new Array<R>(items.length);
 	let nextIndex = 0;
+	let firstError: unknown;
+	let failed = false;
 	const workerCount = Math.min(Math.max(1, concurrency), items.length);
 	await Promise.all(Array.from({ length: workerCount }, async () => {
-		while (nextIndex < items.length) {
+		while (!failed && nextIndex < items.length) {
 			const currentIndex = nextIndex++;
-			results[currentIndex] = await mapper(items[currentIndex]!, currentIndex);
+			try {
+				results[currentIndex] = await mapper(items[currentIndex]!, currentIndex);
+			} catch (error) {
+				if (!failed) firstError = error;
+				failed = true;
+			}
 		}
 	}));
+	if (failed) throw firstError;
 	return results;
 }
 
@@ -1292,16 +1346,20 @@ async function applyOllamaCardSummaries(
 
 	if (pending.length > 0) {
 		options.onProgress?.(`Summarizing ${pending.length} semantic cards with Ollama model ${config.model} (${config.concurrency} parallel)`);
-		const generated = await mapWithConcurrency(pending, config.concurrency, async (item, offset) => {
-			if (offset > 0 && offset % 25 === 0) options.onProgress?.(`Summarized ${offset}/${pending.length} semantic cards with ${config.model}`);
-			const summary = await fetchOllamaSummary(item.card, item.input, config, options.signal);
-			return { ...item, summary };
-		});
-		for (const item of generated) {
-			index.cards[item.cardIndex] = cardWithGeneratedSummary(index.cards[item.cardIndex]!, item.summary);
-			cache.entries[item.key] = { model: config.model, inputHash: item.inputHash, summary: item.summary, updatedAt: new Date().toISOString() };
+		let completed = 0;
+		try {
+			await mapWithConcurrency(pending, config.concurrency, async (item) => {
+				const summary = await fetchOllamaSummaryWithRetry(item.card, item.input, config, options.signal);
+				index.cards[item.cardIndex] = cardWithGeneratedSummary(index.cards[item.cardIndex]!, summary);
+				cache.entries[item.key] = { model: config.model, inputHash: item.inputHash, summary, updatedAt: new Date().toISOString() };
+				completed++;
+				if (completed % 25 === 0) options.onProgress?.(`Summarized ${completed}/${pending.length} semantic cards with ${config.model}`);
+				if (options.writeCache && completed % SUMMARY_CACHE_CHECKPOINT_INTERVAL === 0) saveSummaryCache(index.cwd, cache);
+				return summary;
+			});
+		} finally {
+			if (options.writeCache && completed > 0) saveSummaryCache(index.cwd, cache);
 		}
-		if (options.writeCache) saveSummaryCache(index.cwd, cache);
 	}
 
 	return {

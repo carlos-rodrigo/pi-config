@@ -435,6 +435,114 @@ test("embedding index uses Ollama-generated card summaries by default and caches
 	}
 });
 
+test("Ollama summary generation retries a transient request failure", async () => {
+	const dir = makeProject({
+		"src/billing/ledger.ts": "export function reconcileLedger() { return normalizeInvoiceBalance(); }\n",
+	});
+	const originalFetch = globalThis.fetch;
+	let generateCalls = 0;
+	globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+		const href = String(url);
+		const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string | string[]; prompt?: string };
+		if (href.endsWith("/api/generate")) {
+			generateCalls++;
+			if (generateCalls === 1) throw new TypeError("fetch failed");
+			return new Response(JSON.stringify({ response: fakeSummaryFor(body.prompt ?? "") }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}
+		const inputs = Array.isArray(body.input) ? body.input : [body.input ?? body.prompt ?? ""];
+		return new Response(JSON.stringify({ embeddings: inputs.map(fakeEmbeddingFor) }), {
+			status: 200,
+			headers: { "content-type": "application/json" },
+		});
+	}) as typeof fetch;
+	try {
+		const index = await buildSearchIndexWithEmbeddings(dir, {
+			writeToDisk: false,
+			ollama: { model: "nomic-embed-text", baseUrl: "http://ollama.test" },
+			summary: { model: "qwen2.5-coder:14b", baseUrl: "http://ollama.test", concurrency: 1 },
+		});
+
+		assert.ok(generateCalls > index.cards.length, "expected the failed summary request to be retried");
+		assert.equal(index.summary?.failedCards, 0);
+	} finally {
+		globalThis.fetch = originalFetch;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("a failed summary rebuild checkpoints completed cards and resumes from cache", async () => {
+	const dir = makeProject({
+		"src/billing/ledger.ts": "export function reconcileLedger() { return normalizeInvoiceBalance(); }\n",
+		"src/billing/invoice.ts": "export function createInvoice() { return persistInvoice(); }\n",
+	});
+	const originalFetch = globalThis.fetch;
+	let firstRunGenerateCalls = 0;
+	globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+		const href = String(url);
+		const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string | string[]; prompt?: string };
+		if (href.endsWith("/api/generate")) {
+			firstRunGenerateCalls++;
+			if (firstRunGenerateCalls > 1) throw new TypeError("fetch failed");
+			return new Response(JSON.stringify({ response: fakeSummaryFor(body.prompt ?? "") }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}
+		const inputs = Array.isArray(body.input) ? body.input : [body.input ?? body.prompt ?? ""];
+		return new Response(JSON.stringify({ embeddings: inputs.map(fakeEmbeddingFor) }), {
+			status: 200,
+			headers: { "content-type": "application/json" },
+		});
+	}) as typeof fetch;
+	try {
+		await assert.rejects(
+			buildSearchIndexWithEmbeddings(dir, {
+				writeToDisk: true,
+				ollama: { model: "nomic-embed-text", baseUrl: "http://ollama.test" },
+				summary: { model: "qwen2.5-coder:14b", baseUrl: "http://ollama.test", concurrency: 1 },
+			}),
+			/fetch failed/,
+		);
+
+		const cachePath = join(dir, ".pi", "semantic-search", "summaries.json");
+		const checkpoint = JSON.parse(readFileSync(cachePath, "utf8")) as { entries?: Record<string, unknown> };
+		const checkpointedCards = Object.keys(checkpoint.entries ?? {}).length;
+		assert.equal(checkpointedCards, 1);
+
+		let resumedGenerateCalls = 0;
+		globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+			const href = String(url);
+			const body = JSON.parse(String(init?.body ?? "{}")) as { input?: string | string[]; prompt?: string };
+			if (href.endsWith("/api/generate")) {
+				resumedGenerateCalls++;
+				return new Response(JSON.stringify({ response: fakeSummaryFor(body.prompt ?? "") }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			const inputs = Array.isArray(body.input) ? body.input : [body.input ?? body.prompt ?? ""];
+			return new Response(JSON.stringify({ embeddings: inputs.map(fakeEmbeddingFor) }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof fetch;
+
+		const resumed = await buildSearchIndexWithEmbeddings(dir, {
+			writeToDisk: true,
+			ollama: { model: "nomic-embed-text", baseUrl: "http://ollama.test" },
+			summary: { model: "qwen2.5-coder:14b", baseUrl: "http://ollama.test", concurrency: 1 },
+		});
+		assert.equal(resumedGenerateCalls, resumed.cards.length - checkpointedCards);
+		assert.equal(resumed.summary?.cachedCards, checkpointedCards);
+	} finally {
+		globalThis.fetch = originalFetch;
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("embedding index JSON stores vectors in compact float32 encoding", () => {
 	const dir = makeProject({
 		"src/billing/ledger.ts": "export function reconcileLedger() { return normalizeInvoiceBalance(); }\n",
