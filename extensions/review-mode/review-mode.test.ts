@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 
 import { visibleWidth } from "@earendil-works/pi-tui";
 
-import reviewModeExtension, {
+import registerReviewModeExtension, {
+	buildReviewModeDiffHash,
+	buildReviewModeGoalContext,
 	buildReviewModeHelpText,
 	buildReviewModeInjectionPrompt,
 	collectReviewModeNotes,
@@ -13,6 +15,7 @@ import reviewModeExtension, {
 	parseGitNameStatusOutput,
 	parseReviewModeArgs,
 	parseReviewModeDiffFiles,
+	parseSemanticReviewResponse,
 	ReviewModeWorkbench,
 	styleReviewDiffLine,
 	truncateReviewDiff,
@@ -250,6 +253,33 @@ const OUTGOING_PATCH = [
 	"-return false",
 	"+return true",
 ].join("\n");
+function buildSemanticFiles(files: any[], fileDiffs: any[]) {
+	return files.map((file: any) => {
+		const fileDiff = fileDiffs.find((candidate: any) => candidate.path === file.path);
+		return {
+			path: file.path,
+			summary: `This file changes ${file.path} so the current goal can use the updated behavior.`,
+			hunks: (fileDiff?.hunks ?? []).map((hunk: any) => ({
+				index: hunk.index,
+				text: `This change enables the goal through hunk ${hunk.index} in ${file.path}.`,
+			})),
+		};
+	});
+}
+
+function createSemanticAnalyzerStub(calls?: unknown[]) {
+	return async (input: any) => {
+		calls?.push(input);
+		return buildSemanticFiles(input.files, input.fileDiffs);
+	};
+}
+
+function reviewModeExtension(pi: any, options?: { analyzeSemanticReview?: any }) {
+	return registerReviewModeExtension(pi, {
+		analyzeSemanticReview: options?.analyzeSemanticReview ?? createSemanticAnalyzerStub(),
+	});
+}
+
 const TABBED_PATCH = [
 	"diff --git a/src/tabbed.ts b/src/tabbed.ts",
 	"new file mode 100644",
@@ -315,6 +345,34 @@ test("truncateReviewDiff caps long diffs and buildReviewModeInjectionPrompt repo
 	assert.match(prompt, /README\.md/);
 });
 
+
+test("semantic review parsing requires one concise explanation per expected hunk", () => {
+	const parsed = parseSemanticReviewResponse(
+		JSON.stringify({
+			summary: "This file exposes review context so the workbench can present it immediately.",
+			hunks: [
+				{ index: 0, text: "This change stores the context needed by the semantic pane." },
+				{ index: 1, text: "This change renders the stored context beside its diff." },
+			],
+		}),
+		"README.md",
+		2,
+	);
+	assert.equal(parsed.hunks.length, 2);
+	assert.throws(
+		() => parseSemanticReviewResponse('{"summary":"Incomplete","hunks":[{"index":0,"text":"Only one"}]}', "README.md", 2),
+		/covered 1\/2 hunks/,
+	);
+});
+
+test("review goal context keeps recent substantive user requests", () => {
+	const context = buildReviewModeGoalContext([
+		{ type: "message", message: { role: "user", content: [{ type: "text", text: "Build semantic review comments." }] } },
+		{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Working on it." }] } },
+		{ type: "message", message: { role: "user", content: [{ type: "text", text: "/review-mode" }] } },
+	]);
+	assert.equal(context, "Build semantic review comments.");
+});
 
 test("styleReviewDiffLine colors added, removed, and hunk metadata", () => {
 	const theme = createTaggedTheme();
@@ -387,17 +445,55 @@ test("ReviewModeWorkbench frames the modal and lets the composer scroll long ans
 	assert.match(initial[0] ?? "", /^╭ Review Mode/);
 	assert.match(initial.at(-1) ?? "", /^╰ /);
 
-	component.finishAnswer(Array.from({ length: 12 }, (_value, index) => `answer line ${index + 1}`).join("\n"));
+	component.startQuestion({ kind: "file", filePath: "README.md" }, "What does this enable?");
+	component.finishAnswer(Array.from({ length: 40 }, (_value, index) => `answer line ${index + 1}`).join("\n"));
 	const bottomAligned = component.render(180).join("\n");
 	assert.doesNotMatch(bottomAligned, /answer line 1(?!\d)/);
-	assert.match(bottomAligned, /answer line 12/);
+	assert.match(bottomAligned, /answer line 40/);
 
-	for (let i = 0; i < 12; i++) {
+	for (let i = 0; i < 40; i++) {
 		component.handleInput("K");
 	}
 	const scrolledUp = component.render(180).join("\n");
 	assert.match(scrolledUp, /answer line 1(?!\d)/);
-	assert.match(scrolledUp, /Composer · 1-6\/14/);
+	assert.match(scrolledUp, /Semantic Goal Context · 1-/);
+});
+
+test("ReviewModeWorkbench keeps explicit code-pane scrolling instead of snapping back to the cursor", () => {
+	const longPatch = [
+		"diff --git a/src/long.ts b/src/long.ts",
+		"new file mode 100644",
+		"--- /dev/null",
+		"+++ b/src/long.ts",
+		"@@ -0,0 +1,80 @@",
+		...Array.from({ length: 80 }, (_value, index) => `+export const value${index + 1} = ${index + 1};`),
+	].join("\n");
+	const files = parseGitNameStatusOutput("A\tsrc/long.ts");
+	const fileDiffs = parseReviewModeDiffFiles(longPatch);
+	const component = new ReviewModeWorkbench(createTheme(), {
+		cwd: "/repo",
+		source: "staged",
+		files,
+		fileDiffs,
+		fullDiff: longPatch,
+		initialNotes: [],
+		semanticFiles: buildSemanticFiles(files, fileDiffs),
+		requestRender() {},
+		onAsk() {},
+		onSaveNote() {
+			return { source: "staged" as const, scope: { kind: "all" as const }, note: "", createdAt: 1, fileCount: 1 };
+		},
+		onClose() {},
+	});
+
+	component.focusContent();
+	const initial = component.render(120).join("\n");
+	assert.match(initial, /value1 = 1/);
+
+	component.handleInput("\u0004");
+	const scrolled = component.render(120).join("\n");
+	assert.doesNotMatch(scrolled, /value1 = 1/);
+	assert.match(scrolled, /value(?:3[0-9]|4[0-9]) =/);
 });
 
 test("ReviewModeWorkbench supports vim-style navigation shortcuts", () => {
@@ -458,8 +554,7 @@ test("ReviewModeWorkbench supports vim-style navigation shortcuts", () => {
 	});
 });
 
-test("ReviewModeWorkbench supports file, selection, and all-change review flows", () => {
-	const results: unknown[] = [];
+test("ReviewModeWorkbench bounds invalid render widths instead of allocating unbounded strings", () => {
 	const component = new ReviewModeWorkbench(createTheme(), {
 		cwd: "/repo",
 		source: "staged",
@@ -467,6 +562,98 @@ test("ReviewModeWorkbench supports file, selection, and all-change review flows"
 		fileDiffs: parseReviewModeDiffFiles(STAGED_PATCH),
 		fullDiff: STAGED_PATCH,
 		initialNotes: [],
+		requestRender() {},
+		onAsk() {},
+		onSaveNote() {
+			return { source: "staged" as const, scope: { kind: "all" as const }, note: "", createdAt: 1, fileCount: 2 };
+		},
+		onClose() {},
+	});
+
+	assert.doesNotThrow(() => component.render(Number.POSITIVE_INFINITY));
+	assert.doesNotThrow(() => component.render(Number.MAX_SAFE_INTEGER));
+});
+
+test("ReviewModeWorkbench renders thin file navigation beside equal code and semantic columns", () => {
+	const files = parseGitNameStatusOutput(STAGED_NAME_STATUS);
+	const fileDiffs = parseReviewModeDiffFiles(STAGED_PATCH);
+	const component = new ReviewModeWorkbench(createTheme(), {
+		cwd: "/repo",
+		source: "staged",
+		files,
+		fileDiffs,
+		fullDiff: STAGED_PATCH,
+		initialNotes: [],
+		semanticFiles: buildSemanticFiles(files, fileDiffs),
+		requestRender() {},
+		onAsk() {},
+		onSaveNote() {
+			return { source: "staged" as const, scope: { kind: "all" as const }, note: "", createdAt: 1, fileCount: 2 };
+		},
+		onClose() {},
+	});
+
+	const render = component.render(180);
+	const paneHeader = render.find((line) => line.includes("Changed Files") && line.includes("Code Changes"));
+	assert.ok(paneHeader);
+	assert.match(paneHeader, /Semantic Goal Context/);
+	const fileColumnEnd = paneHeader.indexOf("╮ ╭ Code Changes");
+	const codeColumnStart = paneHeader.indexOf("╭ Code Changes");
+	const semanticColumnStart = paneHeader.indexOf("╭ Semantic Goal Context");
+	assert.ok(fileColumnEnd > 0 && codeColumnStart > 0 && semanticColumnStart > codeColumnStart);
+	const fileWidth = fileColumnEnd + 1;
+	const codeWidth = semanticColumnStart - codeColumnStart - 1;
+	const semanticWidth = visibleWidth(paneHeader) - semanticColumnStart;
+	assert.ok(fileWidth < codeWidth, `expected thin file column, got ${fileWidth} vs ${codeWidth}`);
+	assert.ok(Math.abs(codeWidth - semanticWidth) <= 1, `expected equal main columns, got ${codeWidth} vs ${semanticWidth}`);
+	assert.match(render.join("\n"), /This file changes README\.md/);
+});
+
+test("ReviewModeWorkbench requests concise semantic context for the selected hunk", () => {
+	const results: Array<{ scope: unknown; text: string }> = [];
+	const component = new ReviewModeWorkbench(createTheme(), {
+		cwd: "/repo",
+		source: "staged",
+		files: parseGitNameStatusOutput(STAGED_NAME_STATUS),
+		fileDiffs: parseReviewModeDiffFiles(STAGED_PATCH),
+		fullDiff: STAGED_PATCH,
+		initialNotes: [],
+		requestRender() {},
+		onAsk(scope, text) {
+			results.push({ scope, text });
+		},
+		onSaveNote() {
+			return { source: "staged" as const, scope: { kind: "all" as const }, note: "", createdAt: 1, fileCount: 2 };
+		},
+		onClose() {},
+	});
+
+	component.handleInput("\r");
+	component.handleInput("e");
+
+	assert.equal(results.length, 1);
+	assert.deepEqual(results[0]?.scope, {
+		kind: "hunk",
+		filePath: "README.md",
+		hunkIndex: 0,
+		heading: "@@ -1 +1 @@",
+	});
+	assert.match(results[0]?.text ?? "", /advances the current goal/);
+	assert.match(results[0]?.text ?? "", /what it enables/);
+});
+
+test("ReviewModeWorkbench supports file, selection, and all-change review flows", () => {
+	const results: unknown[] = [];
+	const files = parseGitNameStatusOutput(STAGED_NAME_STATUS);
+	const fileDiffs = parseReviewModeDiffFiles(STAGED_PATCH);
+	const component = new ReviewModeWorkbench(createTheme(), {
+		cwd: "/repo",
+		source: "staged",
+		files,
+		fileDiffs,
+		fullDiff: STAGED_PATCH,
+		initialNotes: [],
+		semanticFiles: buildSemanticFiles(files, fileDiffs),
 		requestRender() {},
 		onAsk(scope, text) {
 			results.push({ action: "ask", scope, text });
@@ -482,9 +669,9 @@ test("ReviewModeWorkbench supports file, selection, and all-change review flows"
 	const initialRender = component.render(180).join("\n");
 	assert.match(initialRender, /Changed Files \(2\)/);
 	assert.doesNotMatch(initialRender, /Changed Regions/);
-	assert.match(initialRender, /Content · README\.md/);
-	assert.match(initialRender, /Composer/);
-	assert.match(initialRender, /target 2-5 short lines/);
+	assert.match(initialRender, /Code Changes · README\.md/);
+	assert.match(initialRender, /Semantic Goal Context/);
+	assert.match(initialRender, /This file changes README\.md/);
 	assert.match(initialRender, /Tab ask all/);
 	assert.match(initialRender, /↑↓\/j\/k select file/);
 	assert.match(initialRender, /- old/);
@@ -538,6 +725,64 @@ test("ReviewModeWorkbench supports file, selection, and all-change review flows"
 		scope: { kind: "all" },
 		text: "Need one more review pass",
 	});
+});
+
+test("/review-mode generates, persists, and immediately renders semantic explanations", async () => {
+	const calls: unknown[] = [];
+	const harness = createPiHarness([
+		{ code: 0, stdout: STAGED_NAME_STATUS, stderr: "" },
+		{ code: 0, stdout: STAGED_PATCH, stderr: "" },
+	]);
+	reviewModeExtension(harness.pi as any, { analyzeSemanticReview: createSemanticAnalyzerStub(calls) });
+	const context = createContext({
+		entries: [
+			{
+				type: "message",
+				message: { role: "user", content: [{ type: "text", text: "Populate semantic explanations for every review change." }] },
+			},
+		],
+	});
+	const command = harness.commands.get("review-mode");
+	assert.ok(command);
+
+	await command.handler("--staged", context.ctx as any);
+
+	assert.equal(calls.length, 1);
+	assert.match((calls[0] as any).goalContext, /Populate semantic explanations/);
+	assert.equal(harness.appendEntries.length, 1);
+	assert.equal(harness.appendEntries[0]?.customType, "review-mode-semantic-context");
+	assert.match(context.customRenders[0]?.join("\n") ?? "", /This file changes README\.md/);
+});
+
+test("/review-mode reuses a persisted semantic snapshot for an unchanged diff", async () => {
+	const files = parseGitNameStatusOutput(STAGED_NAME_STATUS);
+	const fileDiffs = parseReviewModeDiffFiles(STAGED_PATCH);
+	const snapshot = {
+		source: "staged" as const,
+		diffHash: buildReviewModeDiffHash("staged", files, STAGED_PATCH),
+		goalContext: "Persist explanations for this review.",
+		files: buildSemanticFiles(files, fileDiffs),
+		createdAt: 1,
+	};
+	const harness = createPiHarness([
+		{ code: 0, stdout: STAGED_NAME_STATUS, stderr: "" },
+		{ code: 0, stdout: STAGED_PATCH, stderr: "" },
+	]);
+	reviewModeExtension(harness.pi as any, {
+		analyzeSemanticReview: async () => {
+			throw new Error("analyzer should not run");
+		},
+	});
+	const context = createContext({
+		entries: [{ type: "custom", customType: "review-mode-semantic-context", data: snapshot }],
+	});
+	const command = harness.commands.get("review-mode");
+	assert.ok(command);
+
+	await command.handler("--staged", context.ctx as any);
+
+	assert.equal(harness.appendEntries.length, 0);
+	assert.match(context.customRenders[0]?.join("\n") ?? "", /This file changes README\.md/);
 });
 
 test("/review-mode defaults to all local changes including untracked files", async () => {
@@ -766,9 +1011,11 @@ test("/review-mode saves scoped notes and /review-notes lists them", async () =>
 	await reviewCommand.handler("--staged", context.ctx as any);
 
 	assert.equal(harness.sendUserMessages.length, 0);
-	assert.equal(harness.appendEntries.length, 1);
-	assert.equal(harness.appendEntries[0]?.customType, "review-mode-note");
-	assert.deepEqual(harness.appendEntries[0]?.data, {
+	assert.equal(harness.appendEntries.length, 2);
+	assert.equal(harness.appendEntries[0]?.customType, "review-mode-semantic-context");
+	const noteEntry = harness.appendEntries.find((entry) => entry.customType === "review-mode-note");
+	assert.ok(noteEntry);
+	assert.deepEqual(noteEntry.data, {
 		source: "staged",
 		scope: {
 			kind: "selection",
@@ -779,7 +1026,7 @@ test("/review-mode saves scoped notes and /review-notes lists them", async () =>
 			rawEndLine: 12,
 		},
 		note: "Double-check the added extra line",
-		createdAt: harness.appendEntries[0] && (harness.appendEntries[0]!.data as any).createdAt,
+		createdAt: (noteEntry.data as any).createdAt,
 		fileCount: 2,
 	});
 	assert.deepEqual(context.notifications.at(-1), {
@@ -803,7 +1050,7 @@ test("/review-mode saves scoped notes and /review-notes lists them", async () =>
 		{
 			type: "custom",
 			customType: "review-mode-note",
-			data: harness.appendEntries[0]?.data,
+			data: noteEntry.data,
 		},
 	];
 

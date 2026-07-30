@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
+
+import { complete, type UserMessage } from "@earendil-works/pi-ai/compat";
 import { getLanguageFromPath, highlightCode, type ExtensionAPI, type ExtensionCommandContext, type Theme } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, Key, matchesKey, truncateToWidth, type Focusable, visibleWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, Key, matchesKey, truncateToWidth, type Focusable, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 export type ReviewModeSource = "local" | "staged" | "unstaged" | "outgoing";
 export type ReviewModeInputMode = "browse" | "ask" | "note";
@@ -61,6 +64,42 @@ export interface ReviewModeInjectionInput {
 	diff: string;
 }
 
+export interface ReviewModeSemanticHunk {
+	index: number;
+	text: string;
+}
+
+export interface ReviewModeSemanticFile {
+	path: string;
+	summary: string;
+	hunks: ReviewModeSemanticHunk[];
+}
+
+export interface ReviewModeSemanticSnapshot {
+	source: ReviewModeSource;
+	diffHash: string;
+	goalContext: string;
+	files: ReviewModeSemanticFile[];
+	createdAt: number;
+}
+
+export interface ReviewModeSemanticAnalysisInput {
+	source: ReviewModeSource;
+	files: ReviewModeFileChange[];
+	fileDiffs: ReviewModeFileDiff[];
+	fullDiff: string;
+	goalContext: string;
+}
+
+export type ReviewModeSemanticAnalyzer = (
+	input: ReviewModeSemanticAnalysisInput,
+	ctx: ExtensionCommandContext,
+) => Promise<ReviewModeSemanticFile[]>;
+
+export interface ReviewModeExtensionOptions {
+	analyzeSemanticReview?: ReviewModeSemanticAnalyzer;
+}
+
 interface ReviewModeWorkbenchOptions {
 	cwd: string;
 	source: ReviewModeSource;
@@ -68,6 +107,7 @@ interface ReviewModeWorkbenchOptions {
 	fileDiffs: ReviewModeFileDiff[];
 	fullDiff: string;
 	initialNotes: ReviewModeNoteEntry[];
+	semanticFiles?: ReviewModeSemanticFile[];
 	requestRender: () => void;
 	onAsk: (scope: ReviewModeScope, text: string) => void;
 	onSaveNote: (scope: ReviewModeScope, text: string) => ReviewModeNoteEntry;
@@ -100,6 +140,7 @@ interface ActiveReviewWorkbenchRuntime {
 }
 
 const REVIEW_MODE_NOTE_ENTRY_TYPE = "review-mode-note";
+const REVIEW_MODE_SEMANTIC_ENTRY_TYPE = "review-mode-semantic-context";
 const REVIEW_DIFF_MAX_LINES = 400;
 const REVIEW_DIFF_MAX_CHARS = 12_000;
 const REVIEW_MODAL_WIDTH = "94%";
@@ -108,8 +149,10 @@ const REVIEW_MODAL_MIN_WIDTH = 110;
 const WIDE_LAYOUT_MIN_WIDTH = 96;
 const REVIEW_MODAL_HEIGHT_RATIO = 0.92;
 const REVIEW_HEADER_LINES = 3;
-const REVIEW_FILES_PANE_HEIGHT = 6;
-const REVIEW_COMPOSER_PANE_HEIGHT = 8;
+const REVIEW_FILE_COLUMN_MIN_WIDTH = 24;
+const REVIEW_FILE_COLUMN_MAX_WIDTH = 32;
+const SEMANTIC_CONTEXT_QUESTION =
+	"Explain concisely how this selected change advances the current goal and what it enables. Mention a value or behavior exposed for another part of the code only when the diff supports it.";
 
 const REVIEW_MODE_HELP_TEXT = [
 	"Usage:",
@@ -132,9 +175,10 @@ const REVIEW_MODE_HELP_TEXT = [
 	"- In the code pane, ↑/↓ jumps between hunks while j/k moves line by line.",
 	"- Press 'v' or 'b' to start or end visual selection in the code pane.",
 	"- In visual mode, ↑/↓ or j/k extends the selected snippet.",
-	"- Enter asks about the current file or selected snippet and keeps the answer inside review mode.",
+	"- Press 'e' in the code column for a concise explanation of what the selected change enables for the current goal.",
+	"- Enter asks a custom question about the current file or selected snippet and keeps the answer inside review mode.",
 	"- Press 'n' to save a scoped review note/decision for this session.",
-	"- Press 'J'/'K' to scroll the composer when answers or notes are taller than the pane.",
+	"- Press 'J'/'K' to scroll semantic context when answers or notes are taller than the pane.",
 	"- Press Esc to move back one focus level or close the workbench.",
 ].join("\n");
 
@@ -328,6 +372,215 @@ export function buildReviewModeInjectionPrompt(input: ReviewModeInjectionInput):
 		diffText,
 		"```",
 	].join("\n");
+}
+
+export function buildReviewModeDiffHash(source: ReviewModeSource, files: ReviewModeFileChange[], diff: string): string {
+	const fileIdentity = files.map((file) => `${file.statusCode}:${file.previousPath ?? ""}:${file.path}`).join("\n");
+	return createHash("sha256").update(`${source}\n${fileIdentity}\n${diff}`).digest("hex");
+}
+
+function extractSessionMessageText(message: unknown): string {
+	if (!message || typeof message !== "object") return "";
+	const content = (message as { content?: unknown }).content;
+	if (typeof content === "string") return content.trim();
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((block): block is { type: string; text: string } =>
+			!!block && typeof block === "object" && (block as { type?: unknown }).type === "text" && typeof (block as { text?: unknown }).text === "string",
+		)
+		.map((block) => block.text)
+		.join("\n")
+		.trim();
+}
+
+export function buildReviewModeGoalContext(entries: any[]): string {
+	const prompts: string[] = [];
+	for (const entry of entries) {
+		if (!entry || entry.type !== "message" || entry.message?.role !== "user") continue;
+		const text = extractSessionMessageText(entry.message);
+		if (!text || text.startsWith("/") || text === SEMANTIC_CONTEXT_QUESTION) continue;
+		prompts.push(text);
+	}
+	return prompts.slice(-6).join("\n\n").trim();
+}
+
+export function buildSemanticReviewPrompt(
+	input: ReviewModeSemanticAnalysisInput,
+	file: ReviewModeFileChange,
+	fileDiff: ReviewModeFileDiff | undefined,
+): string {
+	const hunks = fileDiff?.hunks ?? [];
+	const expectedHunks = hunks.length > 0
+		? hunks.map((hunk) => `- ${hunk.index}: ${hunk.heading}`).join("\n")
+		: "- No textual hunks; explain the file-level change.";
+	const goal = input.goalContext || "No explicit goal was found. Infer the intended goal conservatively from the changed files and patch.";
+	const relatedFiles = input.files.map((candidate) => `- ${formatReviewModeChange(candidate)}`).join("\n");
+	const patch = fileDiff?.patch.trim() || "[No textual patch was available for this file.]";
+
+	return [
+		"Explain how this changed file contributes to the user's goal.",
+		"Return JSON only with this exact shape:",
+		'{"summary":"one or two concise sentences","hunks":[{"index":0,"text":"one or two concise sentences"}]}',
+		"Write direct natural-language explanations, without labels, scores, headings, or generic review advice.",
+		"Explain what each change enables. Mention cross-file use only when supported by the goal, related-file list, or patch.",
+		"Include exactly one hunk entry for every expected textual hunk, using its given index. If there are no textual hunks, return an empty hunks array.",
+		"Do not claim intent that the evidence does not support; describe the concrete capability enabled instead.",
+		"",
+		"User goal context:",
+		goal,
+		"",
+		"Files in this review:",
+		relatedFiles,
+		"",
+		`File to explain: ${formatReviewModeChange(file)}`,
+		"Expected hunks:",
+		expectedHunks,
+		"",
+		"Patch:",
+		"```diff",
+		patch,
+		"```",
+	].join("\n");
+}
+
+function extractJsonObject(text: string): unknown {
+	const trimmed = text.trim();
+	const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
+	const candidate = fenced?.[1] ?? trimmed;
+	return JSON.parse(candidate);
+}
+
+export function parseSemanticReviewResponse(
+	text: string,
+	filePath: string,
+	expectedHunkCount: number,
+): ReviewModeSemanticFile {
+	const value = extractJsonObject(text);
+	if (!value || typeof value !== "object") throw new Error(`Semantic explanation for ${filePath} was not an object.`);
+	const result = value as { summary?: unknown; hunks?: unknown };
+	if (typeof result.summary !== "string" || !result.summary.trim()) {
+		throw new Error(`Semantic explanation for ${filePath} did not include a summary.`);
+	}
+	if (!Array.isArray(result.hunks)) {
+		throw new Error(`Semantic explanation for ${filePath} did not include hunks.`);
+	}
+	const hunks: ReviewModeSemanticHunk[] = result.hunks.map((hunk, position) => {
+		if (!hunk || typeof hunk !== "object") throw new Error(`Semantic hunk ${position} for ${filePath} was invalid.`);
+		const candidate = hunk as { index?: unknown; text?: unknown };
+		if (!Number.isInteger(candidate.index) || typeof candidate.text !== "string" || !candidate.text.trim()) {
+			throw new Error(`Semantic hunk ${position} for ${filePath} was invalid.`);
+		}
+		return { index: candidate.index as number, text: candidate.text.trim() };
+	});
+	const indexes = new Set(hunks.map((hunk) => hunk.index));
+	if (hunks.length !== expectedHunkCount || indexes.size !== expectedHunkCount) {
+		throw new Error(`Semantic explanation for ${filePath} covered ${indexes.size}/${expectedHunkCount} hunks.`);
+	}
+	for (let index = 0; index < expectedHunkCount; index++) {
+		if (!indexes.has(index)) throw new Error(`Semantic explanation for ${filePath} omitted hunk ${index}.`);
+	}
+	return { path: filePath, summary: result.summary.trim(), hunks: hunks.sort((left, right) => left.index - right.index) };
+}
+
+function isReviewModeSemanticFile(value: unknown): value is ReviewModeSemanticFile {
+	if (!value || typeof value !== "object") return false;
+	const file = value as { path?: unknown; summary?: unknown; hunks?: unknown };
+	return typeof file.path === "string" && typeof file.summary === "string" && Array.isArray(file.hunks) && file.hunks.every((hunk) => {
+		if (!hunk || typeof hunk !== "object") return false;
+		const candidate = hunk as { index?: unknown; text?: unknown };
+		return typeof candidate.index === "number" && typeof candidate.text === "string";
+	});
+}
+
+function isReviewModeSemanticSnapshot(value: unknown): value is ReviewModeSemanticSnapshot {
+	if (!value || typeof value !== "object") return false;
+	const snapshot = value as { source?: unknown; diffHash?: unknown; goalContext?: unknown; files?: unknown; createdAt?: unknown };
+	return (
+		(snapshot.source === "local" || snapshot.source === "staged" || snapshot.source === "unstaged" || snapshot.source === "outgoing") &&
+		typeof snapshot.diffHash === "string" &&
+		typeof snapshot.goalContext === "string" &&
+		Array.isArray(snapshot.files) &&
+		snapshot.files.every(isReviewModeSemanticFile) &&
+		typeof snapshot.createdAt === "number"
+	);
+}
+
+export function findReviewModeSemanticSnapshot(
+	entries: any[],
+	source: ReviewModeSource,
+	diffHash: string,
+): ReviewModeSemanticSnapshot | undefined {
+	for (let index = entries.length - 1; index >= 0; index--) {
+		const entry = entries[index];
+		if (entry?.type !== "custom" || entry.customType !== REVIEW_MODE_SEMANTIC_ENTRY_TYPE) continue;
+		if (isReviewModeSemanticSnapshot(entry.data) && entry.data.source === source && entry.data.diffHash === diffHash) {
+			return entry.data;
+		}
+	}
+	return undefined;
+}
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
+	const results = new Array<R>(items.length);
+	let nextIndex = 0;
+	async function worker(): Promise<void> {
+		while (nextIndex < items.length) {
+			const index = nextIndex++;
+			results[index] = await mapper(items[index]!);
+		}
+	}
+	await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+	return results;
+}
+
+export const generateSemanticReview: ReviewModeSemanticAnalyzer = async (input, ctx) => {
+	if (!ctx.model) throw new Error("No model is selected for semantic review generation.");
+	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
+	if (!auth.ok) throw new Error("error" in auth ? auth.error : `Could not resolve authentication for ${ctx.model.provider}.`);
+	if (!auth.apiKey) throw new Error(`No API key is available for ${ctx.model.provider}.`);
+
+	return mapWithConcurrency(input.files, 2, async (file) => {
+		const fileDiff = findReviewModeFileDiff(input.fileDiffs, file.path);
+		const prompt = buildSemanticReviewPrompt(input, file, fileDiff);
+		const message: UserMessage = {
+			role: "user",
+			content: [{ type: "text", text: prompt }],
+			timestamp: Date.now(),
+		};
+		const response = await complete(
+			ctx.model!,
+			{ messages: [message] },
+			{ apiKey: auth.apiKey, headers: auth.headers, env: auth.env },
+		);
+		if (response.stopReason === "aborted" || response.stopReason === "error") {
+			throw new Error(`Semantic explanation generation failed for ${file.path}: ${response.errorMessage ?? response.stopReason}`);
+		}
+		const text = response.content
+			.filter((block): block is { type: "text"; text: string } => block.type === "text")
+			.map((block) => block.text)
+			.join("\n");
+		return parseSemanticReviewResponse(text, file.path, fileDiff?.hunks.length ?? 0);
+	});
+};
+
+export function validateSemanticReviewCoverage(
+	files: ReviewModeFileChange[],
+	fileDiffs: ReviewModeFileDiff[],
+	semanticFiles: ReviewModeSemanticFile[],
+): void {
+	const semanticByPath = new Map(semanticFiles.map((file) => [file.path, file]));
+	for (const file of files) {
+		const semanticFile = semanticByPath.get(file.path);
+		if (!semanticFile) throw new Error(`Semantic review omitted ${file.path}.`);
+		const expectedHunks = findReviewModeFileDiff(fileDiffs, file.path)?.hunks.length ?? 0;
+		const indexes = new Set(semanticFile.hunks.map((hunk) => hunk.index));
+		if (indexes.size !== expectedHunks) {
+			throw new Error(`Semantic review covered ${indexes.size}/${expectedHunks} hunks in ${file.path}.`);
+		}
+		for (let index = 0; index < expectedHunks; index++) {
+			if (!indexes.has(index)) throw new Error(`Semantic review omitted hunk ${index} in ${file.path}.`);
+		}
+	}
 }
 
 export function collectReviewModeNotes(entries: any[]): ReviewModeNoteEntry[] {
@@ -1106,6 +1359,19 @@ function buildSelectionScopeDiff(scope: Extract<ReviewModeScope, { kind: "select
 	return header ? `${header}\n${snippet}` : snippet;
 }
 
+function reviewModeScopeKey(scope: ReviewModeScope): string {
+	switch (scope.kind) {
+		case "all":
+			return "all";
+		case "file":
+			return `file:${scope.filePath}`;
+		case "hunk":
+			return `hunk:${scope.filePath}:${scope.hunkIndex}`;
+		case "selection":
+			return `selection:${scope.filePath}:${scope.rawStartLine}:${scope.rawEndLine}`;
+	}
+}
+
 function noteMatchesScope(note: ReviewModeNoteEntry, scope: ReviewModeScope, source: ReviewModeSource): boolean {
 	if (note.source !== source) return false;
 	if (scope.kind === "all") return note.scope.kind === "all";
@@ -1128,6 +1394,7 @@ export class ReviewModeWorkbench implements Focusable {
 	private readonly theme: Theme;
 	private readonly options: ReviewModeWorkbenchOptions;
 	private readonly notes: ReviewModeNoteEntry[];
+	private readonly semanticFiles = new Map<string, ReviewModeSemanticFile>();
 	private selectedIndex = 0;
 	private selectedHunkIndex = 0;
 	private focusArea: ReviewModeFocusArea = "files";
@@ -1143,10 +1410,12 @@ export class ReviewModeWorkbench implements Focusable {
 	private lastQuestionScope: ReviewModeScope | null = null;
 	private lastAnswer = "";
 	private lastAnswerTimestamp: number | null = null;
+	private readonly semanticAnswers = new Map<string, string>();
 	private diffScrollOffset = 0;
 	private lastDiffPaneHeight = 1;
 	private composerScrollOffset = 0;
 	private lastBottomPaneHeight = 1;
+	private lastBottomPaneWidth = 40;
 	private cachedDisplayedFilePath: string | null = null;
 	private cachedDisplayedFileLines: ReviewDiffDisplayLine[] = [];
 	private cachedDisplayedFileHunkLineIndexes: number[] = [];
@@ -1155,6 +1424,7 @@ export class ReviewModeWorkbench implements Focusable {
 		this.theme = theme;
 		this.options = options;
 		this.notes = [...options.initialNotes];
+		for (const file of options.semanticFiles ?? []) this.semanticFiles.set(file.path, file);
 		this.ensureSelectionState();
 	}
 
@@ -1175,7 +1445,10 @@ export class ReviewModeWorkbench implements Focusable {
 	getSelectedScope(): ReviewModeScope {
 		this.ensureSelectionState();
 		if (this.focusArea === "composer" && this.composerScope) return this.composerScope;
-		return this.getVisualSelectionScope() ?? this.getCurrentFileScope();
+		if (this.focusArea === "content") {
+			return this.getVisualSelectionScope() ?? this.getSelectedHunkScope() ?? this.getCurrentFileScope();
+		}
+		return this.getCurrentFileScope();
 	}
 
 	focusContent(): void {
@@ -1278,6 +1551,7 @@ export class ReviewModeWorkbench implements Focusable {
 	finishAnswer(text: string): void {
 		this.answerPending = false;
 		this.lastAnswer = text;
+		if (this.lastQuestionScope) this.semanticAnswers.set(reviewModeScopeKey(this.lastQuestionScope), text);
 		this.lastAnswerTimestamp = Date.now();
 		this.pinComposerToBottom();
 		this.options.requestRender();
@@ -1286,6 +1560,8 @@ export class ReviewModeWorkbench implements Focusable {
 	recordNote(note: ReviewModeNoteEntry): void {
 		this.notes.push(note);
 		this.composerScope = note.scope;
+		this.lastQuestionScope = note.scope;
+		this.lastQuestion = "";
 		this.lastAnswer = `Saved note: ${note.note}`;
 		this.lastAnswerTimestamp = Date.now();
 		this.answerPending = false;
@@ -1305,55 +1581,60 @@ export class ReviewModeWorkbench implements Focusable {
 
 	render(width: number): string[] {
 		this.ensureSelectionState();
-		const layoutWidth = Math.max(1, width - 2);
+		const boundedWidth = Number.isFinite(width) ? Math.max(1, Math.min(1_000, Math.floor(width))) : 120;
+		const layoutWidth = Math.max(1, boundedWidth - 2);
 		if (layoutWidth < WIDE_LAYOUT_MIN_WIDTH) {
-			return this.renderStacked(width);
+			return this.renderStacked(boundedWidth);
 		}
-		return this.renderWide(width);
+		return this.renderWide(boundedWidth);
 	}
 
 	invalidate(): void {}
 
 	private renderWide(width: number): string[] {
-		const gap = 1;
+		const gapCount = 2;
 		const outerWidth = Math.max(40, width);
 		const innerWidth = Math.max(20, outerWidth - 2);
 		const terminalRows = process.stdout.rows && process.stdout.rows > 0 ? process.stdout.rows : 40;
 		const modalHeight = Math.max(28, Math.floor(terminalRows * REVIEW_MODAL_HEIGHT_RATIO));
-		const composerPaneHeight = REVIEW_COMPOSER_PANE_HEIGHT;
-		const middlePaneHeight = Math.max(16, modalHeight - REVIEW_HEADER_LINES - composerPaneHeight);
+		const paneHeight = Math.max(18, modalHeight - REVIEW_HEADER_LINES);
 		const header = `${this.theme.bold("Review Mode")} ${this.theme.fg("accent", `· ${this.options.source}`)} ${this.theme.fg("dim", `· ${this.options.cwd}`)}`;
-		const middleAvailableWidth = innerWidth - gap;
-		const filesWidth = Math.max(28, Math.floor(middleAvailableWidth / 3));
-		const contentWidth = Math.max(50, middleAvailableWidth - filesWidth);
+		const availableWidth = innerWidth - gapCount;
+		const filesWidth = Math.max(
+			REVIEW_FILE_COLUMN_MIN_WIDTH,
+			Math.min(REVIEW_FILE_COLUMN_MAX_WIDTH, Math.floor(availableWidth * 0.2)),
+		);
+		const mainAvailableWidth = availableWidth - filesWidth;
+		const contentWidth = Math.floor(mainAvailableWidth / 2);
+		const semanticWidth = mainAvailableWidth - contentWidth;
 		const filesPane = createPaneLines(
 			this.theme,
 			this.buildFilePaneTitle(),
-			this.buildFilePaneContent(middlePaneHeight - 2),
+			this.buildFilePaneContent(paneHeight - 2),
 			filesWidth,
-			middlePaneHeight,
+			paneHeight,
 		);
 		const contentPane = createPaneLines(
 			this.theme,
 			this.buildContentPaneTitle(),
-			this.buildDiffPaneContent(middlePaneHeight - 2),
+			this.buildDiffPaneContent(paneHeight - 2),
 			contentWidth,
-			middlePaneHeight,
+			paneHeight,
 		);
-		const bottomPane = createPaneLines(
+		this.lastBottomPaneWidth = Math.max(1, semanticWidth - 2);
+		const semanticPane = createPaneLines(
 			this.theme,
 			this.getBottomPaneTitle(),
-			this.buildBottomPaneContent(composerPaneHeight - 2),
-			innerWidth,
-			composerPaneHeight,
+			this.buildBottomPaneContent(paneHeight - 2),
+			semanticWidth,
+			paneHeight,
 		);
 		return createModalFrameLines(
 			this.theme,
 			header,
 			[
 				this.theme.fg("dim", truncateToWidth(this.buildScopeSummary(), innerWidth)),
-				...mergePaneColumns([filesPane, contentPane]),
-				...bottomPane,
+				...mergePaneColumns([filesPane, contentPane, semanticPane]),
 			],
 			outerWidth,
 			this.theme.fg("dim", this.buildFooterHelp()),
@@ -1368,6 +1649,7 @@ export class ReviewModeWorkbench implements Focusable {
 		const filesPaneHeight = 6;
 		const composerPaneHeight = 7;
 		const contentPaneHeight = Math.max(10, modalHeight - REVIEW_HEADER_LINES - filesPaneHeight - composerPaneHeight);
+		this.lastBottomPaneWidth = Math.max(1, innerWidth - 2);
 		const panes = [
 			createPaneLines(this.theme, this.buildFilePaneTitle(), this.buildFilePaneContent(filesPaneHeight - 2), innerWidth, filesPaneHeight),
 			createPaneLines(this.theme, this.buildContentPaneTitle(), this.buildDiffPaneContent(contentPaneHeight - 2), innerWidth, contentPaneHeight),
@@ -1411,7 +1693,7 @@ export class ReviewModeWorkbench implements Focusable {
 			lines.push(this.theme.fg("dim", `showing ${windowStart + 1}-${windowStart + visibleFiles.length} of ${this.options.files.length}`));
 		}
 		lines.push("");
-		lines.push(this.theme.fg("dim", "Enter opens file · Tab/Shift+Enter/A asks about all changes"));
+		lines.push(this.theme.fg("dim", "Enter opens code · Tab/Shift+Enter/A asks about all changes"));
 		return lines.slice(0, height);
 	}
 
@@ -1430,7 +1712,7 @@ export class ReviewModeWorkbench implements Focusable {
 			: this.focusArea === "content"
 				? " · CODE"
 				: "";
-		return `Content · ${selected ? formatReviewModeChange(selected) : "no file"}${modeLabel}${hunkLabel} · ${range}`;
+		return `Code Changes · ${selected ? formatReviewModeChange(selected) : "no file"}${modeLabel}${hunkLabel} · ${range}`;
 	}
 
 	private invalidateDisplayedFileCache(): void {
@@ -1442,6 +1724,13 @@ export class ReviewModeWorkbench implements Focusable {
 	private getCurrentFileScope(): ReviewModeScope {
 		const filePath = this.getSelectedChange()?.path ?? this.options.files[0]?.path ?? "";
 		return { kind: "file", filePath };
+	}
+
+	private getSelectedHunkScope(): Extract<ReviewModeScope, { kind: "hunk" }> | null {
+		const filePath = this.getSelectedChange()?.path;
+		const hunk = this.getSelectedHunk();
+		if (!filePath || !hunk) return null;
+		return { kind: "hunk", filePath, hunkIndex: hunk.index, heading: hunk.heading };
 	}
 
 	private getCurrentFileDiffDisplayLines(): ReviewDiffDisplayLine[] {
@@ -1608,32 +1897,53 @@ export class ReviewModeWorkbench implements Focusable {
 		return visible.map((line, index) => this.styleContentLine(line!, this.diffScrollOffset + index));
 	}
 
+	private getGeneratedSemanticText(scope: ReviewModeScope): string {
+		if (scope.kind === "all") {
+			return this.options.files
+				.map((file) => {
+					const semanticFile = this.semanticFiles.get(file.path);
+					return semanticFile ? `${file.path}: ${semanticFile.summary}` : "";
+				})
+				.filter(Boolean)
+				.join("\n\n");
+		}
+		const semanticFile = this.semanticFiles.get(scope.filePath);
+		if (!semanticFile) return "";
+		if (scope.kind === "file") return semanticFile.summary;
+		const hunkIndex = scope.kind === "hunk" ? scope.hunkIndex : this.selectedHunkIndex;
+		return semanticFile.hunks.find((hunk) => hunk.index === hunkIndex)?.text ?? semanticFile.summary;
+	}
+
 	private getBottomPaneLines(): string[] {
 		const lines: string[] = [];
 		const currentScope = this.getSelectedScope();
+		const currentScopeKey = reviewModeScopeKey(currentScope);
+		const isCurrentQuestion = !!this.lastQuestionScope && reviewModeScopeKey(this.lastQuestionScope) === currentScopeKey;
+		const scopedAnswer = isCurrentQuestion
+			? this.lastAnswer
+			: this.semanticAnswers.get(currentScopeKey) ?? this.getGeneratedSemanticText(currentScope);
 		lines.push(this.theme.fg("muted", `selection: ${formatReviewModeScope(currentScope, this.options.files.length, this.options.source)}`));
-		lines.push(this.theme.fg("dim", "Enter asks about the current scope · answers stay here · target 2-5 short lines"));
 		if (this.mode === "ask" || this.mode === "note") {
 			lines.push("");
 			lines.push(this.theme.fg("accent", this.mode === "ask" ? "Scoped question" : "Scoped note"));
 			lines.push(`${this.mode}: ${renderCursorText(this.draft, this.cursor, this.focused)}`);
 		}
-		if (this.lastQuestionScope) {
+		if (isCurrentQuestion && this.lastQuestionScope) {
 			lines.push("");
 			lines.push(this.theme.fg("muted", `last scope: ${formatReviewModeScope(this.lastQuestionScope, this.options.files.length, this.options.source)}`));
 		}
-		if (this.lastQuestion) {
+		if (isCurrentQuestion && this.lastQuestion) {
 			lines.push(this.theme.fg("accent", `Q: ${this.lastQuestion}`));
 		}
-		if (this.answerPending) {
+		if (isCurrentQuestion && this.answerPending) {
 			lines.push(this.theme.fg("warning", "Answering with the current session context..."));
 		}
-		if (this.lastAnswer) {
-			for (const line of this.lastAnswer.split(/\r?\n/)) {
+		if (scopedAnswer) {
+			for (const line of scopedAnswer.split(/\r?\n/)) {
 				lines.push(line);
 			}
-		} else if (!this.answerPending && this.mode === "browse") {
-			lines.push(this.theme.fg("dim", "No scoped answer yet."));
+		} else if ((!this.answerPending || !isCurrentQuestion) && this.mode === "browse") {
+			lines.push(this.theme.fg("warning", "No generated semantic explanation is available for this change."));
 		}
 		const relatedNotes = this.notes.filter((note) => noteMatchesScope(note, currentScope, this.options.source));
 		if (relatedNotes.length > 0) {
@@ -1644,6 +1954,12 @@ export class ReviewModeWorkbench implements Focusable {
 			}
 		}
 		return lines;
+	}
+
+	private getWrappedBottomPaneLines(): string[] {
+		return this.getBottomPaneLines().flatMap((line) =>
+			line.length > 0 ? wrapTextWithAnsi(line, this.lastBottomPaneWidth) : [""],
+		);
 	}
 
 	private clampComposerScroll(totalLines: number): void {
@@ -1657,13 +1973,13 @@ export class ReviewModeWorkbench implements Focusable {
 	}
 
 	private pinComposerToBottom(): void {
-		const totalLines = this.getBottomPaneLines().length;
+		const totalLines = this.getWrappedBottomPaneLines().length;
 		this.clampComposerScroll(totalLines);
 		this.composerScrollOffset = Math.max(0, totalLines - this.lastBottomPaneHeight);
 	}
 
 	private scrollComposer(delta: number): void {
-		const totalLines = this.getBottomPaneLines().length;
+		const totalLines = this.getWrappedBottomPaneLines().length;
 		this.clampComposerScroll(totalLines);
 		const maxOffset = Math.max(0, totalLines - this.lastBottomPaneHeight);
 		const next = Math.max(0, Math.min(maxOffset, this.composerScrollOffset + delta));
@@ -1674,18 +1990,22 @@ export class ReviewModeWorkbench implements Focusable {
 
 	private buildBottomPaneContent(height: number): string[] {
 		this.lastBottomPaneHeight = Math.max(1, height);
-		const lines = this.getBottomPaneLines();
+		const lines = this.getWrappedBottomPaneLines();
 		this.clampComposerScroll(lines.length);
 		return lines.slice(this.composerScrollOffset, this.composerScrollOffset + height);
 	}
 
 	private getBottomPaneTitle(): string {
-		const total = this.getBottomPaneLines().length;
+		const total = this.getWrappedBottomPaneLines().length;
 		this.clampComposerScroll(total);
 		const start = total === 0 ? 0 : this.composerScrollOffset + 1;
 		const end = Math.min(total, this.composerScrollOffset + this.lastBottomPaneHeight);
 		const range = total === 0 ? "0/0" : `${start}-${end}/${total}`;
-		const base = this.mode === "note" ? "Composer · Save Note" : this.mode === "ask" ? "Composer · Ask Question" : "Composer";
+		const base = this.mode === "note"
+			? "Semantic Goal Context · Save Note"
+			: this.mode === "ask"
+				? "Semantic Goal Context · Ask"
+				: "Semantic Goal Context";
 		return `${base} · ${range}`;
 	}
 
@@ -1698,20 +2018,20 @@ export class ReviewModeWorkbench implements Focusable {
 
 	private buildFooterHelp(): string {
 		if (this.mode === "ask" || this.mode === "note") {
-			return "Composer · type question/note · Enter submit · Esc back";
+			return "Semantic context · type question/note · Enter submit · Esc back";
 		}
 		if (this.focusArea === "composer") {
-			const base = "Composer · Enter follow-up · n note · J/K scroll composer · Esc back";
+			const base = "Semantic context · Enter follow-up · n note · J/K scroll · Esc back";
 			return this.answerPending ? `${base} · waiting for scoped answer` : base;
 		}
 		if (this.focusArea === "content") {
 			const navigation = this.visualSelectionAnchorLineIndex == null ? "j/k lines · ↑↓ hunks" : "j/k/↑↓ extend selection";
 			const enterHint = this.visualSelectionAnchorLineIndex == null ? "Enter ask file" : "Enter ask selection";
 			const visualHint = this.visualSelectionAnchorLineIndex == null ? "b/v visual select" : "b/v/Esc cancel selection";
-			const base = `Content · ${navigation} · Ctrl+U/Ctrl+D scroll · g/G top/bottom · ${enterHint} · ${visualHint} · Esc files`;
+			const base = `Code · ${navigation} · Ctrl+U/Ctrl+D scroll · g/G top/bottom · e explain · ${enterHint} · ${visualHint} · Esc files`;
 			return this.answerPending ? `${base} · waiting for scoped answer` : base;
 		}
-		const base = "Files · ↑↓/j/k select file · Enter inspect file · Tab ask all · J/K scroll composer · Esc close";
+		const base = "Files · ↑↓/j/k select file · Enter inspect file · Tab ask all · J/K scroll context · Esc close";
 		return this.answerPending ? `${base} · waiting for scoped answer` : base;
 	}
 
@@ -1747,11 +2067,10 @@ export class ReviewModeWorkbench implements Focusable {
 		if (this.visualSelectionAnchorLineIndex != null) {
 			this.visualSelectionAnchorLineIndex = Math.max(0, Math.min(lines.length - 1, this.visualSelectionAnchorLineIndex));
 		}
-		if (hunkLineIndexes.length > 0 && this.visualSelectionAnchorLineIndex == null) {
+		if (hunkLineIndexes.length > 0 && this.visualSelectionAnchorLineIndex == null && this.focusArea === "files") {
 			this.contentCursorLineIndex = hunkLineIndexes[this.selectedHunkIndex] ?? this.contentCursorLineIndex;
 		}
 		this.syncSelectedHunkToCursor(lines);
-		this.ensureContentCursorVisible();
 	}
 
 	private submitDraft(): boolean {
@@ -1894,6 +2213,13 @@ export class ReviewModeWorkbench implements Focusable {
 			this.beginInputMode("ask", this.getVisualSelectionScope() ?? this.getCurrentFileScope());
 			return;
 		}
+		if (data === "e" || data === "E") {
+			if (this.answerPending) return;
+			const scope = this.getVisualSelectionScope() ?? this.getSelectedHunkScope() ?? this.getCurrentFileScope();
+			this.startQuestion(scope, SEMANTIC_CONTEXT_QUESTION);
+			this.options.onAsk(scope, SEMANTIC_CONTEXT_QUESTION);
+			return;
+		}
 		if (data === "n" || data === "N") {
 			this.beginInputMode("note", this.getVisualSelectionScope() ?? this.getCurrentFileScope());
 		}
@@ -1976,7 +2302,12 @@ export class ReviewModeWorkbench implements Focusable {
 	}
 }
 
-export async function handleReviewModeCommand(pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext): Promise<void> {
+export async function handleReviewModeCommand(
+	pi: ExtensionAPI,
+	args: string,
+	ctx: ExtensionCommandContext,
+	analyzeSemanticReview: ReviewModeSemanticAnalyzer = generateSemanticReview,
+): Promise<void> {
 	const parsed = parseReviewModeArgs(args);
 	if (parsed.error) {
 		ctx.ui.notify(parsed.error, "error");
@@ -2009,7 +2340,39 @@ export async function handleReviewModeCommand(pi: ExtensionAPI, args: string, ct
 	}
 
 	const sessionId = ctx.sessionManager.getSessionId();
-	const initialNotes = collectReviewModeNotes(ctx.sessionManager.getEntries()).filter((note) => note.source === parsed.source);
+	const sessionEntries = ctx.sessionManager.getEntries();
+	const diffHash = buildReviewModeDiffHash(parsed.source, loaded.data.files, loaded.data.fullDiff);
+	let semanticSnapshot = findReviewModeSemanticSnapshot(sessionEntries, parsed.source, diffHash);
+	if (!semanticSnapshot) {
+		const goalContext = buildReviewModeGoalContext(sessionEntries);
+		ctx.ui.notify(`Generating semantic explanations for ${loaded.data.files.length} changed file(s)...`, "info");
+		try {
+			const semanticFiles = await analyzeSemanticReview(
+				{
+					source: parsed.source,
+					files: loaded.data.files,
+					fileDiffs: loaded.data.fileDiffs,
+					fullDiff: loaded.data.fullDiff,
+					goalContext,
+				},
+				ctx,
+			);
+			validateSemanticReviewCoverage(loaded.data.files, loaded.data.fileDiffs, semanticFiles);
+			semanticSnapshot = {
+				source: parsed.source,
+				diffHash,
+				goalContext,
+				files: semanticFiles,
+				createdAt: Date.now(),
+			};
+			pi.appendEntry(REVIEW_MODE_SEMANTIC_ENTRY_TYPE, semanticSnapshot);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			ctx.ui.notify(`Could not generate semantic review: ${message}`, "error");
+			return;
+		}
+	}
+	const initialNotes = collectReviewModeNotes(sessionEntries).filter((note) => note.source === parsed.source);
 	const runtimeId = nextReviewWorkbenchId++;
 	let runtime: ActiveReviewWorkbenchRuntime | null = null;
 
@@ -2023,6 +2386,7 @@ export async function handleReviewModeCommand(pi: ExtensionAPI, args: string, ct
 					fileDiffs: loaded.data.fileDiffs,
 					fullDiff: loaded.data.fullDiff,
 					initialNotes,
+					semanticFiles: semanticSnapshot.files,
 					requestRender: () => tui.requestRender(),
 					onAsk: (scope, text) => {
 						const injection: ReviewModeInjectionInput = {
@@ -2100,7 +2464,8 @@ let pendingReviewQuestion: PendingReviewQuestion | null = null;
 let activeReviewQuestion: ActiveReviewQuestion | null = null;
 let activeReviewWorkbench: ActiveReviewWorkbenchRuntime | null = null;
 
-export default function reviewModeExtension(pi: ExtensionAPI) {
+export default function reviewModeExtension(pi: ExtensionAPI, options: ReviewModeExtensionOptions = {}) {
+	const analyzeSemanticReview = options.analyzeSemanticReview ?? generateSemanticReview;
 	pi.on("session_start", async () => {
 		pendingReviewQuestion = null;
 		activeReviewQuestion = null;
@@ -2142,7 +2507,7 @@ export default function reviewModeExtension(pi: ExtensionAPI) {
 
 	pi.registerCommand("review-mode", {
 		description: "Open an in-session review workbench for local, staged, unstaged, or outgoing git changes",
-		handler: async (args, ctx) => handleReviewModeCommand(pi, args, ctx),
+		handler: async (args, ctx) => handleReviewModeCommand(pi, args, ctx, analyzeSemanticReview),
 	});
 
 	pi.registerCommand("review-notes", {
