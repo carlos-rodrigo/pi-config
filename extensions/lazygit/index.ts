@@ -1,18 +1,18 @@
-import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
-import { StringEnum } from "@earendil-works/pi-ai";
-import * as path from "node:path";
 import * as fs from "node:fs";
+import * as path from "node:path";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
+import { matchesKey, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import { execChecked } from "../lib/process.ts";
 
-export type LazygitOpenMode = "horizontal" | "vertical" | "window" | "popup";
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-async function isInsideTmux(): Promise<boolean> {
-  return !!process.env.TMUX;
+export interface HerdrLazygitTab {
+  tabId: string;
+  paneId: string;
 }
+
+const POLL_INTERVAL_MS = 200;
+const STARTUP_IDLE_POLLS = 25;
 
 async function isGitRepo(pi: Pick<ExtensionAPI, "exec">, dir: string, signal?: AbortSignal): Promise<boolean> {
   try {
@@ -34,216 +34,246 @@ async function hasLazygit(pi: Pick<ExtensionAPI, "exec">, signal?: AbortSignal):
   }
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
+function herdrWorkspaceId(): string | undefined {
+  return process.env.HERDR_WORKSPACE_ID?.trim() || undefined;
 }
 
-export function buildTmuxLazygitCommand(targetDir: string, splitType: LazygitOpenMode): string {
-  const quotedDir = shellQuote(targetDir);
-
-  switch (splitType) {
-    case "vertical":
-      return `tmux split-window -v -c ${quotedDir} \"lazygit\"`;
-    case "horizontal":
-      return `tmux split-window -h -c ${quotedDir} \"lazygit\"`;
-    case "window":
-      return `tmux new-window -c ${quotedDir} -n \"lazygit\" \"lazygit\"`;
-    case "popup":
-    default:
-      return `tmux popup -E -w 90% -h 90% -d ${quotedDir} \"lazygit\"`;
-  }
+export function parseLazygitCommandArgs(args: string): { path?: string } {
+  const withoutLegacySplit = args
+    .trim()
+    .replace(/(?:^|\s)--split\s+(?:horizontal|vertical|window|popup)(?=\s|$)/gi, " ")
+    .trim();
+  return withoutLegacySplit ? { path: withoutLegacySplit } : {};
 }
 
-export function parseLazygitCommandArgs(args: string): { path?: string; split: LazygitOpenMode } {
-  const normalized = args.trim();
-  if (!normalized) return { split: "popup" };
-
-  let split: LazygitOpenMode = "popup";
-  let rest = normalized;
-
-  const splitMatch = rest.match(/(?:^|\s)--split\s+(horizontal|vertical|window|popup)(?=\s|$)/i);
-  if (splitMatch) {
-    split = splitMatch[1]!.toLowerCase() as LazygitOpenMode;
-    const start = splitMatch.index ?? 0;
-    rest = `${rest.slice(0, start)} ${rest.slice(start + splitMatch[0].length)}`.trim();
-  }
-
-  return {
-    path: rest || undefined,
-    split,
-  };
-}
-
-function isPopupUnsupportedError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /popup/i.test(message) && /unknown|unsupported|invalid/i.test(message);
-}
-
-function buildTmuxLazygitArgs(targetDir: string, splitType: LazygitOpenMode): string[] {
-  switch (splitType) {
-    case "vertical":
-      return ["split-window", "-v", "-c", targetDir, "lazygit"];
-    case "horizontal":
-      return ["split-window", "-h", "-c", targetDir, "lazygit"];
-    case "window":
-      return ["new-window", "-c", targetDir, "-n", "lazygit", "lazygit"];
-    case "popup":
-    default:
-      return ["popup", "-E", "-w", "90%", "-h", "90%", "-d", targetDir, "lazygit"];
-  }
-}
-
-export async function openLazygitInTmux(pi: ExtensionAPI, targetDir: string, splitType: LazygitOpenMode): Promise<LazygitOpenMode> {
+export function parseHerdrTabCreated(output: string): HerdrLazygitTab {
   try {
-    await execChecked(pi, "tmux", buildTmuxLazygitArgs(targetDir, splitType));
-    return splitType;
+    const parsed = JSON.parse(output) as {
+      result?: { root_pane?: { pane_id?: unknown }; tab?: { tab_id?: unknown } };
+    };
+    const paneId = parsed.result?.root_pane?.pane_id;
+    const tabId = parsed.result?.tab?.tab_id;
+    if (typeof paneId === "string" && typeof tabId === "string") return { tabId, paneId };
+  } catch {
+    // Report one stable error below.
+  }
+  throw new Error("Invalid Herdr tab creation response");
+}
+
+async function closeHerdrTab(pi: Pick<ExtensionAPI, "exec">, tabId: string): Promise<void> {
+  await pi.exec("herdr", ["tab", "close", tabId]).catch(() => undefined);
+}
+
+export async function launchLazygitInHerdr(
+  pi: Pick<ExtensionAPI, "exec">,
+  targetDir: string,
+  workspaceId: string,
+  signal?: AbortSignal,
+): Promise<HerdrLazygitTab> {
+  const created = await execChecked(pi, "herdr", [
+    "tab",
+    "create",
+    "--workspace",
+    workspaceId,
+    "--cwd",
+    targetDir,
+    "--label",
+    "lazygit",
+    "--no-focus",
+  ], { signal, timeout: 5_000 });
+  const tab = parseHerdrTabCreated(created.stdout);
+
+  try {
+    await execChecked(pi, "herdr", ["pane", "run", tab.paneId, "lazygit"], { signal, timeout: 5_000 });
+    return tab;
   } catch (error) {
-    if (splitType === "popup" && isPopupUnsupportedError(error)) {
-      await execChecked(pi, "tmux", buildTmuxLazygitArgs(targetDir, "window"));
-      return "window";
-    }
+    await closeHerdrTab(pi, tab.tabId);
     throw error;
   }
 }
 
-// ── Extension ──────────────────────────────────────────────────────────────
+function capturedScreen(output: string): string[] {
+  const lines = output.replace(/\r/g, "").split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
+}
 
-export default function lazygitExtension(pi: ExtensionAPI) {
-  // ── Command ────────────────────────────────────────────────────────────────
+function foregroundRunsLazygit(output: string): boolean | undefined {
+  try {
+    const parsed = JSON.parse(output) as {
+      result?: { process_info?: { foreground_processes?: Array<{ name?: unknown; argv0?: unknown }> } };
+    };
+    const processes = parsed.result?.process_info?.foreground_processes;
+    if (!Array.isArray(processes)) return undefined;
+    return processes.some((process) =>
+      [process.name, process.argv0].some((value) => typeof value === "string" && /(^|\/)lazygit$/.test(value)),
+    );
+  } catch {
+    return undefined;
+  }
+}
 
-  pi.registerCommand("lazygit", {
-    description: "Open LazyGit in a tmux popup (usage: /lazygit [path] [--split horizontal|vertical|window|popup])",
-    handler: async (args, ctx) => {
-      if (!(await hasLazygit(pi))) {
-        ctx.ui.notify("LazyGit is not installed", "error");
-        return;
-      }
-      if (!(await isInsideTmux())) {
-        ctx.ui.notify("Not inside tmux", "error");
-        return;
-      }
+async function resolveTargetDir(cwd: string, requestedPath?: string): Promise<string> {
+  if (!requestedPath) return cwd;
+  const normalized = requestedPath.replace(/^@/, "");
+  const resolved = path.isAbsolute(normalized) ? normalized : path.resolve(cwd, normalized);
+  try {
+    const stat = await fs.promises.stat(resolved);
+    return stat.isDirectory() ? resolved : path.dirname(resolved);
+  } catch {
+    throw new Error(`Path not found: ${requestedPath}`);
+  }
+}
 
-      const parsed = parseLazygitCommandArgs(args ?? "");
+async function showLazygitModal(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  targetDir: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (ctx.mode !== "tui") throw new Error("The LazyGit modal requires Pi TUI mode");
+  const workspaceId = herdrWorkspaceId();
+  if (!workspaceId || process.env.HERDR_ENV !== "1") {
+    throw new Error("The LazyGit modal requires Pi to run inside Herdr");
+  }
 
-      let targetDir = ctx.cwd;
-      const targetPath = parsed.path?.trim();
-      if (targetPath) {
-        const resolved = path.isAbsolute(targetPath)
-          ? targetPath
-          : path.resolve(ctx.cwd, targetPath);
-        try {
-          const stat = fs.statSync(resolved);
-          targetDir = stat.isDirectory() ? resolved : path.dirname(resolved);
-        } catch {
-          ctx.ui.notify(`Path not found: ${targetPath}`, "error");
+  const tab = await launchLazygitInHerdr(pi, targetDir, workspaceId, signal);
+
+  await ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
+    let lines = [theme.fg("dim", "Opening LazyGit…")];
+    let pollTimer: NodeJS.Timeout | undefined;
+    let polling = false;
+    let finished = false;
+    let lazygitStarted = false;
+    let idlePolls = 0;
+    let inputQueue = Promise.resolve();
+
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (pollTimer) clearInterval(pollTimer);
+      void closeHerdrTab(pi, tab.tabId).finally(() => done(undefined));
+    };
+
+    const poll = async () => {
+      if (polling || finished) return;
+      polling = true;
+      try {
+        const [screen, processInfo] = await Promise.all([
+          pi.exec("herdr", ["pane", "read", tab.paneId, "--ansi"], { timeout: 2_000 }),
+          pi.exec("herdr", ["pane", "process-info", "--pane", tab.paneId], { timeout: 2_000 }),
+        ]);
+        if (screen.code !== 0) {
+          finish();
           return;
         }
-      }
 
-      if (!(await isGitRepo(pi, targetDir))) {
-        ctx.ui.notify("Not a git repository", "error");
-        return;
+        lines = capturedScreen(screen.stdout);
+        const running = processInfo.code === 0 ? foregroundRunsLazygit(processInfo.stdout) : undefined;
+        if (running === true) {
+          lazygitStarted = true;
+          idlePolls = 0;
+        } else if (running === false) {
+          idlePolls += 1;
+          if (lazygitStarted || idlePolls >= STARTUP_IDLE_POLLS) {
+            finish();
+            return;
+          }
+        }
+        tui.requestRender();
+      } catch {
+        finish();
+      } finally {
+        polling = false;
       }
+    };
 
-      const usedSplit = await openLazygitInTmux(pi, targetDir, parsed.split);
-      const splitLabel = usedSplit === "window" ? "window" : usedSplit === "popup" ? "popup" : "split";
-      ctx.ui.notify(`LazyGit opened for ${path.basename(targetDir)} (${splitLabel})`, "info");
+    pollTimer = setInterval(() => void poll(), POLL_INTERVAL_MS);
+    void poll();
+
+    return {
+      render(width: number): string[] {
+        const safeWidth = Math.max(1, width);
+        return (lines.length > 0 ? lines : [""]).map((line) => truncateToWidth(line, safeWidth, ""));
+      },
+      handleInput(data: string): void {
+        if (matchesKey(data, "ctrl+q")) {
+          finish();
+          return;
+        }
+        inputQueue = inputQueue.then(async () => {
+          if (finished) return;
+          await pi.exec("herdr", ["pane", "send-text", tab.paneId, data], { timeout: 2_000 });
+        }).catch(() => undefined);
+      },
+      invalidate(): void {},
+    };
+  }, {
+    overlay: true,
+    overlayOptions: {
+      anchor: "center",
+      width: "96%",
+      maxHeight: "96%",
+      margin: 1,
     },
   });
+}
 
-  // ── Tool ───────────────────────────────────────────────────────────────────
+async function validateAndOpen(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  requestedPath?: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (!(await hasLazygit(pi, signal))) {
+    throw new Error("LazyGit is not installed. Install it with: brew install lazygit");
+  }
+  const targetDir = await resolveTargetDir(ctx.cwd, requestedPath);
+  if (!(await isGitRepo(pi, targetDir, signal))) throw new Error(`Not a git repository: ${targetDir}`);
+  await showLazygitModal(pi, ctx, targetDir, signal);
+  return targetDir;
+}
+
+export default function lazygitExtension(pi: ExtensionAPI) {
+  pi.registerCommand("lazygit", {
+    description: "Open LazyGit in a modal Pi component backed by Herdr (usage: /lazygit [path])",
+    handler: async (args, ctx) => {
+      try {
+        const parsed = parseLazygitCommandArgs(args ?? "");
+        await validateAndOpen(pi, ctx, parsed.path);
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      }
+    },
+  });
 
   pi.registerTool({
     name: "lazygit",
     label: "LazyGit",
-    description: "Open LazyGit in a tmux popup, split, or window. LazyGit is a terminal UI for git that makes it easy to stage, commit, push, manage branches, resolve conflicts, and more. Requires tmux.",
+    description: "Open LazyGit in an interactive modal Pi overlay backed by a hidden Herdr tab. Requires Herdr, Pi TUI mode, and LazyGit.",
     parameters: Type.Object({
       path: Type.Optional(Type.String({
-        description: "Directory to open lazygit in (defaults to cwd). Can be a file path - will use its parent directory."
+        description: "Directory to open LazyGit in (defaults to cwd). A file path uses its parent directory.",
       })),
       split: Type.Optional(StringEnum(["horizontal", "vertical", "window", "popup"] as const, {
-        description: "Tmux launch mode: 'popup' (default), 'horizontal', 'vertical', or 'window'.",
+        description: "Deprecated compatibility option. LazyGit always opens in the Herdr-backed modal.",
       })),
     }),
-
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      // Check lazygit is installed
-      if (!(await hasLazygit(pi, signal))) {
-        throw new Error("LazyGit is not installed. Install with: pacman -S lazygit (Arch) or brew install lazygit (macOS)");
-      }
-
-      // Check tmux
-      if (!(await isInsideTmux())) {
-        throw new Error("Not inside tmux — cannot open lazygit. Run pi inside tmux first.");
-      }
-
-      // Resolve directory
-      let targetDir = ctx.cwd;
-      if (params.path) {
-        const filePath = params.path.replace(/^@/, "");
-        const resolved = path.isAbsolute(filePath)
-          ? filePath
-          : path.resolve(ctx.cwd, filePath);
-
-        // If it's a file, use parent directory
-        try {
-          const stat = fs.statSync(resolved);
-          targetDir = stat.isDirectory() ? resolved : path.dirname(resolved);
-        } catch {
-          throw new Error(`Path not found: ${params.path}`);
-        }
-      }
-
-      // Check it's a git repo
-      if (!(await isGitRepo(pi, targetDir, signal))) {
-        throw new Error(`Not a git repository: ${targetDir}`);
-      }
-
-      const requestedSplit = params.split || "popup";
-      const usedSplit = await openLazygitInTmux(pi, targetDir, requestedSplit);
-
-      const dirName = path.basename(targetDir);
-      const where = usedSplit === "window" ? "window" : usedSplit === "popup" ? "popup" : "split";
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      const targetDir = await validateAndOpen(pi, ctx, params.path, signal);
       return {
-        content: [{ type: "text", text: `Opened LazyGit for ${dirName} in tmux ${where}.` }],
-        details: { path: targetDir, split: usedSplit },
+        content: [{ type: "text", text: `Closed LazyGit for ${path.basename(targetDir)}.` }],
+        details: { path: targetDir, mode: "herdr-modal" },
       };
     },
-
     renderCall(args, theme) {
-      let text = theme.fg("toolTitle", theme.bold("lazygit "));
-      if (args.path) {
-        text += theme.fg("muted", args.path);
-      } else {
-        text += theme.fg("dim", "(cwd)");
-      }
-      if (args.split && args.split !== "popup") {
-        text += theme.fg("dim", ` [${args.split}]`);
-      }
-      return new Text(text, 0, 0);
+      const target = args.path ? theme.fg("muted", args.path) : theme.fg("dim", "(cwd)");
+      return new Text(`${theme.fg("toolTitle", theme.bold("lazygit "))}${target}`, 0, 0);
     },
-
-    renderResult(result, { expanded }, theme, context) {
-      if (context.isError) {
-        const msg = result.content[0];
-        return new Text(theme.fg("error", msg?.type === "text" ? msg.text : "Error"), 0, 0);
-      }
-
-      const details = result.details as { path: string; split: LazygitOpenMode } | undefined;
-      if (!details) {
-        const msg = result.content[0];
-        return new Text(msg?.type === "text" ? msg.text : "", 0, 0);
-      }
-
-      const dirName = path.basename(details.path);
-      const where = details.split === "window" ? "window" : details.split === "popup" ? "popup" : "split";
-      let text = `🦥 ${theme.fg("success", "LazyGit")} ${theme.fg("dim", "opened for")} ${theme.fg("accent", dirName)} ${theme.fg("muted", `(${where})`)}`;
-
-      if (expanded) {
-        text += "\n" + theme.fg("muted", `  ${details.path}`);
-      }
-
-      return new Text(text, 0, 0);
+    renderResult(result, _options, theme, context) {
+      const message = result.content[0];
+      const text = message?.type === "text" ? message.text : "";
+      return new Text(context.isError ? theme.fg("error", text) : theme.fg("success", text), 0, 0);
     },
   });
 }

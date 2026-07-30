@@ -1,6 +1,6 @@
 # lazygit
 
-Open LazyGit in a tmux popup, split, or window directly from Pi.
+Open LazyGit as an interactive modal overlay inside Pi. A hidden Herdr tab provides the terminal process while the Pi component renders its screen and forwards keyboard input.
 
 ## Install
 
@@ -12,28 +12,22 @@ pi install ./extensions/lazygit
 
 | Feature | Description |
 |---------|-------------|
-| `/lazygit [path] [--split mode]` | Opens LazyGit in tmux |
-| `lazygit` tool | LLM-callable LazyGit launcher |
+| `/lazygit [path]` | Opens the modal for the current repository or requested path |
+| `lazygit` tool | LLM-callable modal launcher |
 
 ## Usage
 
 ```text
 /lazygit
 /lazygit src/
-/lazygit --split horizontal
-/lazygit src/ --split window
 ```
 
-## Split modes
+Use LazyGit normally. Quit with `q`; `Ctrl+Q` force-closes the modal and its hidden Herdr tab.
 
-| Mode | Description |
-|------|-------------|
-| `popup` | Tmux popup overlay (default) |
-| `horizontal` | Horizontal tmux split |
-| `vertical` | Vertical tmux split |
-| `window` | New tmux window |
+The old `--split` command flag and tool parameter are accepted for compatibility but ignored. LazyGit now always opens in the modal.
 
 ## Requirements
 
-- **tmux** — must be running inside a tmux session
-- **lazygit** — must be installed
+- **Herdr** — Pi must run in a Herdr workspace
+- **Pi TUI mode** — modal components are unavailable in print, JSON, and RPC modes
+- **LazyGit** — install with `brew install lazygit`
