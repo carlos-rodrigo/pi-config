@@ -1,0 +1,906 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Find the code behind a concept before changing it · PRD</title>
+  <style data-legacy-content-support>
+
+    :root {
+      color-scheme: light;
+      --white: #ffffff;
+      --zinc-50: #fafafa;
+      --zinc-100: #f4f4f5;
+      --zinc-200: #e4e4e7;
+      --zinc-300: #d4d4d8;
+      --zinc-400: #a1a1aa;
+      --zinc-500: #71717a;
+      --zinc-600: #52525b;
+      --zinc-700: #3f3f46;
+      --zinc-800: #27272a;
+      --zinc-900: #18181b;
+      --emerald-50: #ecfdf5;
+      --emerald-100: #d1fae5;
+      --emerald-300: #6ee7b7;
+      --emerald-500: #10b981;
+      --emerald-600: #059669;
+      --amber-50: #fffbeb;
+      --amber-200: #fde68a;
+      --amber-700: #a16207;
+      --sidebar-width: 18rem;
+      --topbar-height: 3.5rem;
+      --content-width: 50rem;
+      --focus: 0 0 0 3px rgb(16 185 129 / 0.28);
+      --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; background: var(--white); }
+    body {
+      margin: 0;
+      background: var(--white);
+      color: var(--zinc-700);
+      font-family: var(--font-sans);
+      font-size: .875rem;
+      line-height: 1.75rem;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+    h1, h2, h3, p, li, dd { overflow-wrap: anywhere; }
+    a { color: var(--emerald-600); text-underline-offset: .18em; }
+    code {
+      padding: .2rem .38rem;
+      border-radius: .45rem;
+      background: var(--zinc-100);
+      color: var(--zinc-900);
+      box-shadow: inset 0 0 0 1px var(--zinc-300);
+      font-family: var(--font-mono);
+      font-size: .75rem;
+      white-space: normal;
+    }
+    :where(a, summary, button):focus-visible { outline: none; box-shadow: var(--focus); }
+
+    .skip-link {
+      position: fixed;
+      top: .75rem;
+      left: .75rem;
+      z-index: 100;
+      transform: translateY(-180%);
+      padding: .45rem .8rem;
+      border-radius: 999px;
+      background: var(--zinc-900);
+      color: var(--white);
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .skip-link:focus { transform: translateY(0); }
+
+    .sidebar {
+      position: fixed;
+      inset: 0 auto 0 0;
+      z-index: 30;
+      display: flex;
+      width: var(--sidebar-width);
+      flex-direction: column;
+      overflow-y: auto;
+      border-right: 1px solid rgb(24 24 27 / .1);
+      background: var(--white);
+      padding: 1rem 1.5rem 2rem;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: .7rem;
+      min-height: 2rem;
+      color: var(--zinc-900);
+      font-weight: 700;
+      letter-spacing: -.015em;
+      text-decoration: none;
+    }
+    .brand-mark {
+      display: grid;
+      width: 1.65rem;
+      height: 1.65rem;
+      place-items: center;
+      border-radius: .55rem;
+      background: var(--zinc-900);
+      color: var(--emerald-300);
+      box-shadow: 0 0 0 1px rgb(24 24 27 / .08);
+    }
+    .brand-mark svg { width: 1rem; height: 1rem; }
+
+    .side-navigation { margin-top: 2.4rem; }
+    .nav-group + .nav-group { margin-top: 1.8rem; }
+    .nav-group h2 {
+      margin: 0 0 .55rem;
+      color: var(--zinc-900);
+      font-size: .75rem;
+      font-weight: 650;
+      line-height: 1.25rem;
+    }
+    .nav-list {
+      position: relative;
+      margin: 0;
+      padding: 0 0 0 .5rem;
+      list-style: none;
+    }
+    .nav-list::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 .5rem;
+      width: 1px;
+      background: rgb(24 24 27 / .1);
+    }
+    .nav-list a {
+      position: relative;
+      display: block;
+      padding: .25rem .75rem .25rem 1rem;
+      border-radius: .5rem;
+      color: var(--zinc-600);
+      font-size: .875rem;
+      line-height: 1.5rem;
+      text-decoration: none;
+      transition: color 140ms ease, background-color 140ms ease;
+    }
+    .nav-list a:hover { color: var(--zinc-900); background: rgb(24 24 27 / .025); }
+    .nav-list a[aria-current="location"] {
+      background: rgb(24 24 27 / .035);
+      color: var(--zinc-900);
+      font-weight: 550;
+    }
+    .nav-list a[aria-current="location"]::before {
+      content: "";
+      position: absolute;
+      top: .35rem;
+      bottom: .35rem;
+      left: -.5rem;
+      width: 1px;
+      background: var(--emerald-500);
+    }
+    .sidebar-meta {
+      margin-top: auto;
+      padding-top: 2rem;
+      color: var(--zinc-500);
+      font-size: .75rem;
+      line-height: 1.25rem;
+    }
+    .sidebar-meta strong { color: var(--zinc-700); font-weight: 600; }
+
+    .headerbar {
+      position: fixed;
+      inset: 0 0 auto var(--sidebar-width);
+      z-index: 20;
+      display: flex;
+      height: var(--topbar-height);
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0 2rem;
+      border-bottom: 1px solid rgb(24 24 27 / .075);
+      background: rgb(255 255 255 / .88);
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+    }
+    .headerbar-title { color: var(--zinc-600); font-size: .8125rem; font-weight: 550; }
+    .headerbar-meta { display: flex; align-items: center; gap: .65rem; color: var(--zinc-500); font-size: .75rem; }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 1.5rem;
+      padding: .1rem .55rem;
+      border-radius: 999px;
+      background: var(--emerald-50);
+      color: var(--emerald-600);
+      box-shadow: inset 0 0 0 1px rgb(16 185 129 / .25);
+      font-family: var(--font-mono);
+      font-size: .625rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .mobile-menu { display: none; }
+    .content-frame { min-height: 100vh; margin-left: var(--sidebar-width); }
+    .document {
+      display: flex;
+      min-height: 100vh;
+      flex-direction: column;
+      padding: calc(var(--topbar-height) + 4rem) 2rem 3rem;
+    }
+    .prose { width: min(100%, var(--content-width)); margin: 0 auto; }
+
+    .document-header { margin-bottom: 4rem; }
+    .document-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .45rem .75rem;
+      align-items: center;
+      margin-bottom: 1.25rem;
+      color: var(--zinc-500);
+      font-family: var(--font-mono);
+      font-size: .6875rem;
+      line-height: 1.25rem;
+    }
+    .document-kind {
+      color: var(--emerald-600);
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 22ch;
+      margin: 0;
+      color: var(--zinc-900);
+      font-size: clamp(2rem, 5vw, 3rem);
+      font-weight: 750;
+      letter-spacing: -.045em;
+      line-height: 1.08;
+      text-wrap: balance;
+    }
+    .lede {
+      max-width: 68ch;
+      margin: 1.25rem 0 0;
+      color: var(--zinc-600);
+      font-size: 1rem;
+      line-height: 1.75rem;
+    }
+
+    .narrative-section { margin: 0 0 4rem; }
+    .section-label {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      margin-bottom: .45rem;
+      color: var(--emerald-600);
+      font-family: var(--font-mono);
+      font-size: .6875rem;
+      font-weight: 650;
+      line-height: 1.25rem;
+    }
+    .section-label::after { content: ""; width: .2rem; height: .2rem; border-radius: 999px; background: var(--zinc-300); }
+    h2 {
+      margin: 0;
+      color: var(--zinc-900);
+      font-size: 1.25rem;
+      font-weight: 650;
+      letter-spacing: -.02em;
+      line-height: 1.75rem;
+      scroll-margin-top: 6rem;
+    }
+    h3 { margin: 0; color: var(--zinc-900); font-size: .875rem; font-weight: 650; line-height: 1.5rem; }
+    .section-point { margin: .45rem 0 0; color: var(--zinc-600); }
+
+    .opening-list {
+      margin: 1.5rem 0 0;
+      padding: 0;
+      list-style: none;
+      counter-reset: opening;
+      border-top: 1px solid rgb(24 24 27 / .08);
+      border-bottom: 1px solid rgb(24 24 27 / .08);
+    }
+    .opening-list li {
+      position: relative;
+      display: grid;
+      grid-template-columns: 2.5rem 1fr;
+      gap: .75rem;
+      padding: 1rem 0;
+      counter-increment: opening;
+    }
+    .opening-list li + li { border-top: 1px solid rgb(24 24 27 / .06); }
+    .opening-list li::before {
+      content: counter(opening, decimal-leading-zero);
+      color: var(--zinc-400);
+      font-family: var(--font-mono);
+      font-size: .6875rem;
+      font-weight: 650;
+    }
+    .opening-list strong { color: var(--zinc-900); font-weight: 650; }
+
+    .note {
+      display: flex;
+      gap: .75rem;
+      margin: 1.5rem 0 0;
+      padding: 1rem;
+      border: 1px solid rgb(16 185 129 / .2);
+      border-radius: 1rem;
+      background: rgb(236 253 245 / .55);
+      color: #064e3b;
+    }
+    .note--review {
+      border-color: var(--amber-200);
+      background: var(--amber-50);
+      color: #78350f;
+    }
+    .note-icon {
+      display: grid;
+      width: 1rem;
+      height: 1rem;
+      flex: 0 0 auto;
+      place-items: center;
+      margin-top: .32rem;
+      border-radius: 999px;
+      background: var(--emerald-500);
+      color: var(--white);
+      font-size: .65rem;
+      font-weight: 750;
+      line-height: 1;
+    }
+    .note--review .note-icon { background: var(--amber-700); }
+    .note h2, .note h3, .note strong { color: inherit; }
+    .note h2 { font-size: 1rem; line-height: 1.5rem; }
+    .note p { margin: .25rem 0 0; }
+
+    .flow-list {
+      margin: 1.5rem 0 0;
+      padding: 0;
+      list-style: none;
+      border-top: 1px solid rgb(24 24 27 / .08);
+      border-bottom: 1px solid rgb(24 24 27 / .08);
+    }
+    .flow-list li {
+      display: grid;
+      grid-template-columns: 2.4rem 1fr;
+      gap: 1rem;
+      padding: 1.25rem 0;
+    }
+    .flow-list li + li { border-top: 1px solid rgb(24 24 27 / .06); }
+    .step-number {
+      display: grid;
+      width: 1.75rem;
+      height: 1.75rem;
+      place-items: center;
+      border-radius: .55rem;
+      background: rgb(16 185 129 / .08);
+      color: var(--emerald-600);
+      box-shadow: inset 0 0 0 1px rgb(16 185 129 / .2);
+      font-family: var(--font-mono);
+      font-size: .6875rem;
+      font-weight: 700;
+    }
+    .flow-list p { margin: .2rem 0 0; color: var(--zinc-600); }
+
+    .rules,
+    .proof,
+    .source-list {
+      display: grid;
+      gap: .75rem;
+      margin: 1.35rem 0 0;
+      padding: 0;
+      list-style: none;
+    }
+    .rules li,
+    .proof li { position: relative; padding-left: 1.4rem; }
+    .rules li::before,
+    .proof li::before { position: absolute; left: 0; color: var(--emerald-500); font-weight: 750; }
+    .rules li::before { content: "—"; }
+    .proof li::before { content: "✓"; }
+
+    .scope-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }
+    .scope-card {
+      padding: 1.15rem;
+      border: 1px solid rgb(24 24 27 / .08);
+      border-radius: 1rem;
+      background: var(--zinc-50);
+    }
+    .scope-card--excluded { border-color: rgb(161 98 7 / .18); background: rgb(255 251 235 / .55); }
+    .scope-card ul { margin: .75rem 0 0; padding-left: 1.15rem; }
+    .scope-card li + li { margin-top: .4rem; }
+
+    .boundary {
+      margin: 0 0 4rem;
+      padding: 1.25rem;
+      border-left: 3px solid var(--zinc-300);
+      background: linear-gradient(90deg, var(--zinc-50), transparent 75%);
+    }
+    .boundary p { margin: .35rem 0 0; }
+
+    .sources {
+      padding-top: 2rem;
+      border-top: 1px solid rgb(24 24 27 / .08);
+    }
+    .sources h2 { font-size: .875rem; line-height: 1.5rem; }
+    .source-list { gap: .55rem; color: var(--zinc-500); font-size: .8125rem; line-height: 1.5rem; }
+    .source-list li { padding-left: .8rem; border-left: 1px solid var(--zinc-200); }
+
+    [data-review-id] { scroll-margin-top: 6rem; }
+    [data-review-id]:target { outline: 2px solid var(--emerald-500); outline-offset: .35rem; border-radius: .25rem; }
+
+    .provenance {
+      width: min(100%, var(--content-width));
+      margin: auto auto 0;
+      padding-top: 4rem;
+      color: var(--zinc-400);
+      font-size: .6875rem;
+      line-height: 1.25rem;
+    }
+    .provenance p { margin: 0; }
+
+    .mobile-navigation { display: none; }
+
+    @media (max-width: 63.99rem) {
+      .sidebar { display: none; }
+      .headerbar { inset-left: 0; left: 0; padding: 0 1rem; }
+      .headerbar-title, .headerbar .headerbar-meta { display: none; }
+      .mobile-navigation { display: block; }
+      .mobile-navigation summary {
+        display: inline-flex;
+        align-items: center;
+        gap: .55rem;
+        min-height: 2rem;
+        padding: .25rem .5rem;
+        border-radius: .55rem;
+        color: var(--zinc-900);
+        cursor: pointer;
+        font-weight: 650;
+        list-style: none;
+      }
+      .mobile-navigation summary::-webkit-details-marker { display: none; }
+      .menu-icon { width: .75rem; height: .75rem; stroke: currentColor; }
+      .mobile-panel {
+        position: fixed;
+        inset: var(--topbar-height) 0 0 0;
+        z-index: 40;
+        overflow-y: auto;
+        padding: 1.5rem;
+        border-top: 1px solid rgb(24 24 27 / .075);
+        background: var(--white);
+        box-shadow: 0 12px 24px rgb(24 24 27 / .08);
+      }
+      .mobile-panel .side-navigation { max-width: 24rem; margin: 0; }
+      .content-frame { margin-left: 0; }
+      .document { padding: calc(var(--topbar-height) + 3rem) 1.5rem 2.5rem; }
+    }
+
+    @media (max-width: 36rem) {
+      .document { padding-right: 1rem; padding-left: 1rem; }
+      .scope-grid { grid-template-columns: 1fr; }
+      .opening-list li { grid-template-columns: 2rem 1fr; gap: .5rem; }
+      .flow-list li { grid-template-columns: 2rem 1fr; gap: .7rem; }
+      .note { padding: .9rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+    }
+
+    @media print {
+      @page { margin: 16mm; }
+      details:not([open]) > :not(summary) { display: block !important; }
+      html, body { background: var(--white); color: #000; }
+      .skip-link, .sidebar, .headerbar, .mobile-navigation { display: none !important; }
+      .content-frame { margin: 0; }
+      .document { display: block; min-height: 0; padding: 0; }
+      .prose, .provenance { width: auto; max-width: none; }
+      .document-header, .narrative-section, .note, .flow-list li, .scope-card, .boundary, .sources { break-inside: avoid; }
+      .scope-grid { grid-template-columns: 1fr 1fr; }
+      a { color: #000; text-decoration: none; }
+      .provenance { margin-top: 2rem; padding-top: 2rem; color: #000; }
+    }
+  
+  </style>
+  <style data-tailwind-build="prd.tailwind.css">
+/* tailwind-report-css:start */
+*,:after,:before{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }/*! tailwindcss v3.4.19 | MIT License | https://tailwindcss.com*/*,:after,:before{box-sizing:border-box;border:0 solid #e5e7eb}:after,:before{--tw-content:""}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;-o-tab-size:4;tab-size:4;font-family:Geist,Geist Sans,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;font-feature-settings:normal;font-variation-settings:normal;-webkit-tap-highlight-color:transparent}body{line-height:inherit}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,pre,samp{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-feature-settings:normal;font-variation-settings:normal;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}button,input,optgroup,select,textarea{font-family:inherit;font-feature-settings:inherit;font-variation-settings:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}:-moz-focusring{outline:auto}:-moz-ui-invalid{box-shadow:none}progress{vertical-align:baseline}::-webkit-inner-spin-button,::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}summary{display:list-item}blockquote,dd,dl,figure,h1,h2,h3,h4,h5,h6,hr,p,pre{margin:0}fieldset{margin:0}fieldset,legend{padding:0}menu,ol,ul{list-style:none;margin:0;padding:0}dialog{padding:0}textarea{resize:vertical}input::-moz-placeholder,textarea::-moz-placeholder{opacity:1;color:#9ca3af}input::placeholder,textarea::placeholder{opacity:1;color:#9ca3af}[role=button],button{cursor:pointer}:disabled{cursor:default}audio,canvas,embed,iframe,img,object,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}:root{color-scheme:light;--reading-measure:70ch;--reading-wide:50rem;--type-body:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--type-display:var(--type-body);--type-mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;--type-xs:.75rem;--type-sm:.875rem;--type-body-size:.875rem;--type-lede:clamp(1rem,2vw,1.125rem);--type-h2:clamp(1.125rem,2.5vw,1.35rem);--type-h1:clamp(2rem,5vw,3rem);--leading-body:1.75;--leading-tight:1.12;--space-1:.25rem;--space-2:.5rem;--space-3:.75rem;--space-4:1rem;--space-5:1.25rem;--space-6:1.5rem;--space-8:2rem;--space-10:2.5rem;--space-12:3rem;--space-16:4rem;--surface-page:#fff;--surface-paper:#fff;--surface-muted:#fafafa;--surface-strong:#f4f4f5;--text-primary:#18181b;--text-secondary:#52525b;--text-tertiary:#71717a;--accent:#059669;--link:#059669;--accent-soft:#ecfdf5;--info:#285a75;--info-soft:#eaf2f8;--success:#276544;--success-soft:#e8f2eb;--warning:#8b4d00;--warning-soft:#f8eedb;--danger:#a11c1c;--danger-soft:#f8e8e5;--external:#654a80;--external-soft:#f1ecf6;--border:#e4e4e7;--border-strong:#a1a1aa;--sidebar-width:18rem;--topbar-height:3.5rem;--status-draft:#665f55;--status-review:#8b4d00;--status-approved:#276544;--status-blocked:#a11c1c;--status-soft:#f3eee5;--focus-ring:0 0 0 3px rgba(16,185,129,.28);--print-text:#000;--print-border:#9b9b9b;--print-page-margin:16mm;--radius-sm:.35rem;--radius-md:.65rem;--radius-lg:1rem;--motion-feedback:140ms;--motion-enter:220ms;--motion-flow:320ms;--motion-emphasis:420ms;--motion-ease:cubic-bezier(.16,1,.3,1)}*{box-sizing:border-box}html{scroll-behavior:smooth}body,html{background:var(--surface-page)}body{margin:0;color:var(--text-primary);font-family:var(--type-body);font-size:var(--type-body-size);line-height:var(--leading-body);text-rendering:optimizeLegibility}dd,figcaption,h1,h2,h3,li,p{overflow-wrap:anywhere}a{color:var(--link);text-underline-offset:.18em;text-decoration-thickness:.08em}code{padding:.1rem .3rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-muted);font-family:var(--type-mono);font-size:.9em}:where(a,summary,input,button):focus-visible{outline:none;box-shadow:var(--focus-ring)}.skip-link{position:fixed;top:var(--space-4);left:var(--space-4);z-index:10;transform:translateY(-180%);padding:var(--space-2) var(--space-4);border-radius:999px;background:var(--text-primary);color:var(--surface-paper);font-weight:700;text-decoration:none}.skip-link:focus{transform:translateY(0)}.sidebar{position:fixed;inset:0 auto 0 0;z-index:30;display:flex;width:var(--sidebar-width);flex-direction:column;overflow-y:auto;border-right:1px solid rgba(24,24,27,.1);background:var(--surface-paper);padding:1rem 1.5rem 2rem}.brand{display:flex;align-items:center;gap:.7rem;min-height:2rem;color:var(--text-primary);font-weight:700;text-decoration:none}.brand-mark{display:grid;width:1.65rem;height:1.65rem;place-content:center;gap:2px;border-radius:.55rem;background:var(--text-primary)}.brand-mark span{display:block;width:.8rem;height:2px;border-radius:2px;background:#6ee7b7}.brand-mark span:nth-child(2){width:.6rem}.brand-mark span:nth-child(3){width:.4rem}.side-navigation{margin-top:2.4rem}.nav-heading{margin:0 0 .55rem;color:var(--text-primary);font-family:var(--type-body);font-size:.75rem;font-weight:650}.nav-list{position:relative;margin:0;padding:0 0 0 .5rem;list-style:none}.nav-list:before{content:"";position:absolute;inset:0 auto 0 .5rem;width:1px;background:rgba(24,24,27,.1)}.nav-list a{position:relative;display:block;padding:.25rem .75rem .25rem 1rem;border-radius:.5rem;color:var(--text-secondary);font-size:.875rem;line-height:1.5rem;text-decoration:none;transition:color .14s ease,background-color .14s ease}.nav-list a:hover{color:var(--text-primary);background:rgba(24,24,27,.025)}.nav-list a[aria-current=location]{color:var(--text-primary);background:rgba(24,24,27,.035);font-weight:550}.nav-list a[aria-current=location]:before{content:"";position:absolute;top:.35rem;bottom:.35rem;left:-.5rem;width:1px;background:var(--accent)}.sidebar-meta{margin-top:auto;padding-top:2rem;color:var(--text-tertiary);font-size:.75rem;line-height:1.25rem}.sidebar-meta strong{color:var(--text-secondary)}.headerbar{position:fixed;inset:0 0 auto var(--sidebar-width);z-index:20;display:flex;height:var(--topbar-height);align-items:center;justify-content:space-between;gap:1rem;padding:0 2rem;border-bottom:1px solid rgba(24,24,27,.075);background:hsla(0,0%,100%,.9);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}.headerbar-title{color:var(--text-secondary);font-size:.8125rem;font-weight:550}.mobile-navigation{display:none}.content-frame{min-height:100vh;margin-left:var(--sidebar-width)}.document{display:flex;min-height:100vh;flex-direction:column;padding:calc(var(--topbar-height) + 4rem) 2rem 3rem}.prd-page{width:min(100%,var(--reading-wide));margin:0 auto;padding:0;border:0;background:var(--surface-paper)}.prd-document{min-width:0}.document-header{margin-bottom:var(--space-12);padding-bottom:var(--space-8);border-bottom:1px solid var(--border)}.document-meta{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-4);align-items:center;margin-bottom:var(--space-6);color:var(--text-tertiary);font-size:var(--type-xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase}.status{display:inline-flex;align-items:center;min-height:1.65rem;padding:.12rem .55rem;border:1px solid;border-radius:999px;background:var(--status-soft)}.status--draft{color:var(--status-draft)}.status--review{color:var(--status-review)}.status--approved{color:var(--status-approved)}.status--blocked{color:var(--status-blocked)}h1{max-width:16ch;margin:0;font-family:var(--type-display);font-size:var(--type-h1);font-weight:700;letter-spacing:-.025em;line-height:var(--leading-tight);text-wrap:balance}.lede{margin:var(--space-5) 0 0;color:var(--text-secondary);font-size:var(--type-lede)}.lede,.prd-opening{max-width:var(--reading-measure)}.prd-opening{display:grid;gap:var(--space-4);margin:0 0 var(--space-12);padding:0;list-style:none;counter-reset:story-line}.prd-opening>li{position:relative;margin:0;padding-left:var(--space-10);color:var(--text-primary);counter-increment:story-line}.prd-opening>li:before{content:counter(story-line,decimal-leading-zero);position:absolute;left:0;top:.15em;color:var(--accent);font-family:var(--type-mono);font-size:var(--type-xs);font-weight:800;letter-spacing:.06em}.prd-opening strong{font-weight:750}.narrative-section{max-width:var(--reading-measure);margin:0 0 var(--space-12)}.narrative-section+.narrative-section{padding-top:var(--space-10);border-top:1px solid var(--border)}.eyebrow{display:block;margin-bottom:var(--space-2);color:var(--accent);font-size:var(--type-xs);font-weight:800;letter-spacing:.08em;text-transform:uppercase}h2{font-family:var(--type-display);font-size:var(--type-h2);font-weight:650;letter-spacing:-.015em;line-height:1.2;text-wrap:balance}h2,h3{margin:0}h3{font-size:1rem;line-height:1.35}.section-point{margin:var(--space-3) 0 0;color:var(--text-secondary)}.boundary,.decision,.product-bet,.review-focus{max-width:var(--reading-measure);margin:0 0 var(--space-10);padding:var(--space-5) var(--space-6);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-muted)}.product-bet{border-left:4px solid var(--accent)}.boundary p,.decision p,.product-bet p,.review-focus p{margin:var(--space-2) 0 0}.boundary{border-style:dashed}.review-focus{background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 35%,var(--border))}.review-focus strong{color:var(--accent)}.figure-walkthrough,.flow,.proof,.rules,.source-list{display:grid;gap:var(--space-3);margin:var(--space-5) 0 0;padding:0;list-style:none}.flow{counter-reset:flow-step}.flow>li{position:relative;padding:var(--space-4) var(--space-4) var(--space-4) var(--space-12);border-left:2px solid var(--border-strong);background:linear-gradient(90deg,var(--surface-muted),transparent 72%);counter-increment:flow-step}.flow>li:before{content:counter(flow-step);position:absolute;left:var(--space-4);top:var(--space-4);display:grid;place-items:center;width:1.5rem;height:1.5rem;border-radius:999px;background:var(--text-primary);color:var(--surface-paper);font-family:var(--type-mono);font-size:var(--type-xs);font-weight:800}.proof>li,.rules>li{position:relative;padding-left:var(--space-6)}.proof>li:before,.rules>li:before{position:absolute;left:0;color:var(--accent);font-weight:900}.rules>li:before{content:"—"}.proof>li:before{content:"✓"}.no-go,.scope{max-width:var(--reading-measure);margin:var(--space-5) 0 0;padding:var(--space-5);border-top:2px solid var(--text-primary);background:var(--surface-muted)}.no-go{border-top-color:var(--accent)}.no-go ul,.scope ul{margin:var(--space-3) 0 0;padding-left:var(--space-5)}.decision{background:var(--surface-paper);border-top:4px solid var(--text-primary)}.decision-label{color:var(--text-tertiary);font-size:var(--type-xs);font-weight:800;letter-spacing:.08em;text-transform:uppercase}.decision h3{margin-top:var(--space-2);font-family:var(--type-display);font-size:1.35rem}.tradeoff{color:var(--text-secondary)}.sources{max-width:var(--reading-measure);margin-top:var(--space-12);padding-top:var(--space-6);border-top:1px solid var(--border)}.sources h2{font-family:var(--type-body);font-size:1rem}.source-list{gap:var(--space-2);color:var(--text-secondary);font-size:var(--type-sm)}.source-list li{padding-left:var(--space-4);border-left:2px solid var(--border)}.linchpin-figure{max-width:var(--reading-wide);margin:var(--space-6) 0 0;padding:var(--space-4);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-muted)}.figure-question{margin:0 0 var(--space-4);color:var(--text-secondary)}.figure-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;border:1px solid var(--border);background:var(--surface-paper)}.figure-scroll>svg{display:block;width:100%;min-width:35rem;height:auto}.linchpin-figure figcaption{margin-top:var(--space-3);color:var(--text-secondary);font-size:var(--type-sm)}.figure-walkthrough{max-width:var(--reading-measure);counter-reset:figure-step}.figure-walkthrough>li{position:relative;padding-left:var(--space-8);counter-increment:figure-step}.figure-walkthrough>li:before{content:counter(figure-step) ".";position:absolute;left:0;color:var(--accent);font-family:var(--type-mono);font-weight:800}[data-review-id]{scroll-margin-top:var(--space-4)}[data-review-id]:target{outline:3px solid var(--accent);outline-offset:var(--space-2)}.motion-pending{opacity:0}svg .motion-pending{transform-box:fill-box;transform-origin:center}.provenance{width:min(calc(100% - var(--space-4)*2),var(--reading-wide));margin:0 auto var(--space-8);color:var(--text-tertiary);font-size:var(--type-xs)}.provenance p{margin:0}@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,:after,:before{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}.motion-pending{opacity:1!important;transform:none!important}}@media (max-width:64rem){.sidebar{display:none}.headerbar{left:0;padding:0 1rem}.mobile-navigation{display:block}.mobile-navigation summary{display:inline-flex;align-items:center;gap:.55rem;min-height:2rem;padding:.25rem .5rem;border-radius:.55rem;color:var(--text-primary);cursor:pointer;font-weight:650;list-style:none}.mobile-navigation summary::-webkit-details-marker{display:none}.mobile-panel{position:fixed;inset:var(--topbar-height) 0 0 0;z-index:40;overflow-y:auto;padding:1.5rem;border-top:1px solid rgba(24,24,27,.075);background:var(--surface-paper);box-shadow:0 12px 24px rgba(24,24,27,.08)}.mobile-panel .side-navigation{max-width:24rem;margin:0}.content-frame{margin-left:0}.document{padding:calc(var(--topbar-height) + 3rem) 1.5rem 2.5rem}}@media (max-width:36rem){.prd-page{width:100%;margin:0;padding:0;border:0;border-radius:0}.document{padding-right:1rem;padding-left:1rem}.headerbar-title{display:none}.document-header{margin-bottom:var(--space-10)}.prd-opening>li{padding-left:var(--space-8)}.boundary,.decision,.product-bet,.provenance,.review-focus{padding:var(--space-4)}.provenance{width:100%;margin:0;background:var(--surface-paper)}}@media print{@page{margin:var(--print-page-margin)}body,html{background:#fff;color:var(--print-text)}details:not([open])>:not(summary){display:block}.headerbar,.mobile-navigation,.sidebar,.skip-link{display:none}.content-frame{margin:0}.document{display:block;min-height:0;padding:0}.prd-page{width:auto;margin:0;padding:0;border:0;border-radius:0}.boundary,.decision,.document-header,.flow>li,.linchpin-figure,.narrative-section,.no-go,.product-bet,.proof>li,.review-focus,.rules>li,.scope{-moz-column-break-inside:avoid;break-inside:avoid}.boundary,.decision,.figure-scroll,.linchpin-figure,.no-go,.product-bet,.review-focus,.scope{border-color:var(--print-border);background:#fff}.figure-scroll{overflow:visible}.figure-scroll>svg{min-width:0}.motion-pending{opacity:1!important;transform:none!important}a{text-decoration:none}.provenance,a{color:var(--print-text)}.provenance{width:auto;margin:var(--space-8) 0 0}}
+/* tailwind-report-css:end */
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <aside class="sidebar" aria-label="Document navigation">
+    <a class="brand" href="#document-title" aria-label="Product requirements overview">
+      <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+      <span>Project Docs</span>
+    </a>
+    <nav class="side-navigation" aria-label="On this page">
+      <p class="nav-heading">On this page</p>
+      <div data-document-navigation-target></div>
+    </nav>
+    <div class="sidebar-meta"><strong>Product requirements</strong><br>Review · Updated 2026-07-25</div>
+  </aside>
+  <header class="headerbar">
+    <details class="mobile-navigation">
+      <summary aria-label="Toggle document navigation"><span class="menu-icon" aria-hidden="true">☰</span><span>Project Docs</span></summary>
+      <div class="mobile-panel"><nav class="side-navigation" aria-label="Mobile document navigation"><p class="nav-heading">On this page</p><div data-document-navigation-mobile></div></nav></div>
+    </details>
+    <span class="headerbar-title">Product requirements</span>
+    <span class="status status--review">Review</span>
+  </header>
+  <div class="content-frame">
+    <main id="main" class="document">
+      <article class="prd-page prd-document" data-motion-sections="enter">
+        <header class="document-header">
+          <div class="document-meta" aria-label="Document metadata">
+            <span>Product requirements</span>
+            <span>·</span>
+            <span class="status status--review">Review</span>
+            <span>·</span>
+            <span>Updated <time datetime="2026-07-25">2026-07-25</time></span>
+          </div>
+          <h1 id="document-title" data-review-id="document.outcome">Find the code behind a concept before changing it</h1>
+          <p class="lede">Semantic Search turns a natural-language question into ranked, explainable source ranges using a private local hybrid index.</p>
+        </header>
+
+        <section id="narrative" class="narrative-section" aria-labelledby="narrative-title">
+          <span class="section-label">01 · Product narrative</span>
+          <h2 id="narrative-title">Find evidence without already knowing its name</h2>
+          <ol class="opening-list" aria-label="Five-line product narrative">
+            <li data-review-id="story.moment"><span><strong>Moment.</strong> When an agent enters an unfamiliar repository or feature area, it needs to find the code and documentation that explain a concept before it can act safely.</span></li>
+            <li data-review-id="story.friction"><span><strong>Friction.</strong> Exact search works only when the agent already knows the repository's names. Broad file exploration consumes time and context while still missing conceptually related code.</span></li>
+            <li data-review-id="story.bet"><span><strong>Bet.</strong> Provide one local natural-language search that ranks code ranges using generated summaries, embeddings, lexical terms, paths, symbols, and reusable code concepts.</span></li>
+            <li data-review-id="story.proof"><span><strong>Proof.</strong> The agent receives a short ranked candidate list with file ranges, reasons, symbols, and previews, then reads the reported range before editing.</span></li>
+            <li data-review-id="story.boundary"><span><strong>Boundary.</strong> Semantic Search finds evidence; it does not certify correctness, edit code, upload repository content, or replace exact symbol and text search.</span></li>
+          </ol>
+
+          <aside class="note" data-review-id="promise.local-understanding">
+            <span class="note-icon" aria-hidden="true">i</span>
+            <div>
+              <h2>Ask in product language; land on repository evidence</h2>
+              <p>A query such as “where do we charge a customer?” can find checkout implementation even when the exact symbol name never appears in the question. Search remains local to the project and returns candidates that can be inspected with normal file tools.</p>
+            </div>
+          </aside>
+
+          <aside id="review-focus" class="note note--review" data-review-id="review.focus">
+            <span class="note-icon" aria-hidden="true">!</span>
+            <div>
+              <strong>Review focus</strong>
+              <p>Confirm that this accurately describes the current product contract: local Ollama quality is required by default, failure is explicit, and every result remains a candidate rather than an answer to trust blindly.</p>
+            </div>
+          </aside>
+        </section>
+
+        <section id="how-it-works" class="narrative-section" aria-labelledby="flow-title" data-review-id="flow.search-lifecycle">
+          <span class="section-label">02 · How it works</span>
+          <h2 id="flow-title">One local index turns concepts into readable file ranges</h2>
+          <p class="section-point">Indexing prepares several views of the repository; querying combines them instead of betting on one signal.</p>
+          <ol class="flow-list">
+            <li data-review-id="flow.discover">
+              <span class="step-number">01</span>
+              <div><h3>Discover and protect</h3><p>The indexer finds project text files, skips binary/build/tool-state paths, honors configured exclusions, and never indexes <code>.env</code> secret files.</p></div>
+            </li>
+            <li data-review-id="flow.describe">
+              <span class="step-number">02</span>
+              <div><h3>Describe the repository</h3><p>Files become overlapping code chunks and semantic cards for files, functions, methods, classes, modules, definitions, and Markdown headings. Local Ollama summaries describe each card's responsibility and important relationships; unchanged summaries are cached.</p></div>
+            </li>
+            <li data-review-id="flow.embed">
+              <span class="step-number">03</span>
+              <div><h3>Represent meaning locally</h3><p>Ollama creates embeddings for raw chunks and semantic cards. The compact index is saved under <code>.pi/semantic-search/</code> with project-relative paths so it can be reused safely by linked worktrees.</p></div>
+            </li>
+            <li data-review-id="flow.rank">
+              <span class="step-number">04</span>
+              <div><h3>Rank the query</h3><p>The query is embedded and compared with chunk and card embeddings. Ranking also considers lexical overlap, repository concepts, path and symbol matches, and whether the question asks for implementation rather than documentation or tests.</p></div>
+            </li>
+            <li data-review-id="flow.inspect">
+              <span class="step-number">05</span>
+              <div><h3>Return evidence, then inspect</h3><p>Results show ranked paths, line ranges, summaries or match reasons, symbols, and compact previews. The next action is to read the reported range before making a change.</p></div>
+            </li>
+          </ol>
+        </section>
+
+        <section id="freshness" class="narrative-section" aria-labelledby="freshness-title" data-review-id="lifecycle.freshness">
+          <span class="section-label">03 · Staying current</span>
+          <h2 id="freshness-title">Content hashes decide when search knowledge is stale</h2>
+          <p class="section-point">Freshness is based on indexed paths, file sizes, and content hashes rather than timestamps alone.</p>
+          <ul class="rules">
+            <li data-review-id="freshness.missing">A missing, unreadable, or version-old index is stale.</li>
+            <li data-review-id="freshness.changed">A new, changed, or removed indexable file makes the index stale—even when a changed file keeps the same size and timestamp.</li>
+            <li data-review-id="freshness.auto-rebuild">After successful <code>write</code> or <code>edit</code> operations in a primary checkout, the session can start a non-blocking background rebuild at agent end.</li>
+            <li data-review-id="freshness.worktree">A linked worktree can reuse a missing primary-worktree index and summary cache. Automatic full rebuilds stay off there by default to avoid repeated expensive work.</li>
+            <li data-review-id="freshness.status">Composer status and <code>/index rebuild --status</code> expose rebuild phase, progress, best-effort ETA, completion, failure, log path, and current freshness.</li>
+          </ul>
+        </section>
+
+        <section id="trust" class="narrative-section" aria-labelledby="trust-title" data-review-id="rules.trust">
+          <span class="section-label">04 · Trust rules</span>
+          <h2 id="trust-title">Quality failures stay visible</h2>
+          <ul class="rules">
+            <li data-review-id="rule.local-only">Repository summaries and embeddings go only to the configured local Ollama server; no cloud embedding service is part of the default path.</li>
+            <li data-review-id="rule.required-quality">Default semantic search requires both generated card summaries and embeddings. Missing Ollama or models produces actionable setup instructions instead of silently returning lower-quality lexical results.</li>
+            <li data-review-id="rule.debug-paths">Lexical-only indexing, embedding-only rebuilding, and summary-free searches remain explicit diagnostic escape hatches.</li>
+            <li data-review-id="rule.filters">Callers can constrain paths, include or exclude tests, cap result count, and choose whether a stale index should refresh.</li>
+            <li data-review-id="rule.candidates">Results explain why they ranked and always lead back to source ranges; they are not proof that the candidate is correct.</li>
+          </ul>
+        </section>
+
+        <section id="surfaces" class="narrative-section" aria-labelledby="surface-title" data-review-id="surface.commands-tools">
+          <span class="section-label">05 · Product surface</span>
+          <h2 id="surface-title">The same index supports search, orientation, and maintenance</h2>
+          <div id="scope" class="scope-grid">
+            <section class="scope-card" aria-labelledby="available-title">
+              <h3 id="available-title">Available surfaces</h3>
+              <ul>
+                <li><code>semantic_search</code> and <code>/code-search</code> return natural-language search results.</li>
+                <li><code>repo_map</code> groups representative files into reusable concepts such as search, auth, UI, billing, and agent behavior.</li>
+                <li><code>index_status</code> and <code>/index status</code> explain freshness and index contents.</li>
+                <li><code>index_rebuild_status</code> and <code>/index rebuild --status</code> expose background rebuild state.</li>
+                <li><code>/ollama-tunnel</code> can connect Pi to a stronger remote Ollama through a localhost SSH tunnel while keeping Ollama itself bound to localhost.</li>
+              </ul>
+            </section>
+            <section class="scope-card scope-card--excluded" aria-labelledby="excluded-title" data-review-id="scope.not-in-bet">
+              <h3 id="excluded-title">Not in this product contract</h3>
+              <ul>
+                <li>Cloud-hosted repository indexing or embeddings.</li>
+                <li>Guaranteed semantic correctness or automatic code changes.</li>
+                <li>Indexing secrets, binaries, oversized files, generated feature HTML, hidden tool state, or configured excluded paths.</li>
+                <li>Replacing exact text, symbol, structural, dependency, or history search when the agent already knows what it needs.</li>
+              </ul>
+            </section>
+          </div>
+        </section>
+
+        <section id="proof" class="narrative-section" aria-labelledby="proof-title" data-review-id="acceptance.observable-proof">
+          <span class="section-label">06 · Observable proof</span>
+          <h2 id="proof-title">Search succeeds when it shortens the path to evidence without hiding uncertainty</h2>
+          <ul class="proof">
+            <li data-review-id="proof.natural-language">A natural-language billing question ranks the checkout implementation ahead of unrelated code.</li>
+            <li data-review-id="proof.implementation-intent">An implementation-location question prefers source creation code over PRDs and tests unless the query explicitly asks for documentation or tests.</li>
+            <li data-review-id="proof.explainability">Every returned candidate includes a path, line range, score, reason or generated summary, and a compact preview.</li>
+            <li data-review-id="proof.freshness">Same-size content changes are detected as stale even when timestamps are unchanged.</li>
+            <li data-review-id="proof.failure">When required local models are unavailable, the user sees the Ollama URL, required models, setup commands, tunnel option, and explicit diagnostic alternatives.</li>
+            <li data-review-id="proof.background">A successful background rebuild stays quiet apart from status; a failed rebuild produces one actionable follow-up with status and log paths.</li>
+          </ul>
+        </section>
+
+        <aside id="authority" class="boundary" data-review-id="boundary.source-authority">
+          <h2>Source files remain the authority</h2>
+          <p>Semantic Search reduces discovery cost. The agent still verifies returned code, follows dependency and history evidence when needed, and relies on repository tests and product documentation for correctness.</p>
+        </aside>
+
+        <section id="sources" class="sources" aria-labelledby="sources-title" data-review-id="sources">
+          <h2 id="sources-title">Sources reviewed</h2>
+          <ul class="source-list">
+            <li><code>extensions/semantic-search/README.md</code> — product surfaces, setup, lifecycle, and operator guidance.</li>
+            <li><code>extensions/semantic-search/index.ts</code> — current observable indexing, freshness, ranking, worktree, background rebuild, and failure behavior.</li>
+            <li><code>extensions/semantic-search/semantic-search.test.ts</code> — executable examples and trust boundaries.</li>
+            <li><code>extensions/semantic-search/config.json</code> — current exclusions, Ollama models, URL, and tunnel defaults.</li>
+            <li>Tailwind Plus Protocol template — licensed documentation-shell and visual-system reference.</li>
+            <li>User request on 2026-07-25 — generate and visually refine a PRD explaining Semantic Search.</li>
+          </ul>
+        </section>
+      </article>
+      <footer class="provenance" aria-label="Document provenance">
+        <p>Sources: Sources: Semantic Search implementation, tests, README, configuration, and licensed Tailwind Plus Protocol template · Stable data-review-id anchors preserved. · Preserve stable <code>data-review-id</code> anchors when revising claims.</p>
+      </footer>
+    </main>
+  </div>
+  <script data-document-navigation="progressive">
+/* document-navigation:start */
+(() => {
+  const article = document.querySelector('main#main > article');
+  const desktopTarget = document.querySelector('[data-document-navigation-target]');
+  const mobileTarget = document.querySelector('[data-document-navigation-mobile]');
+  if (!article || !desktopTarget || !mobileTarget) return;
+
+  const headings = Array.from(article.querySelectorAll('h2[id]'))
+    .filter((heading) => heading.textContent.trim());
+  if (headings.length === 0) return;
+
+  const buildList = () => {
+    const list = document.createElement('ul');
+    list.className = 'nav-list';
+    headings.forEach((heading) => {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = `#${encodeURIComponent(heading.id)}`;
+      link.textContent = heading.textContent.trim();
+      item.append(link);
+      list.append(item);
+    });
+    return list;
+  };
+
+  desktopTarget.append(buildList());
+  mobileTarget.append(buildList());
+
+  const desktopLinks = Array.from(desktopTarget.querySelectorAll('a[href^="#"]'));
+  const mobileDetails = document.querySelector('.mobile-navigation');
+  const linksById = new Map(desktopLinks.map((link) => [decodeURIComponent(link.hash.slice(1)), link]));
+  const select = (id) => desktopLinks.forEach((link) => {
+    if (link === linksById.get(id)) link.setAttribute('aria-current', 'location');
+    else link.removeAttribute('aria-current');
+  });
+
+  document.querySelectorAll('.mobile-panel a[href^="#"]').forEach((link) => {
+    link.addEventListener('click', () => mobileDetails?.removeAttribute('open'));
+  });
+
+  if ('IntersectionObserver' in window) {
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => Math.abs(a.boundingClientRect.top) - Math.abs(b.boundingClientRect.top));
+      if (visible[0]?.target.id) select(visible[0].target.id);
+    }, { rootMargin: '-12% 0px -68% 0px', threshold: 0 });
+    headings.forEach((heading) => observer.observe(heading));
+  }
+
+  select(decodeURIComponent(location.hash.slice(1)) || headings[0].id);
+})();
+/* document-navigation:end */
+  </script>
+  <script data-artifact-motion="native">
+/* artifact-motion:start */
+(() => {
+  document.documentElement.classList.add('motion-runtime-ready');
+  const reduceQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const printQuery = window.matchMedia('print');
+  const reduceMotion = reduceQuery.matches;
+  const activeAnimations = new Set();
+  const observers = new Set();
+  const supportedMotifs = new Set(['enter', 'flow', 'state', 'target']);
+  const easing = 'cubic-bezier(.16, 1, .3, 1)';
+  const enterDuration = 440;
+  const flowDuration = 520;
+  const stagger = 90;
+
+  document.querySelectorAll('[data-motion-sections="enter"]').forEach((container) => {
+    Array.from(container.children)
+      .filter((child) => child.matches('section'))
+      .forEach((section) => {
+        if (!section.dataset.motion) section.dataset.motion = 'enter';
+      });
+  });
+
+  const roots = Array.from(document.querySelectorAll('[data-motion]'));
+
+  const complete = (element) => {
+    element.classList.remove('motion-pending');
+    element.classList.add('motion-complete');
+  };
+
+  const itemsFor = (root) => {
+    if (root.dataset.motion !== 'flow') return [root];
+    const diagramItems = Array.from(root.querySelectorAll('.diagram-reveal'));
+    if (diagramItems.length > 0) return diagramItems;
+    const explicit = Array.from(root.querySelectorAll(':scope > [data-motion-item]'));
+    if (explicit.length > 0) return explicit;
+    return Array.from(root.children).filter((child) => !child.matches('script, style'));
+  };
+
+  const hasViewTimeline = (element) => {
+    const timeline = getComputedStyle(element).animationTimeline;
+    return Boolean(timeline && timeline !== 'auto' && timeline !== 'none');
+  };
+
+  const usesCssViewMotion = (root) => {
+    if (root.dataset.motion === 'flow') return itemsFor(root).some(hasViewTimeline);
+    return hasViewTimeline(root);
+  };
+
+  const animateItem = (item, delay, isFlow) => {
+    if (item.dataset.motionState === 'complete') return Promise.resolve();
+    item.dataset.motionState = 'active';
+    const distance = isFlow ? '14px' : '20px';
+    const animation = item.animate(
+      [
+        { opacity: 0.18, transform: `translateY(${distance})` },
+        { opacity: 1, transform: 'translateY(0)' },
+      ],
+      {
+        duration: isFlow ? flowDuration : enterDuration,
+        delay,
+        easing,
+        fill: 'both',
+      },
+    );
+    activeAnimations.add(animation);
+    return animation.finished
+      .catch(() => {})
+      .finally(() => {
+        activeAnimations.delete(animation);
+        animation.cancel();
+        item.dataset.motionState = 'complete';
+        complete(item);
+      });
+  };
+
+  const finishRoot = (root) => {
+    root.dataset.motionState = 'complete';
+    root.dispatchEvent(new CustomEvent('artifact-motion:complete', { bubbles: true }));
+  };
+
+  const revealRoot = (root) => {
+    if (root.dataset.motionState === 'complete') return;
+    root.dataset.motionState = 'active';
+    animateItem(root, 0, false).finally(() => finishRoot(root));
+  };
+
+  const observeFlowItems = (root) => {
+    const items = itemsFor(root);
+    if (items.length === 0) {
+      finishRoot(root);
+      return;
+    }
+    root.dataset.motionState = 'active';
+    const remaining = new Set(items);
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => items.indexOf(a.target) - items.indexOf(b.target));
+      visible.forEach((entry, visibleIndex) => {
+        observer.unobserve(entry.target);
+        animateItem(entry.target, visibleIndex * stagger, true).finally(() => {
+          remaining.delete(entry.target);
+          if (remaining.size === 0) {
+            observers.delete(observer);
+            observer.disconnect();
+            finishRoot(root);
+          }
+        });
+      });
+    }, { threshold: 0.18, rootMargin: '0px 0px -10% 0px' });
+    observers.add(observer);
+    items.forEach((item) => observer.observe(item));
+  };
+
+  const emphasizeTarget = () => {
+    const id = decodeURIComponent(window.location.hash.slice(1));
+    if (!id) return;
+    const target = document.getElementById(id);
+    if (!target || target.dataset.motion !== 'target') return;
+    const animation = target.animate(
+      [
+        { outlineColor: 'transparent', outlineOffset: '10px', outlineStyle: 'solid', outlineWidth: '0.15rem' },
+        { outlineColor: 'currentColor', outlineOffset: '4px', outlineStyle: 'solid', outlineWidth: '0.15rem' },
+        { outlineColor: 'transparent', outlineOffset: '7px', outlineStyle: 'solid', outlineWidth: '0.15rem' },
+      ],
+      { duration: 420, easing },
+    );
+    activeAnimations.add(animation);
+    animation.finished.catch(() => {}).finally(() => activeAnimations.delete(animation));
+  };
+
+  const settleMotion = () => {
+    observers.forEach((observer) => observer.disconnect());
+    observers.clear();
+    activeAnimations.forEach((animation) => animation.cancel());
+    activeAnimations.clear();
+    roots.forEach((root) => {
+      root.dataset.motionState = 'complete';
+      itemsFor(root).forEach((item) => {
+        item.dataset.motionState = 'complete';
+        complete(item);
+      });
+    });
+  };
+  reduceQuery.addEventListener?.('change', (event) => { if (event.matches) settleMotion(); });
+  printQuery.addEventListener?.('change', (event) => { if (event.matches) settleMotion(); });
+
+  if (reduceMotion || printQuery.matches || !('IntersectionObserver' in window) || !('animate' in Element.prototype)) {
+    settleMotion();
+    return;
+  }
+
+  const rootObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      revealRoot(entry.target);
+      rootObserver.unobserve(entry.target);
+    });
+  }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+  observers.add(rootObserver);
+
+  roots
+    .filter((root) => supportedMotifs.has(root.dataset.motion) && root.dataset.motion !== 'target')
+    .forEach((root) => {
+      if (usesCssViewMotion(root)) {
+        root.dataset.motionState = 'css-view';
+        return;
+      }
+      if (root.dataset.motion === 'flow') observeFlowItems(root);
+      else rootObserver.observe(root);
+    });
+
+  window.addEventListener('hashchange', emphasizeTarget);
+  requestAnimationFrame(emphasizeTarget);
+})();
+/* artifact-motion:end */
+  </script>
+</body>
+</html>

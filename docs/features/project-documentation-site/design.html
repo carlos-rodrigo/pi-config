@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>One static shell turns approved content into navigable documentation · Design</title>
+  <style data-tailwind-build="design.tailwind.css">
+/* tailwind-report-css:start */
+*,:after,:before{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }/*! tailwindcss v3.4.19 | MIT License | https://tailwindcss.com*/*,:after,:before{box-sizing:border-box;border:0 solid #e5e7eb}:after,:before{--tw-content:""}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;-o-tab-size:4;tab-size:4;font-family:Geist,Geist Sans,-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;font-feature-settings:normal;font-variation-settings:normal;-webkit-tap-highlight-color:transparent}body{line-height:inherit}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,pre,samp{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-feature-settings:normal;font-variation-settings:normal;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}button,input,optgroup,select,textarea{font-family:inherit;font-feature-settings:inherit;font-variation-settings:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}:-moz-focusring{outline:auto}:-moz-ui-invalid{box-shadow:none}progress{vertical-align:baseline}::-webkit-inner-spin-button,::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}summary{display:list-item}blockquote,dd,dl,figure,h1,h2,h3,h4,h5,h6,hr,p,pre{margin:0}fieldset{margin:0}fieldset,legend{padding:0}menu,ol,ul{list-style:none;margin:0;padding:0}dialog{padding:0}textarea{resize:vertical}input::-moz-placeholder,textarea::-moz-placeholder{opacity:1;color:#9ca3af}input::placeholder,textarea::placeholder{opacity:1;color:#9ca3af}[role=button],button{cursor:pointer}:disabled{cursor:default}audio,canvas,embed,iframe,img,object,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}:root{color-scheme:light;--reading-measure:72ch;--reading-wide:50rem;--type-body:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--type-display:var(--type-body);--type-mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;--type-xs:.75rem;--type-sm:.875rem;--type-body-size:.875rem;--type-lede:clamp(1rem,2vw,1.125rem);--type-h2:clamp(1.125rem,2.5vw,1.35rem);--type-h1:clamp(2rem,5vw,3rem);--leading-body:1.75;--leading-tight:1.12;--space-1:.25rem;--space-2:.5rem;--space-3:.75rem;--space-4:1rem;--space-5:1.25rem;--space-6:1.5rem;--space-8:2rem;--space-10:2.5rem;--space-12:3rem;--space-16:4rem;--surface-page:#fff;--surface-paper:#fff;--surface-muted:#fafafa;--surface-strong:#f4f4f5;--text-primary:#18181b;--text-secondary:#52525b;--text-tertiary:#71717a;--accent:#059669;--link:#059669;--accent-soft:#ecfdf5;--accent-ink:#047857;--info:#285a75;--info-soft:#eaf2f8;--success:#276544;--success-soft:#e8f2eb;--warning:#8b4d00;--warning-soft:#f8eedb;--danger:#a11c1c;--danger-soft:#f8e8e5;--external:#654a80;--external-soft:#f1ecf6;--border:#e4e4e7;--border-strong:#a1a1aa;--sidebar-width:18rem;--topbar-height:3.5rem;--status-draft:#665f55;--status-review:#8b4d00;--status-approved:#276544;--status-blocked:#a11c1c;--status-soft:#f3eee5;--focus-ring:0 0 0 3px rgba(16,185,129,.28);--print-text:#000;--print-border:#969696;--print-page-margin:16mm;--radius-sm:.35rem;--radius-md:.65rem;--radius-lg:1rem;--motion-feedback:140ms;--motion-enter:440ms;--motion-flow:520ms;--motion-emphasis:420ms;--motion-ease:cubic-bezier(.16,1,.3,1)}*{box-sizing:border-box}body,html{background:var(--surface-page)}body{margin:0;color:var(--text-primary);font-family:var(--type-body);font-size:var(--type-body-size);line-height:var(--leading-body);text-rendering:optimizeLegibility}dd,figcaption,h1,h2,h3,li,p{overflow-wrap:anywhere}a{color:var(--link);text-underline-offset:.18em;text-decoration-thickness:.08em}code{padding:.1rem .3rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-muted);font-family:var(--type-mono);font-size:.9em}:where(a,summary,input,button):focus-visible{outline:none;box-shadow:var(--focus-ring)}.skip-link{position:fixed;top:var(--space-4);left:var(--space-4);z-index:10;transform:translateY(-180%);padding:var(--space-2) var(--space-4);border-radius:999px;background:var(--text-primary);color:var(--surface-paper);font-weight:700;text-decoration:none}.skip-link:focus{transform:translateY(0)}.sidebar{position:fixed;inset:0 auto 0 0;z-index:30;display:flex;width:var(--sidebar-width);flex-direction:column;overflow-y:auto;border-right:1px solid rgba(24,24,27,.1);background:var(--surface-paper);padding:1rem 1.5rem 2rem}.brand{display:flex;align-items:center;gap:.7rem;min-height:2rem;color:var(--text-primary);font-weight:700;text-decoration:none}.brand-mark{display:grid;width:1.65rem;height:1.65rem;place-content:center;gap:2px;border-radius:.55rem;background:var(--text-primary)}.brand-mark span{display:block;width:.8rem;height:2px;border-radius:2px;background:#6ee7b7}.brand-mark span:nth-child(2){width:.6rem}.brand-mark span:nth-child(3){width:.4rem}.side-navigation{margin-top:2.4rem}.nav-heading{margin:0 0 .55rem;color:var(--text-primary);font-family:var(--type-body);font-size:.75rem;font-weight:650}.nav-list{position:relative;margin:0;padding:0 0 0 .5rem;list-style:none}.nav-list:before{content:"";position:absolute;inset:0 auto 0 .5rem;width:1px;background:rgba(24,24,27,.1)}.nav-list a{position:relative;display:block;padding:.25rem .75rem .25rem 1rem;border-radius:.5rem;color:var(--text-secondary);font-size:.875rem;line-height:1.5rem;text-decoration:none;transition:color .14s ease,background-color .14s ease}.nav-list a:hover{color:var(--text-primary);background:rgba(24,24,27,.025)}.nav-list a[aria-current=location]{color:var(--text-primary);background:rgba(24,24,27,.035);font-weight:550}.nav-list a[aria-current=location]:before{content:"";position:absolute;top:.35rem;bottom:.35rem;left:-.5rem;width:1px;background:var(--accent)}.sidebar-meta{margin-top:auto;padding-top:2rem;color:var(--text-tertiary);font-size:.75rem;line-height:1.25rem}.sidebar-meta strong{color:var(--text-secondary)}.headerbar{position:fixed;inset:0 0 auto var(--sidebar-width);z-index:20;display:flex;height:var(--topbar-height);align-items:center;justify-content:space-between;gap:1rem;padding:0 2rem;border-bottom:1px solid rgba(24,24,27,.075);background:hsla(0,0%,100%,.9);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}.headerbar-title{color:var(--text-secondary);font-size:.8125rem;font-weight:550}.mobile-navigation{display:none}.content-frame{min-height:100vh;margin-left:var(--sidebar-width)}.document{display:flex;min-height:100vh;flex-direction:column;padding:calc(var(--topbar-height) + 4rem) 2rem 3rem}.design-page{width:min(100%,var(--reading-wide));margin:0 auto;padding:0;border:0;background:var(--surface-paper)}.design-document{min-width:0}.document-header{margin-bottom:var(--space-12);padding-bottom:var(--space-8);border-bottom:1px solid var(--border)}.document-meta{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-4);align-items:center;margin-bottom:var(--space-6);color:var(--text-tertiary);font-size:var(--type-xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase}.status{display:inline-flex;align-items:center;min-height:1.65rem;padding:.12rem .55rem;border:1px solid;border-radius:999px;background:var(--status-soft)}.status--draft{color:var(--status-draft)}.status--review{color:var(--status-review)}.status--approved{color:var(--status-approved)}.status--blocked{color:var(--status-blocked)}h1{max-width:17ch;margin:0;font-family:var(--type-display);font-size:var(--type-h1);font-weight:700;letter-spacing:-.025em;line-height:var(--leading-tight);text-wrap:balance}.lede{max-width:var(--reading-measure);margin:var(--space-5) 0 0;color:var(--text-secondary);font-size:var(--type-lede)}.authority-link{margin:var(--space-4) 0 0;color:var(--text-tertiary);font-size:var(--type-sm)}.design-opening{display:grid;gap:var(--space-3);max-width:var(--reading-measure);margin:0 0 var(--space-12);padding:0;list-style:none}.design-opening>li{display:grid;grid-template-columns:minmax(8rem,.3fr) minmax(0,1fr);gap:var(--space-4);padding:var(--space-3) 0;border-top:1px solid var(--border)}.design-opening strong{color:var(--accent-ink);font-size:var(--type-xs);letter-spacing:.07em;text-transform:uppercase}.architecture-section{max-width:var(--reading-measure);margin:0 0 var(--space-12)}.architecture-section+.architecture-section{padding-top:var(--space-10);border-top:1px solid var(--border)}.eyebrow{display:block;margin-bottom:var(--space-2);color:var(--accent);font-size:var(--type-xs);font-weight:800;letter-spacing:.08em;text-transform:uppercase}h2{font-family:var(--type-display);font-size:var(--type-h2);font-weight:650;letter-spacing:-.015em;line-height:1.2;text-wrap:balance}h2,h3{margin:0}h3{font-size:1rem;line-height:1.35}.section-point{margin:var(--space-3) 0 0;color:var(--text-secondary)}.architecture-pressure,.boundary,.chosen-seam,.decision,.interface-consequence,.responsibility,.risk,.slice-outline{max-width:var(--reading-measure);margin:0 0 var(--space-8);padding:var(--space-5) var(--space-6);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-muted)}.architecture-pressure{border-left:4px solid var(--status-review)}.chosen-seam{border-left:4px solid var(--accent);background:var(--accent-soft)}.interface-consequence{border-left:4px solid var(--accent-ink)}.risk{border-left:4px solid var(--status-blocked)}.boundary{border-style:dashed}.decision{border-top:4px solid var(--text-primary);background:var(--surface-paper)}.decision-label{color:var(--text-tertiary);font-size:var(--type-xs);font-weight:800;letter-spacing:.08em;text-transform:uppercase}.decision h3{margin-top:var(--space-2);font-family:var(--type-display);font-size:1.3rem}.architecture-pressure p,.boundary p,.chosen-seam p,.decision p,.interface-consequence p,.risk p{margin:var(--space-2) 0 0}.tradeoff{color:var(--text-secondary)}.system-path{display:grid;gap:var(--space-3);margin:var(--space-5) 0 0;padding:0;list-style:none;counter-reset:path-step}.system-path>li{position:relative;padding:var(--space-4) var(--space-4) var(--space-4) var(--space-12);border-left:2px solid var(--border-strong);background:linear-gradient(90deg,var(--surface-muted),transparent 76%);counter-increment:path-step}.system-path>li:before{content:counter(path-step);position:absolute;left:var(--space-4);top:var(--space-4);display:grid;place-items:center;width:1.5rem;height:1.5rem;border-radius:999px;background:var(--accent-ink);color:var(--surface-paper);font-family:var(--type-mono);font-size:var(--type-xs);font-weight:800}.responsibility dl{display:grid;gap:0;margin:var(--space-3) 0 0}.responsibility dl>div{display:grid;grid-template-columns:minmax(9rem,.35fr) minmax(0,1fr);gap:var(--space-3);padding:var(--space-3) 0;border-top:1px solid var(--border)}.responsibility dt{font-weight:800}.responsibility dd{margin:0;color:var(--text-secondary)}.contract-block{max-width:var(--reading-measure);margin:var(--space-6) 0}.contract-block h3{margin-bottom:var(--space-3)}.contract-block pre{margin:0;padding:var(--space-5);overflow:auto;border:1px solid #342f29;border-radius:var(--radius-md);background:#211f1b;color:#fffefa}.contract-block pre code{padding:0;border:0;background:transparent;color:inherit;font-family:var(--type-mono)}.code-key{color:#a9d4e5}.code-string{color:#f1c982}.code-comment{color:#c8c0b4}.slice-outline ol{display:grid;gap:var(--space-2);margin:var(--space-3) 0 0;padding-left:var(--space-5)}.slice-outline li::marker{color:var(--accent);font-weight:800}.figure-walkthrough,.proof,.source-list{display:grid;gap:var(--space-3);margin:var(--space-5) 0 0;padding:0;list-style:none}.proof>li{position:relative;padding-left:var(--space-6)}.proof>li:before{content:"✓";position:absolute;left:0;color:var(--accent);font-weight:900}.sources{max-width:var(--reading-measure);margin-top:var(--space-12);padding-top:var(--space-6);border-top:1px solid var(--border)}.sources h2{font-family:var(--type-body);font-size:1rem}.source-list{gap:var(--space-2);color:var(--text-secondary);font-size:var(--type-sm)}.source-list li{padding-left:var(--space-4);border-left:2px solid var(--border)}.linchpin-figure{max-width:var(--reading-wide);margin:var(--space-6) 0 0;padding:var(--space-4);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-muted)}.figure-question{margin:0 0 var(--space-4);color:var(--text-secondary)}.figure-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;border:1px solid var(--border);background:var(--surface-paper)}.figure-scroll>svg{display:block;width:100%;min-width:38rem;height:auto}.linchpin-figure figcaption{margin-top:var(--space-3);color:var(--text-secondary);font-size:var(--type-sm)}.figure-walkthrough{max-width:var(--reading-measure);counter-reset:figure-step}.figure-walkthrough>li{position:relative;padding-left:var(--space-8);counter-increment:figure-step}.figure-walkthrough>li:before{content:counter(figure-step) ".";position:absolute;left:0;color:var(--accent);font-family:var(--type-mono);font-weight:800}[data-review-id]{scroll-margin-top:var(--space-4)}[data-review-id]:target{outline:3px solid var(--accent);outline-offset:var(--space-2)}.motion-pending{opacity:0}svg .motion-pending{transform-box:fill-box;transform-origin:center}@keyframes artifact-view-enter{0%{opacity:.08;transform:translateY(32px)}to{opacity:1;transform:translateY(0)}}@supports (animation-timeline:view()){[data-motion-sections=enter]>section{animation-name:artifact-view-enter;animation-duration:1ms;animation-fill-mode:both;animation-timing-function:linear;animation-timeline:view();animation-range:entry 0 cover 70%}[data-motion=flow]{view-timeline-name:--artifact-diagram-flow;view-timeline-axis:block}[data-motion=flow] .diagram-reveal{transform-box:fill-box;transform-origin:center;animation-name:artifact-view-enter;animation-duration:1ms;animation-fill-mode:both;animation-timing-function:linear;animation-timeline:--artifact-diagram-flow;animation-range:var(--reveal-start,0) var(--reveal-end,30%)}}.provenance{width:min(calc(100% - var(--space-4)*2),var(--reading-wide));margin:0 auto var(--space-8);color:var(--text-tertiary);font-size:var(--type-xs)}.provenance p{margin:0}@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,:after,:before{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}.motion-pending,[data-motion-sections=enter]>section,[data-motion=flow] .diagram-reveal{opacity:1!important;transform:none!important;animation:none!important}}@media (max-width:64rem){.sidebar{display:none}.headerbar{left:0;padding:0 1rem}.mobile-navigation{display:block}.mobile-navigation summary{display:inline-flex;align-items:center;gap:.55rem;min-height:2rem;padding:.25rem .5rem;border-radius:.55rem;color:var(--text-primary);cursor:pointer;font-weight:650;list-style:none}.mobile-navigation summary::-webkit-details-marker{display:none}.mobile-panel{position:fixed;inset:var(--topbar-height) 0 0 0;z-index:40;overflow-y:auto;padding:1.5rem;border-top:1px solid rgba(24,24,27,.075);background:var(--surface-paper);box-shadow:0 12px 24px rgba(24,24,27,.08)}.mobile-panel .side-navigation{max-width:24rem;margin:0}.content-frame{margin-left:0}.document{padding:calc(var(--topbar-height) + 3rem) 1.5rem 2.5rem}}@media (max-width:36rem){.design-page{width:100%;margin:0;padding:0;border:0;border-radius:0}.document{padding-right:1rem;padding-left:1rem}.headerbar-title{display:none}.document-header{margin-bottom:var(--space-10)}.design-opening>li,.responsibility dl>div{grid-template-columns:1fr;gap:var(--space-1)}.architecture-pressure,.boundary,.chosen-seam,.decision,.interface-consequence,.provenance,.responsibility,.risk,.slice-outline{padding:var(--space-4)}.provenance{width:100%;margin:0;background:var(--surface-paper)}}@media print{@page{margin:var(--print-page-margin)}body,html{background:#fff;color:var(--print-text)}details:not([open])>:not(summary){display:block}.headerbar,.mobile-navigation,.sidebar,.skip-link{display:none}.content-frame{margin:0}.document{display:block;min-height:0;padding:0}.design-page{width:auto;margin:0;padding:0;border:0;border-radius:0}.architecture-pressure,.architecture-section,.boundary,.chosen-seam,.contract-block,.decision,.document-header,.interface-consequence,.linchpin-figure,.proof>li,.responsibility,.risk,.slice-outline,.system-path>li{-moz-column-break-inside:avoid;break-inside:avoid}.architecture-pressure,.boundary,.chosen-seam,.decision,.figure-scroll,.interface-consequence,.linchpin-figure,.responsibility,.risk,.slice-outline{border-color:var(--print-border);background:#fff}.figure-scroll{overflow:visible}.figure-scroll>svg{min-width:0}.motion-pending,[data-motion-sections=enter]>section,[data-motion=flow] .diagram-reveal{opacity:1!important;transform:none!important;animation:none!important}a{text-decoration:none}.provenance,a{color:var(--print-text)}.provenance{width:auto;margin:var(--space-8) 0 0}}
+/* tailwind-report-css:end */
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <aside class="sidebar" aria-label="Document navigation">
+    <a class="brand" href="#document-title" aria-label="Feature design overview">
+      <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+      <span>Project Docs</span>
+    </a>
+    <nav class="side-navigation" aria-label="On this page">
+      <p class="nav-heading">On this page</p>
+      <div data-document-navigation-target></div>
+    </nav>
+    <div class="sidebar-meta"><strong>Feature design</strong><br>Review · Updated 2026-07-25</div>
+  </aside>
+  <header class="headerbar">
+    <details class="mobile-navigation">
+      <summary aria-label="Toggle document navigation"><span class="menu-icon" aria-hidden="true">☰</span><span>Project Docs</span></summary>
+      <div class="mobile-panel"><nav class="side-navigation" aria-label="Mobile document navigation"><p class="nav-heading">On this page</p><div data-document-navigation-mobile></div></nav></div>
+    </details>
+    <span class="headerbar-title">Feature design</span>
+    <span class="status status--review">Review</span>
+  </header>
+  <div class="content-frame">
+    <main id="main" class="document">
+      <article class="design-page design-document" data-motion-sections="enter">
+        <header class="document-header">
+          <div class="document-meta" aria-label="Document metadata">
+            <span>Feature design</span>
+            <span>·</span>
+            <span class="status status--review">Review</span>
+            <span>·</span>
+            <span>Updated <time datetime="2026-07-25">2026-07-25</time></span>
+          </div>
+          <h1 id="document-title" data-review-id="document.architecture-outcome">One static shell turns approved content into navigable documentation</h1>
+          <p class="lede">Protocol’s visual language, progressive section navigation, and semantic diagram motion are compiled into each standalone HTML artifact; the browser opens the result directly and no server remains running.</p>
+          <p class="authority-link">Product authority: <a href="prd.html">approved PRD</a></p>
+        </header>
+
+        
+<ol class="design-opening" aria-label="Architecture story">
+  <li data-review-id="summary.promise"><strong>Promise</strong><span>Every PRD and design feels like one coherent documentation product while remaining a directly openable file.</span></li>
+  <li data-review-id="summary.pressure"><strong>Pressure</strong><span>Protocol’s visual authority comes from a Next.js application, but running or publishing an application adds infrastructure that the documents do not need.</span></li>
+  <li data-review-id="summary.seam"><strong>Chosen seam</strong><span>Adapt Protocol at generation time: inline its document shell, typography, responsive navigation, and optional behavior around the approved article.</span></li>
+  <li data-review-id="summary.path"><strong>Causal path</strong><span>Approved content → static template build → one self-contained HTML artifact → direct browser review with progressive navigation and diagram motion.</span></li>
+  <li data-review-id="summary.proof"><strong>Proof</strong><span>Template validation and browser fixtures cover wide, 320px, keyboard, reduced motion, scripts removed, interrupted motion, diagrams, and print.</span></li>
+  <li data-review-id="summary.boundary"><strong>Boundary</strong><span>No server, routing framework, search index, database, or second canonical document format enters the system.</span></li>
+</ol>
+
+<section class="architecture-section" data-review-id="architecture.seam" aria-labelledby="seam-title">
+  <span class="eyebrow">Pressure and seam</span>
+  <h2 id="seam-title">Presentation is compiled into the artifact, not hosted around it</h2>
+  <aside class="architecture-pressure" data-review-id="architecture.pressure"><h3>The application shell is useful; the application boundary is not</h3><p>Protocol provides the right visual hierarchy and navigation language. Its server, route graph, MDX pipeline, search dialog, sign-in, and feedback controls do not serve a standalone reviewed artifact.</p></aside>
+  <aside class="chosen-seam" data-review-id="architecture.chosen-seam"><h3>Copy behavior, not infrastructure</h3><p><code>prd-template.html</code> and <code>design-template.html</code> own a static Protocol-derived shell. Build-time Tailwind output, navigation JavaScript, and the native motion runtime are inlined into the final file.</p></aside>
+</section>
+
+<section class="architecture-section" data-review-id="architecture.system-path" aria-labelledby="path-title">
+  <span class="eyebrow">Causal system path</span>
+  <h2 id="path-title">One build step produces the complete reading experience</h2>
+  <ol class="system-path">
+    <li data-review-id="path.author"><strong>Author.</strong> The owning PRD or design skill supplies approved headings, claims, diagrams, anchors, and provenance.</li>
+    <li data-review-id="path.compose"><strong>Compose.</strong> The HTML report designer inserts the article into one content-free Protocol-derived shell without changing its reading order.</li>
+    <li data-review-id="path.inline"><strong>Inline.</strong> The build embeds compiled CSS, progressive section navigation, and optional semantic motion.</li>
+    <li data-review-id="path.validate"><strong>Validate.</strong> Static checks and Chromium fixtures verify accessibility, portability, fallback behavior, responsive layout, diagram legibility, and print.</li>
+    <li data-review-id="path.review"><strong>Review.</strong> The reader opens the resulting file directly. No process remains running after generation.</li>
+  </ol>
+  <figure class="linchpin-figure" data-complex-figure data-motion="flow" data-review-id="architecture.static-path.figure">
+    <p class="figure-question"><strong>Architecture question:</strong> how does approved content gain Protocol navigation and scroll-aware diagrams without becoming a web application?</p>
+    <div class="figure-scroll"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 920" role="img" aria-labelledby="static-path-title static-path-desc" data-review-id="diagram.static-document-path.svg">
+  <title id="static-path-title">Approved content becomes one portable Protocol-styled HTML document</title>
+  <desc id="static-path-desc">A vertical path connects approved product or architecture content, the static shell build, a self-contained HTML artifact, and the reader. A side branch from the artifact shows reduced-motion, script-free, and print fallbacks.</desc>
+  <defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1l6 3-6 3" fill="none" stroke="#71717a" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <style>.stage{stroke-width:1.5;vector-effect:non-scaling-stroke}.title{font:650 18px ui-sans-serif,system-ui;fill:#18181b}.copy{font:400 13px ui-sans-serif,system-ui;fill:#52525b}.label{font:650 10px ui-monospace,monospace;letter-spacing:.08em}.edge{fill:none;stroke:#71717a;stroke-width:1.5;vector-effect:non-scaling-stroke}.diagram-reveal{transform-box:fill-box;transform-origin:center}</style>
+  <g class="diagram-reveal" style="--reveal-start:0%;--reveal-end:14%" data-review-id="diagram.static-path.source"><rect class="stage" x="120" y="30" width="380" height="120" rx="16" fill="#fafafa" stroke="#d4d4d8"/><text class="label" x="150" y="60" fill="#71717a">SOURCE AUTHORITY</text><text class="title" x="150" y="94">Approved PRD or design content</text><text class="copy" x="150" y="122">Claims · decisions · evidence · stable review IDs</text></g>
+  <g class="diagram-reveal" style="--reveal-start:12%;--reveal-end:28%"><path class="edge" d="M310 150V260" marker-end="url(#arrow)"/></g>
+  <g class="diagram-reveal" style="--reveal-start:24%;--reveal-end:42%" data-review-id="diagram.static-path.shell"><rect class="stage" x="120" y="260" width="380" height="130" rx="16" fill="#ecfdf5" stroke="#10b981"/><text class="label" x="150" y="290" fill="#047857">STATIC SHELL BUILD</text><text class="title" x="150" y="325">Protocol presentation</text><text class="copy" x="150" y="353">Inline CSS · generated section rail · semantic motion</text><text class="copy" x="150" y="375">No content transformation or server contract</text></g>
+  <g class="diagram-reveal" style="--reveal-start:38%;--reveal-end:54%"><path class="edge" d="M310 390V500" marker-end="url(#arrow)"/></g>
+  <g class="diagram-reveal" style="--reveal-start:50%;--reveal-end:68%" data-review-id="diagram.static-path.artifact"><rect class="stage" x="120" y="500" width="380" height="130" rx="16" fill="#fff" stroke="#10b981"/><text class="label" x="150" y="530" fill="#047857">PORTABLE ARTIFACT</text><text class="title" x="150" y="565">One self-contained HTML file</text><text class="copy" x="150" y="593">Open directly · review offline · share by path</text><text class="copy" x="150" y="615">Complete article and diagram remain in source order</text></g>
+  <g class="diagram-reveal" style="--reveal-start:58%;--reveal-end:74%" data-review-id="diagram.static-path.fallback"><path class="edge" d="M500 565H585V650" marker-end="url(#arrow)"/><rect class="stage" x="500" y="650" width="190" height="120" rx="14" fill="#fffbeb" stroke="#f59e0b"/><text class="label" x="522" y="680" fill="#b45309">FALLBACKS</text><text class="copy" x="522" y="712">Reduced motion</text><text class="copy" x="522" y="736">Scripts removed · print</text></g>
+  <g class="diagram-reveal" style="--reveal-start:70%;--reveal-end:84%"><path class="edge" d="M310 630V770" marker-end="url(#arrow)"/></g>
+  <g class="diagram-reveal" style="--reveal-start:80%;--reveal-end:96%" data-review-id="diagram.static-path.reader"><rect class="stage" x="120" y="770" width="380" height="120" rx="16" fill="#fafafa" stroke="#d4d4d8"/><text class="label" x="150" y="800" fill="#71717a">READER</text><text class="title" x="150" y="835">Navigable product evidence</text><text class="copy" x="150" y="863">Intent → architecture → diagram → provenance</text></g>
+</svg></div>
+    <figcaption>The only runtime boundary is the browser opening one file. Navigation and motion progressively enhance the artifact; fallbacks preserve the same evidence.</figcaption>
+  </figure>
+  <ol class="figure-walkthrough" data-figure-walkthrough-for="architecture.static-path.figure" aria-label="Diagram walkthrough">
+    <li>Product or architecture authority enters unchanged.</li><li>The static shell adds presentation and optional behavior during generation.</li><li>The resulting HTML owns all assets required for direct reading.</li><li>Reduced motion, script removal, and print settle into complete static evidence.</li><li>The reader navigates the artifact without a server or duplicate source.</li>
+  </ol>
+</section>
+
+<section class="architecture-section" data-review-id="architecture.responsibilities" aria-labelledby="responsibilities-title">
+  <span class="eyebrow">Responsibility boundaries</span>
+  <h2 id="responsibilities-title">Content, shell, and motion each own one kind of truth</h2>
+  <article class="responsibility"><dl><div><dt>Owning PRD/design skill</dt><dd>Owns narrative order, product or architecture claims, headings, diagrams, and review anchors.</dd></div><div><dt>Static shell</dt><dd>Owns Protocol typography, desktop rail, mobile disclosure, responsive measure, status presentation, and print removal of chrome.</dd></div><div><dt>Navigation runtime</dt><dd>Derives links only from authored <code>h2[id]</code> headings and highlights the visible destination. It adds no document content.</dd></div><div><dt>Motion runtime</dt><dd>Reveals opted-in sections or diagram stages and immediately settles for reduced motion, print, unsupported APIs, or interrupted playback.</dd></div><div><dt>Validator and browser fixtures</dt><dd>Own accessibility, overflow, no-JS, script-stripped, print, and motion-fallback proof.</dd></div></dl></article>
+</section>
+
+<section class="architecture-section" data-review-id="architecture.motion-fallback" aria-labelledby="motion-title">
+  <span class="eyebrow">Motion and fallback</span>
+  <h2 id="motion-title">Motion explains causal order and never gates evidence</h2>
+  <ul class="proof"><li>Direct article sections opt into restrained view entry through <code>data-motion-sections="enter"</code>.</li><li>Diagram stages use <code>data-motion="flow"</code> and ordered <code>.diagram-reveal</code> groups.</li><li>Web Animations and IntersectionObserver provide progressive behavior where supported.</li><li>CSS view timelines preserve scroll pacing when review tooling strips scripts.</li><li>Reduced motion, print, and interrupted animations force every element visible and static.</li></ul>
+</section>
+
+<section class="architecture-section" data-review-id="architecture.tradeoffs" aria-labelledby="tradeoffs-title">
+  <span class="eyebrow">Tradeoffs and proof</span>
+  <h2 id="tradeoffs-title">Larger files buy zero deployment and stronger review portability</h2>
+  <aside class="decision" data-review-id="decision.static-shell"><span class="decision-label">Decision · static shell</span><h3>Inline shared presentation into every durable artifact</h3><p>CSS and small progressive runtimes repeat across files.</p><p class="tradeoff"><strong>Cost:</strong> larger HTML diffs and no cross-document search or route catalog. <strong>Benefit:</strong> direct opening, offline review, simple provenance, and no operational dependency.</p></aside>
+  <ul class="proof"><li>Compiled template CSS is checked for drift.</li><li>The validator requires one h1, semantic landmarks, accessible figures, stable anchors, reduced motion, and print CSS.</li><li>Browser tests run desktop, 320px, print, no-JS, script-stripped, target feedback, scroll-paced flow, and interrupted-motion states.</li></ul>
+</section>
+
+<aside class="boundary" data-review-id="architecture.boundary"><h2 id="meaningful-boundary">The repository stores documents, not a documentation service</h2><p>Future retrieval or publishing needs may justify a separate product decision. They do not enter the static artifact generator by implication.</p></aside>
+
+<section class="sources" data-review-id="sources" aria-labelledby="sources-title"><h2 id="sources-title">Sources reviewed</h2><ul class="source-list"><li><a href="prd.html"><code>docs/features/project-documentation-site/prd.html</code></a> — corrected static-document product authority.</li><li><code>/Users/carlosrodrigo/Developer/tailwind-plus-protocol/protocol-ts/</code> — licensed Protocol presentation source.</li><li><code>/Users/carlosrodrigo/agents/skills/html-report-designer/</code> — static shell, navigation, motion, validation, and browser fixtures.</li><li><code>diagrams/document-to-site-path.svg</code> — semantic source for the embedded static artifact path.</li></ul></section>
+      </article>
+      <footer class="provenance" aria-label="Document provenance">
+        <p>Sources: approved static-document PRD, licensed Protocol template, and HTML report validation system · Preserve stable <code>data-review-id</code> anchors when revising architecture claims.</p>
+      </footer>
+    </main>
+  </div>
+  <script data-document-navigation="progressive">
+/* document-navigation:start */
+(() => {
+  const article = document.querySelector('main#main > article');
+  const desktopTarget = document.querySelector('[data-document-navigation-target]');
+  const mobileTarget = document.querySelector('[data-document-navigation-mobile]');
+  if (!article || !desktopTarget || !mobileTarget) return;
+
+  const headings = Array.from(article.querySelectorAll('h2[id]'))
+    .filter((heading) => heading.textContent.trim());
+  if (headings.length === 0) return;
+
+  const buildList = () => {
+    const list = document.createElement('ul');
+    list.className = 'nav-list';
+    headings.forEach((heading) => {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = `#${encodeURIComponent(heading.id)}`;
+      link.textContent = heading.textContent.trim();
+      item.append(link);
+      list.append(item);
+    });
+    return list;
+  };
+
+  desktopTarget.append(buildList());
+  mobileTarget.append(buildList());
+
+  const desktopLinks = Array.from(desktopTarget.querySelectorAll('a[href^="#"]'));
+  const mobileDetails = document.querySelector('.mobile-navigation');
+  const linksById = new Map(desktopLinks.map((link) => [decodeURIComponent(link.hash.slice(1)), link]));
+  const select = (id) => desktopLinks.forEach((link) => {
+    if (link === linksById.get(id)) link.setAttribute('aria-current', 'location');
+    else link.removeAttribute('aria-current');
+  });
+
+  document.querySelectorAll('.mobile-panel a[href^="#"]').forEach((link) => {
+    link.addEventListener('click', () => mobileDetails?.removeAttribute('open'));
+  });
+
+  if ('IntersectionObserver' in window) {
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => Math.abs(a.boundingClientRect.top) - Math.abs(b.boundingClientRect.top));
+      if (visible[0]?.target.id) select(visible[0].target.id);
+    }, { rootMargin: '-12% 0px -68% 0px', threshold: 0 });
+    headings.forEach((heading) => observer.observe(heading));
+  }
+
+  select(decodeURIComponent(location.hash.slice(1)) || headings[0].id);
+})();
+/* document-navigation:end */
+  </script>
+  <script data-artifact-motion="native">
+/* artifact-motion:start */
+(() => {
+  document.documentElement.classList.add('motion-runtime-ready');
+  const reduceQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const printQuery = window.matchMedia('print');
+  const reduceMotion = reduceQuery.matches;
+  const activeAnimations = new Set();
+  const observers = new Set();
+  const supportedMotifs = new Set(['enter', 'flow', 'state', 'target']);
+  const easing = 'cubic-bezier(.16, 1, .3, 1)';
+  const enterDuration = 440;
+  const flowDuration = 520;
+  const stagger = 90;
+
+  document.querySelectorAll('[data-motion-sections="enter"]').forEach((container) => {
+    Array.from(container.children)
+      .filter((child) => child.matches('section'))
+      .forEach((section) => {
+        if (!section.dataset.motion) section.dataset.motion = 'enter';
+      });
+  });
+
+  const roots = Array.from(document.querySelectorAll('[data-motion]'));
+
+  const complete = (element) => {
+    element.classList.remove('motion-pending');
+    element.classList.add('motion-complete');
+  };
+
+  const itemsFor = (root) => {
+    if (root.dataset.motion !== 'flow') return [root];
+    const diagramItems = Array.from(root.querySelectorAll('.diagram-reveal'));
+    if (diagramItems.length > 0) return diagramItems;
+    const explicit = Array.from(root.querySelectorAll(':scope > [data-motion-item]'));
+    if (explicit.length > 0) return explicit;
+    return Array.from(root.children).filter((child) => !child.matches('script, style'));
+  };
+
+  const hasViewTimeline = (element) => {
+    const timeline = getComputedStyle(element).animationTimeline;
+    return Boolean(timeline && timeline !== 'auto' && timeline !== 'none');
+  };
+
+  const usesCssViewMotion = (root) => {
+    if (root.dataset.motion === 'flow') return itemsFor(root).some(hasViewTimeline);
+    return hasViewTimeline(root);
+  };
+
+  const animateItem = (item, delay, isFlow) => {
+    if (item.dataset.motionState === 'complete') return Promise.resolve();
+    item.dataset.motionState = 'active';
+    const distance = isFlow ? '14px' : '20px';
+    const animation = item.animate(
+      [
+        { opacity: 0.18, transform: `translateY(${distance})` },
+        { opacity: 1, transform: 'translateY(0)' },
+      ],
+      {
+        duration: isFlow ? flowDuration : enterDuration,
+        delay,
+        easing,
+        fill: 'both',
+      },
+    );
+    activeAnimations.add(animation);
+    return animation.finished
+      .catch(() => {})
+      .finally(() => {
+        activeAnimations.delete(animation);
+        animation.cancel();
+        item.dataset.motionState = 'complete';
+        complete(item);
+      });
+  };
+
+  const finishRoot = (root) => {
+    root.dataset.motionState = 'complete';
+    root.dispatchEvent(new CustomEvent('artifact-motion:complete', { bubbles: true }));
+  };
+
+  const revealRoot = (root) => {
+    if (root.dataset.motionState === 'complete') return;
+    root.dataset.motionState = 'active';
+    animateItem(root, 0, false).finally(() => finishRoot(root));
+  };
+
+  const observeFlowItems = (root) => {
+    const items = itemsFor(root);
+    if (items.length === 0) {
+      finishRoot(root);
+      return;
+    }
+    root.dataset.motionState = 'active';
+    const remaining = new Set(items);
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => items.indexOf(a.target) - items.indexOf(b.target));
+      visible.forEach((entry, visibleIndex) => {
+        observer.unobserve(entry.target);
+        animateItem(entry.target, visibleIndex * stagger, true).finally(() => {
+          remaining.delete(entry.target);
+          if (remaining.size === 0) {
+            observers.delete(observer);
+            observer.disconnect();
+            finishRoot(root);
+          }
+        });
+      });
+    }, { threshold: 0.18, rootMargin: '0px 0px -10% 0px' });
+    observers.add(observer);
+    items.forEach((item) => observer.observe(item));
+  };
+
+  const emphasizeTarget = () => {
+    const id = decodeURIComponent(window.location.hash.slice(1));
+    if (!id) return;
+    const target = document.getElementById(id);
+    if (!target || target.dataset.motion !== 'target') return;
+    const animation = target.animate(
+      [
+        { outlineColor: 'transparent', outlineOffset: '10px', outlineStyle: 'solid', outlineWidth: '0.15rem' },
+        { outlineColor: 'currentColor', outlineOffset: '4px', outlineStyle: 'solid', outlineWidth: '0.15rem' },
+        { outlineColor: 'transparent', outlineOffset: '7px', outlineStyle: 'solid', outlineWidth: '0.15rem' },
+      ],
+      { duration: 420, easing },
+    );
+    activeAnimations.add(animation);
+    animation.finished.catch(() => {}).finally(() => activeAnimations.delete(animation));
+  };
+
+  const settleMotion = () => {
+    observers.forEach((observer) => observer.disconnect());
+    observers.clear();
+    activeAnimations.forEach((animation) => animation.cancel());
+    activeAnimations.clear();
+    roots.forEach((root) => {
+      root.dataset.motionState = 'complete';
+      itemsFor(root).forEach((item) => {
+        item.dataset.motionState = 'complete';
+        complete(item);
+      });
+    });
+  };
+  reduceQuery.addEventListener?.('change', (event) => { if (event.matches) settleMotion(); });
+  printQuery.addEventListener?.('change', (event) => { if (event.matches) settleMotion(); });
+
+  if (reduceMotion || printQuery.matches || !('IntersectionObserver' in window) || !('animate' in Element.prototype)) {
+    settleMotion();
+    return;
+  }
+
+  const rootObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      revealRoot(entry.target);
+      rootObserver.unobserve(entry.target);
+    });
+  }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+  observers.add(rootObserver);
+
+  roots
+    .filter((root) => supportedMotifs.has(root.dataset.motion) && root.dataset.motion !== 'target')
+    .forEach((root) => {
+      if (usesCssViewMotion(root)) {
+        root.dataset.motionState = 'css-view';
+        return;
+      }
+      if (root.dataset.motion === 'flow') observeFlowItems(root);
+      else rootObserver.observe(root);
+    });
+
+  window.addEventListener('hashchange', emphasizeTarget);
+  requestAnimationFrame(emphasizeTarget);
+})();
+/* artifact-motion:end */
+  </script>
+</body>
+</html>
