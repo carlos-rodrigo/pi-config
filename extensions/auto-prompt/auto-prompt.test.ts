@@ -85,24 +85,13 @@ test("buildSuggestionPrompt is mode-aware for fast work", () => {
 	assert.match(prompt, /rapid feedback/i);
 });
 
-test("buildSuggestionPrompt maps the deep alias to Deep³ guidance", () => {
+test("buildSuggestionPrompt is mode-aware for deep work", () => {
 	const prompt = buildSuggestionPrompt(
 		"User: We need to find edge cases before shipping.\n\nAssistant: Let's inspect failure modes.",
 		"deep",
 	);
 
 	assert.match(prompt, /Current agent mode: deep/i);
-	assert.match(prompt, /quality-first/i);
-	assert.match(prompt, /reproduce or diagnose first/i);
-});
-
-test("buildSuggestionPrompt is mode-aware for deep3 work", () => {
-	const prompt = buildSuggestionPrompt(
-		"User: This session handoff bug is intermittent and risky.\n\nAssistant: We need to reason through failure modes.",
-		"deep3",
-	);
-
-	assert.match(prompt, /Current agent mode: deep3/i);
 	assert.match(prompt, /quality-first/i);
 	assert.match(prompt, /reproduce or diagnose first/i);
 });

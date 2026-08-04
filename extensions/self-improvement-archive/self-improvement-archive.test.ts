@@ -422,6 +422,6 @@ test("archive guidance and mode recommendation degrade safely", (t) => {
 		);
 	}
 	assert.match(buildArchiveGuidance(fixture.root) ?? "", /verification failure/);
-	assert.equal(recommendModeFromArchive(fixture.root).mode, "deep3");
+	assert.equal(recommendModeFromArchive(fixture.root).mode, "deep");
 	assert.match(formatImprovementProposal(fixture.root), /Expected metric/);
 });

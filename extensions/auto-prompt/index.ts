@@ -424,9 +424,8 @@ function getWorkflowModeGuidance(workflowMode?: string): string {
 			return `
 - In Smart mode, explore plausible causes or tradeoffs before choosing a focused implementation and verification path`;
 		case "deep":
-		case "deep3":
 			return `
-- In Deep³ mode, prefer a quality-first prompt: reproduce or diagnose first, state material tradeoffs, patch only if localized, and verify with focused and regression checks`;
+- In Deep mode, prefer a quality-first prompt: reproduce or diagnose first, state material tradeoffs, patch only if localized, and verify with focused and regression checks`;
 		case "max":
 			return `
 - In Max mode, prefer a bounded quality-first prompt with explicit risks, required evidence, verification, and stopping criteria`;

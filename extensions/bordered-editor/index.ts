@@ -67,7 +67,7 @@ export function formatWorkflowModeLabel(rawMode: string | null | undefined): str
 	const normalized = value.toLowerCase();
 	if (["fast", "f", "rush", "r"].includes(normalized)) return "Fast";
 	if (["smart", "s"].includes(normalized)) return "Smart";
-	if (["deep", "deep3", "deep³", "d", "d3"].includes(normalized)) return "Deep³";
+	if (["deep", "d"].includes(normalized)) return "Deep";
 	if (["max", "maximum"].includes(normalized)) return "Max";
 	return value;
 }
@@ -76,7 +76,7 @@ export function getWorkflowModeColor(label: string | null | undefined): Workflow
 	const normalized = label?.toLowerCase() ?? "";
 	if (normalized === "max") return "thinkingMax";
 	if (normalized.startsWith("deep")) return "thinkingXhigh";
-	if (normalized === "smart") return "thinkingHigh";
+	if (normalized === "smart") return "thinkingMedium";
 	return "thinkingMedium";
 }
 

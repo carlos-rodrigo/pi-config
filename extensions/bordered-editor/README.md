@@ -20,7 +20,7 @@ pi install ./extensions/bordered-editor
 
 ### Top border
 
-- **Left — `mode:fast`:** the active workflow mode, bold and colored by reasoning effort: Fast/medium is blue, Smart/high is mauve, Deep³/xhigh is pink, and Max is gold. The composer border uses the same color. The label is omitted when no workflow mode is available.
+- **Left — `mode:fast`:** the active workflow mode, bold and colored by reasoning effort: Fast/medium and Smart/medium are blue, Deep/xhigh is pink, and Max is gold. The composer border uses the same color. The label is omitted when no workflow mode is available.
 - **Right — `Claude 4 Opus · high`:** the active model in muted text and the thinking level in bold using its matching reasoning color.
 
 ### Inside the box

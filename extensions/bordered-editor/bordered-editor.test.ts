@@ -110,8 +110,8 @@ test("pickPrimaryExtensionStatus prefers prompt queue over ambient mode status",
 test("formatWorkflowModeLabel displays the simplified workflow modes", () => {
 	assert.equal(formatWorkflowModeLabel("fast"), "Fast");
 	assert.equal(formatWorkflowModeLabel("smart"), "Smart");
-	assert.equal(formatWorkflowModeLabel("deep"), "Deep³");
-	assert.equal(formatWorkflowModeLabel("deep3"), "Deep³");
+	assert.equal(formatWorkflowModeLabel("deep"), "Deep");
+	assert.equal(formatWorkflowModeLabel("deep3"), "deep3");
 	assert.equal(formatWorkflowModeLabel("max"), "Max");
 	assert.equal(formatWorkflowModeLabel("deep2"), "deep2");
 	assert.equal(formatWorkflowModeLabel(null), null);
@@ -119,8 +119,8 @@ test("formatWorkflowModeLabel displays the simplified workflow modes", () => {
 
 test("getWorkflowModeColor follows the reasoning-level palette", () => {
 	assert.equal(getWorkflowModeColor("Fast"), "thinkingMedium");
-	assert.equal(getWorkflowModeColor("Smart"), "thinkingHigh");
-	assert.equal(getWorkflowModeColor("Deep³"), "thinkingXhigh");
+	assert.equal(getWorkflowModeColor("Smart"), "thinkingMedium");
+	assert.equal(getWorkflowModeColor("Deep"), "thinkingXhigh");
 	assert.equal(getWorkflowModeColor("Max"), "thinkingMax");
 });
 

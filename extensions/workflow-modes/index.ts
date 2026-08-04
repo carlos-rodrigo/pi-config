@@ -3,13 +3,13 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 import { recommendModeFromArchive } from "../self-improvement-archive/index.ts";
 
-type AgentMode = "fast" | "smart" | "deep3" | "max";
+type AgentMode = "fast" | "smart" | "deep" | "max";
 type ModelLike = { provider?: string; id?: string; model?: string } | undefined;
 
 const MODE_LABEL: Record<AgentMode, string> = {
 	fast: "Fast",
 	smart: "Smart",
-	deep3: "Deep³",
+	deep: "Deep",
 	max: "Max",
 };
 
@@ -17,8 +17,8 @@ type ModeStatusColor = "thinkingMedium" | "thinkingHigh" | "thinkingXhigh" | "th
 
 const MODE_STATUS_COLOR: Record<AgentMode, ModeStatusColor> = {
 	fast: "thinkingMedium",
-	smart: "thinkingHigh",
-	deep3: "thinkingXhigh",
+	smart: "thinkingMedium",
+	deep: "thinkingXhigh",
 	max: "thinkingMax",
 };
 
@@ -29,23 +29,24 @@ type ModeProfile = {
 	thinking: ThinkingLevel;
 };
 
+const LUNA_MODEL: ModeModel = { provider: "openai-codex", model: "gpt-5.6-luna" };
 const SOL_MODEL: ModeModel = { provider: "openai-codex", model: "gpt-5.6-sol" };
 
 const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
-	fast: { model: SOL_MODEL, thinking: "medium" },
-	smart: { model: SOL_MODEL, thinking: "high" },
-	deep3: { model: SOL_MODEL, thinking: "xhigh" },
+	fast: { model: LUNA_MODEL, thinking: "medium" },
+	smart: { model: SOL_MODEL, thinking: "medium" },
+	deep: { model: SOL_MODEL, thinking: "xhigh" },
 	max: { model: SOL_MODEL, thinking: "max" },
 };
 
-const MODE_CYCLE: AgentMode[] = ["fast", "smart", "deep3", "max"];
+const MODE_CYCLE: AgentMode[] = ["fast", "smart", "deep", "max"];
 
 export function normalizeMode(raw: string | undefined): AgentMode | undefined {
 	if (!raw) return undefined;
 	const value = raw.trim().toLowerCase();
 	if (["fast", "f", "rush", "r"].includes(value)) return "fast";
 	if (["smart", "s"].includes(value)) return "smart";
-	if (["deep", "deep3", "deep³", "d", "d3"].includes(value)) return "deep3";
+	if (["deep", "d"].includes(value)) return "deep";
 	if (["max", "maximum"].includes(value)) return "max";
 	return undefined;
 }
@@ -151,19 +152,19 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.registerFlag("workflow-mode", {
-		description: "Start in agent mode (fast | smart | deep3 | max)",
+		description: "Start in agent mode (fast | smart | deep | max)",
 		type: "string",
 	});
 
 	pi.registerShortcut("ctrl+shift+m", {
-		description: "Cycle agent mode (Fast/Smart/Deep³/Max)",
+		description: "Cycle agent mode (Fast/Smart/Deep/Max)",
 		handler: async (ctx: ExtensionContext) => {
 			await cycleMode(ctx);
 		},
 	});
 
 	pi.registerCommand("mode", {
-		description: "Switch agent mode: fast | smart | deep3 | max",
+		description: "Switch agent mode: fast | smart | deep | max",
 		handler: async (args, ctx) => {
 			const input = args.trim();
 			if (!input) {
@@ -181,7 +182,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (input.toLowerCase() === "help") {
-				ctx.ui.notify("Usage: /mode fast | /mode smart | /mode deep3 | /mode max | /mode recommend", "info");
+				ctx.ui.notify("Usage: /mode fast | /mode smart | /mode deep | /mode max | /mode recommend", "info");
 				return;
 			}
 
@@ -194,7 +195,7 @@ export default function (pi: ExtensionAPI) {
 
 			const mode = normalizeMode(input);
 			if (!mode) {
-				ctx.ui.notify("Unknown mode. Use: fast, smart, deep3, or max", "error");
+				ctx.ui.notify("Unknown mode. Use: fast, smart, deep, or max", "error");
 				return;
 			}
 
@@ -203,23 +204,16 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("smart", {
-		description: "Switch agent mode to Smart (high reasoning)",
+		description: "Switch agent mode to Smart (medium reasoning)",
 		handler: async (_args, ctx) => {
 			await applyMode("smart", ctx);
 		},
 	});
 
 	pi.registerCommand("deep", {
-		description: "Switch agent mode to Deep³ (xhigh reasoning)",
+		description: "Switch agent mode to Deep (xhigh reasoning)",
 		handler: async (_args, ctx) => {
-			await applyMode("deep3", ctx);
-		},
-	});
-
-	pi.registerCommand("deep3", {
-		description: "Switch agent mode to Deep³ (xhigh reasoning)",
-		handler: async (_args, ctx) => {
-			await applyMode("deep3", ctx);
+			await applyMode("deep", ctx);
 		},
 	});
 
