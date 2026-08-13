@@ -175,7 +175,13 @@ function requestPinnedUrl(url: string, pinned: ResolvedAddress, init: RequestIni
 			method: init.method ?? "GET",
 			headers,
 			signal: init.signal ?? undefined,
-			lookup: (_hostname, _options, callback) => callback(null, pinned.address, pinned.family),
+			lookup: (_hostname, options, callback) => {
+				if (options.all) {
+					callback(null, [{ address: pinned.address, family: pinned.family }]);
+					return;
+				}
+				callback(null, pinned.address, pinned.family);
+			},
 		};
 		const request = (target.protocol === "https:" ? httpsRequest : httpRequest)(options, (response) => {
 			const responseHeaders = new Headers();
