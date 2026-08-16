@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -9,11 +9,13 @@ const sourceTests = [
 	"extensions/document-reviewer/pr-diff-map.test.ts",
 	"extensions/document-reviewer/pr-worktree.test.ts",
 	"extensions/document-reviewer/review-page.test.ts",
+	"extensions/document-reviewer/review-page.browser.test.ts",
 	"extensions/document-reviewer/server.test.ts",
 ];
 
 const tempDir = mkdtempSync(path.join(os.tmpdir(), "pi-config-doc-review-tests-"));
-const localTsc = path.join(process.cwd(), "node_modules", ".bin", "tsc");
+const localNodeModules = path.join(process.cwd(), "node_modules");
+const localTsc = path.join(localNodeModules, ".bin", "tsc");
 
 function ensureLocalTsc() {
 	try {
@@ -37,6 +39,7 @@ function run(command, args) {
 
 try {
 	ensureLocalTsc();
+	symlinkSync(localNodeModules, path.join(tempDir, "node_modules"), "junction");
 	run(localTsc, [
 		"--skipLibCheck",
 		"--module",

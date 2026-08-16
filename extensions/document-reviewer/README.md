@@ -34,7 +34,7 @@ pi install ./extensions/document-reviewer
 
 1. Press `Ctrl+Shift+F` in the browser to finalize.
 2. Markdown reviews write `<!-- REVIEW: ... -->` annotations into the source file.
-3. HTML reviews write comments to `<name>.review.md` and leave the source HTML unchanged. Checked radio options inside an element marked `data-review-decision` are recorded as anchored review feedback and replace the prior decision for that anchor.
+3. HTML reviews write comments to `<name>.review.md` and leave the source HTML unchanged. Radio choices in `data-review-decision="single-choice"` containers are saved as anchored feedback. Canonical `recorded-decision` containers atomically save one typed sidecar entry per stable anchor: selection edits are `selected`, and checking **Decision recorded** upgrades that entry to `confirmed` with rationale, owner, completeness, and source fingerprint. A failed write keeps the review open for retry.
 4. The tab will attempt to close automatically; if your browser blocks it, close it manually.
 5. Return to Pi and prompt: `Apply comments in <file>` or `Apply comments in <name>.review.md`.
 
@@ -60,6 +60,18 @@ pi install ./extensions/document-reviewer
 - `/review` accepts markdown (`.md`, `.markdown`, `.mdown`, `.mkd`, `.mdx`) and HTML (`.html`, `.htm`).
 - `/review-html` accepts only HTML (`.html`, `.htm`).
 - HTML files are rendered as the top-level review page with a CSP-nonced review overlay; source scripts/base tags are stripped for safety, hash links work normally, and comments export to a sidecar `.review.md` file.
+
+## Development
+
+Install the deterministic Chromium runtime once before running the browser regression suite:
+
+```bash
+npm install
+npm run test:document-reviewer:install-browser
+npm run test:document-reviewer
+```
+
+Set `PI_DOCUMENT_REVIEW_BROWSER_CHANNEL` only when intentionally testing against an installed system browser instead.
 
 ## Troubleshooting
 

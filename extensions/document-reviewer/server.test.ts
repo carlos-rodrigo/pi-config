@@ -181,7 +181,7 @@ test("document sessions still expose markdown and finish by writing inline comme
 });
 
 test("html document sessions expose source and finish by writing a review sidecar", async (t) => {
-	const html = '<!doctype html><section data-review-id="summary"><h1>Design</h1><p>Hello browser review</p></section>';
+	const html = '<!doctype html><section data-review-id="summary"><h1>Design</h1><p>Hello browser review</p></section><fieldset data-review-id="decision-001" data-review-decision="recorded-decision"><legend>Where should accounts live?</legend></fieldset>';
 	const fixture = makeTempHtml(html);
 	const service = new DocumentReviewService();
 	await service.start();
@@ -214,6 +214,7 @@ test("html document sessions expose source and finish by writing a review sideca
 	assert.match(reviewPage, /pi-html-review-root/);
 	assert.match(reviewPage, /Comment selection/);
 	assert.match(reviewPage, /data-review-id="summary"/);
+	assert.match(reviewPage, /data-review-decision="recorded-decision"/);
 	assert.doesNotMatch(reviewPage, /<iframe/);
 	assert.doesNotMatch(reviewPage, /html-review-frame/);
 
@@ -228,13 +229,47 @@ test("html document sessions expose source and finish by writing a review sideca
 	assert.equal(createPayload.comment.reviewId, "summary");
 	assert.deepEqual(createPayload.comment.selector, { exact: "Hello browser review" });
 
+	const selectedDecisionResponse = await postJson(`${apiBase}/comments`, {
+		selectedText: "Where should accounts live?",
+		comment:
+			"Decision selected: Company accounts | Option ID: company | Rationale: Shared banking reality | Owner: Product owner | Completion: complete | Source fingerprint: abc123 | Canonical approval: unchanged.",
+		reviewId: "decision-001",
+		selector: { exact: "Where should accounts live?" },
+		feedbackKind: "decision",
+		decisionFeedbackStatus: "selected",
+	});
+	assert.equal(selectedDecisionResponse.status, 201);
+	const selectedDecision = (await selectedDecisionResponse.json()) as { comment: { id: string } };
+
+	const confirmedDecisionResponse = await postJson(`${apiBase}/comments`, {
+		selectedText: "Where should accounts live?",
+		comment:
+			"Decision confirmed: Company accounts | Option ID: company | Rationale: Shared banking reality | Owner: Product owner | Completion: complete | Source fingerprint: abc123 | Canonical approval: unchanged.",
+		reviewId: "decision-001",
+		selector: { exact: "Where should accounts live?" },
+		feedbackKind: "decision",
+		decisionFeedbackStatus: "confirmed",
+	});
+	assert.equal(confirmedDecisionResponse.status, 200);
+	const confirmedDecision = (await confirmedDecisionResponse.json()) as { comment: { id: string } };
+	assert.equal(confirmedDecision.comment.id, selectedDecision.comment.id);
+
+	const commentsResponse = await fetch(`${apiBase}/comments`);
+	assert.equal(commentsResponse.status, 200);
+	const commentsPayload = (await commentsResponse.json()) as { comments: Array<Record<string, unknown>> };
+	assert.equal(commentsPayload.comments.length, 2);
+	assert.deepEqual(
+		commentsPayload.comments.find((comment) => comment.feedbackKind === "decision"),
+		expectedDecisionComment({ id: selectedDecision.comment.id, status: "confirmed" }),
+	);
+
 	const finishResponse = await fetch(`${apiBase}/finish`, { method: "POST" });
 	assert.equal(finishResponse.status, 200);
 	assert.deepEqual(await finishResponse.json(), {
 		status: "finished",
 		mode: "document",
 		sourceKind: "html",
-		commentsWritten: 1,
+		commentsWritten: 2,
 		filePath: fixture.filePath,
 		sidecarPath: fixture.sidecarPath,
 	});
@@ -244,7 +279,118 @@ test("html document sessions expose source and finish by writing a review sideca
 	assert.match(sidecar, /Review comments for design\.html/);
 	assert.match(sidecar, /Anchor: `summary`/);
 	assert.match(sidecar, /Tighten this copy/);
-	assert.equal((await finishPromise).length, 1);
+	assert.match(sidecar, /Anchor: `decision-001`/);
+	assert.match(sidecar, /Feedback type: Decision/);
+	assert.match(sidecar, /Decision feedback status: confirmed/);
+	assert.match(sidecar, /Decision confirmed: Company accounts/);
+	assert.match(sidecar, /Rationale: Shared banking reality/);
+	assert.match(sidecar, /Canonical approval: unchanged/);
+	assert.equal((sidecar.match(/Anchor: `decision-001`/g) ?? []).length, 1);
+	assert.equal((await finishPromise).length, 2);
+});
+
+function expectedDecisionComment(input: { id: string; status: "selected" | "confirmed" }) {
+	return {
+		id: input.id,
+		selectedText: "Where should accounts live?",
+		comment: `Decision ${input.status}: Company accounts | Option ID: company | Rationale: Shared banking reality | Owner: Product owner | Completion: complete | Source fingerprint: abc123 | Canonical approval: unchanged.`,
+		offsetStart: 0,
+		offsetEnd: 0,
+		reviewId: "decision-001",
+		selector: { exact: "Where should accounts live?" },
+		feedbackKind: "decision",
+		decisionFeedbackStatus: input.status,
+	};
+}
+
+test("managed decision feedback does not collide with ordinary comments and can be cleared by anchor", async (t) => {
+	const fixture = makeTempHtml('<!doctype html><fieldset data-review-id="decision-001"></fieldset>');
+	const service = new DocumentReviewService();
+	await service.start();
+	t.after(async () => {
+		await service.stop();
+		fixture.cleanup();
+	});
+
+	const session = await service.createHtmlSession(fixture.filePath);
+	const apiBase = `${new URL(session.documentUrl).origin}/api/${session.sessionId}`;
+	assert.equal(
+		(
+			await postJson(`${apiBase}/comments`, {
+				selectedText: "Decision",
+				comment: "Decision selected: this is an ordinary reviewer comment",
+				reviewId: "decision-001",
+			})
+		).status,
+		201,
+	);
+	assert.equal(
+		(
+			await postJson(`${apiBase}/comments`, {
+				selectedText: "Decision",
+				comment: "Decision selected: Company accounts",
+				reviewId: "decision-001",
+				feedbackKind: "decision",
+				decisionFeedbackStatus: "selected",
+			})
+		).status,
+		201,
+	);
+
+	const beforeClear = (await (await fetch(`${apiBase}/comments`)).json()) as { comments: Array<Record<string, unknown>> };
+	assert.equal(beforeClear.comments.length, 2);
+	assert.equal((await fetch(`${apiBase}/comments/decision/decision-001`, { method: "DELETE" })).status, 200);
+	const afterClear = (await (await fetch(`${apiBase}/comments`)).json()) as { comments: Array<Record<string, unknown>> };
+	assert.equal(afterClear.comments.length, 1);
+	assert.equal(afterClear.comments[0]?.feedbackKind, undefined);
+	assert.match(String(afterClear.comments[0]?.comment), /ordinary reviewer comment/);
+});
+
+test("rejects malformed decision feedback metadata without storing a comment", async (t) => {
+	const fixture = makeTempHtml('<!doctype html><fieldset data-review-id="decision-001"></fieldset>');
+	const service = new DocumentReviewService();
+	await service.start();
+	t.after(async () => {
+		await service.stop();
+		fixture.cleanup();
+	});
+
+	const session = await service.createHtmlSession(fixture.filePath);
+	const apiBase = `${new URL(session.documentUrl).origin}/api/${session.sessionId}`;
+	const base = {
+		selectedText: "Decision",
+		comment: "Decision selected: Company accounts",
+		reviewId: "decision-001",
+	};
+	const cases: Array<{ payload: Record<string, unknown>; error: string }> = [
+		{
+			payload: { ...base, reviewId: undefined, feedbackKind: "decision", decisionFeedbackStatus: "selected" },
+			error: "Decision feedback requires a stable HTML review anchor.",
+		},
+		{
+			payload: { ...base, feedbackKind: "unsupported", decisionFeedbackStatus: "selected" },
+			error: "Unsupported HTML review feedback kind.",
+		},
+		{
+			payload: { ...base, feedbackKind: "decision" },
+			error: "Decision feedback requires selected or confirmed status.",
+		},
+		{
+			payload: { ...base, feedbackKind: "decision", decisionFeedbackStatus: "recorded" },
+			error: "Decision feedback requires selected or confirmed status.",
+		},
+		{
+			payload: { ...base, decisionFeedbackStatus: "selected" },
+			error: "Decision feedback status is only valid for decision feedback.",
+		},
+	];
+
+	for (const candidate of cases) {
+		const response = await postJson(`${apiBase}/comments`, candidate.payload);
+		assert.equal(response.status, 400);
+		assert.deepEqual(await response.json(), { error: candidate.error });
+	}
+	assert.deepEqual(await (await fetch(`${apiBase}/comments`)).json(), { comments: [] });
 });
 
 test("rejects invalid comment metadata without storing the draft", async (t) => {

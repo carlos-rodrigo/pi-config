@@ -421,6 +421,71 @@ textarea {
 `;
 }
 
+export interface StructuredDecisionFeedbackState {
+	validContract: boolean;
+	optionId: string;
+	selection: string;
+	rationale: string;
+	owner: string;
+	question: string;
+	sourceFingerprint: string;
+	complete: boolean;
+}
+
+export interface DecisionFeedbackPayload {
+	selectedText: string;
+	comment: string;
+	feedbackKind: "decision";
+	decisionFeedbackStatus: "selected" | "confirmed";
+}
+
+export function buildStructuredDecisionFeedbackPayload(
+	state: StructuredDecisionFeedbackState,
+	confirmed: boolean,
+): DecisionFeedbackPayload | undefined {
+	if (!state.validContract || !state.selection || (confirmed && !state.complete)) return undefined;
+	const decisionFeedbackStatus = confirmed ? "confirmed" : "selected";
+	return {
+		selectedText: state.question,
+		comment:
+			`Decision ${decisionFeedbackStatus}: ${state.selection}` +
+			` | Option ID: ${state.optionId || "other"}` +
+			` | Rationale: ${state.rationale || "Not provided"}` +
+			` | Owner: ${state.owner || "Not provided"}` +
+			` | Completion: ${state.complete ? "complete" : "incomplete"}` +
+			` | Source fingerprint: ${state.sourceFingerprint}` +
+			" | Canonical approval: unchanged.",
+		feedbackKind: "decision",
+		decisionFeedbackStatus,
+	};
+}
+
+export function createSerializedWriteQueue() {
+	let pending = Promise.resolve<void>(undefined);
+	// A failed key keeps drain() blocked until a later successful write for that same key.
+	const unresolvedFailures = new Map<string, unknown>();
+	return {
+		enqueue(key: string, write: () => Promise<void>): Promise<void> {
+			const queued = pending.catch(() => undefined).then(async () => {
+				try {
+					await write();
+					unresolvedFailures.delete(key);
+				} catch (error) {
+					unresolvedFailures.set(key, error);
+					throw error;
+				}
+			});
+			pending = queued;
+			return queued;
+		},
+		async drain(): Promise<void> {
+			await pending.catch(() => undefined);
+			const failure = unresolvedFailures.values().next();
+			if (!failure.done) throw failure.value;
+		},
+	};
+}
+
 function getHtmlVisualReviewScript(sessionId: string, title: string): string {
 	return `
 (function() {
@@ -430,13 +495,16 @@ function getHtmlVisualReviewScript(sessionId: string, title: string): string {
   const REVIEW_TITLE = ${JSON.stringify(title)};
   const API_BASE = window.location.origin + '/api/' + SESSION_ID;
   const OVERLAY_CSS = ${JSON.stringify(getHtmlVisualReviewOverlayStyles())};
+  const buildStructuredDecisionFeedbackPayload = ${buildStructuredDecisionFeedbackPayload.toString()};
+  const createSerializedWriteQueue = ${createSerializedWriteQueue.toString()};
 
   let comments = [];
   let currentSelection = null;
   let pendingSelection = null;
   let drawerOpen = false;
   let reviewCompleted = false;
-  let pendingDecisionWrite = Promise.resolve();
+  let finishingReview = false;
+  const decisionFeedbackWriteQueue = createSerializedWriteQueue();
 
   const host = document.createElement('div');
   host.id = 'pi-html-review-root';
@@ -669,48 +737,166 @@ function getHtmlVisualReviewScript(sessionId: string, title: string): string {
     return (clone.textContent || input.value || 'Selected option').replace(/\\s+/g, ' ').trim().replace(/:\\s*$/, '');
   }
 
-  async function recordDecision(input) {
-    const decision = input.closest('[data-review-decision]');
-    const anchor = decision && decision.closest('[data-review-id]');
-    const reviewId = anchor && anchor.getAttribute('data-review-id');
-    if (!decision || !reviewId) return;
+  function compactDecisionText(value) {
+    return String(value || '').replace(/\\s+/g, ' ').trim();
+  }
 
+  function decisionReviewId(decision) {
+    return decision?.closest('[data-review-id]')?.getAttribute('data-review-id') || '';
+  }
+
+  function isStructuredDecision(decision) {
+    return decision?.getAttribute('data-review-decision') === 'recorded-decision';
+  }
+
+  function readStructuredDecisionState(decision) {
+    const selected = decision.querySelector('input[type="radio"]:checked');
+    const customAnswer = compactDecisionText(decision.querySelector('[data-decision-custom]')?.value);
+    const optionText = selected ? decisionOptionText(selected) : '';
+    const optionId = selected?.value || '';
+    const selection = optionId === 'other' ? customAnswer : optionText;
+    const rationaleControl = decision.querySelector('[data-decision-rationale]');
+    const ownerControl = decision.querySelector('[data-decision-owner]');
+    const checkbox = decision.querySelector('[data-decision-recorded]');
+    const questionControl = decision.querySelector('legend');
+    const rationale = compactDecisionText(rationaleControl?.value);
+    const owner = compactDecisionText(ownerControl?.value);
+    const question = compactDecisionText(questionControl?.textContent) || 'Decision';
+    const sourceFingerprint = decision.getAttribute('data-decision-source-fingerprint') || '';
+    const validContract = Boolean(
+      decisionReviewId(decision)
+      && questionControl
+      && decision.querySelector('input[type="radio"]')
+      && rationaleControl
+      && ownerControl
+      && checkbox
+      && /^[a-f0-9]{64}$/.test(sourceFingerprint)
+    );
+    return {
+      validContract,
+      optionId,
+      selection,
+      rationale,
+      owner,
+      question,
+      sourceFingerprint,
+      complete: Boolean(validContract && selection && rationale && owner),
+    };
+  }
+
+  function updateStructuredDecisionUi(decision, options) {
+    if (!decision || decision.getAttribute('data-decision-status') === 'accepted') return;
+    const state = readStructuredDecisionState(decision);
+    const checkbox = decision.querySelector('[data-decision-recorded]');
+    const status = decision.querySelector('.decision-status');
+    const markDirty = options?.markDirty === true;
+    if (markDirty) decision.dataset.reviewDecisionDirty = 'true';
+    if (markDirty && checkbox?.checked) checkbox.checked = false;
+    if (checkbox) checkbox.disabled = finishingReview || !state.complete;
+    if (!status) return;
+    if (!state.validContract) status.textContent = 'This decision recorder is missing required review metadata and cannot be saved.';
+    else if (markDirty) status.textContent = state.complete
+      ? 'Changes pending. Leave the field or finish the review to save them.'
+      : 'Selection is incomplete. Add a decision, rationale, and owner.';
+    else if (!state.complete) status.textContent = 'Select an option and provide rationale and owner before recording.';
+    else if (!checkbox?.checked) status.textContent = 'Ready to record through the review feedback channel.';
+  }
+
+  function updateDecisionFeedbackComment(reviewId, comment) {
+    const existingIndex = comments.findIndex((candidate) => candidate.feedbackKind === 'decision' && candidate.reviewId === reviewId);
+    if (existingIndex === -1) comments.push(comment);
+    else comments[existingIndex] = comment;
+    renderComments();
+    markCommentAnchors();
+  }
+
+  async function saveDecisionFeedback(decision, payload) {
+    const reviewId = decisionReviewId(decision);
+    if (!reviewId) throw new Error('Decision feedback requires a stable review anchor.');
+    const data = await fetchJson('/comments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...payload,
+        offsetStart: 0,
+        offsetEnd: 0,
+        reviewId,
+        selector: { exact: payload.selectedText },
+      }),
+    });
+    updateDecisionFeedbackComment(reviewId, data.comment);
+  }
+
+  async function clearDecisionFeedback(decision) {
+    const reviewId = decisionReviewId(decision);
+    if (!reviewId) throw new Error('Decision feedback requires a stable review anchor.');
+    await fetchJson('/comments/decision/' + encodeURIComponent(reviewId), { method: 'DELETE' });
+    comments = comments.filter((comment) => comment.feedbackKind !== 'decision' || comment.reviewId !== reviewId);
+    renderComments();
+    markCommentAnchors();
+  }
+
+  async function saveSingleChoiceFeedback(input) {
+    const decision = input.closest('[data-review-decision]');
+    if (!decision) return;
     const selected = decision.querySelector('input[type="radio"]:checked');
     if (!selected) return;
     const optionText = decisionOptionText(selected);
     const customInput = selected.closest('label')?.querySelector('input[type="text"], textarea');
-    const customText = customInput && customInput.value ? customInput.value.trim() : '';
-    const commentText = 'Decision selected: ' + optionText + (customText ? ' — ' + customText : '');
-    const previous = comments.find((comment) => comment.reviewId === reviewId && String(comment.comment || '').startsWith('Decision selected:'));
-
-    try {
-      if (previous) {
-        await fetchJson('/comments/' + previous.id, { method: 'DELETE' });
-        comments = comments.filter((comment) => comment.id !== previous.id);
-      }
-      const data = await fetchJson('/comments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          selectedText: optionText,
-          comment: commentText,
-          offsetStart: 0,
-          offsetEnd: 0,
-          reviewId,
-          selector: { exact: optionText },
-        }),
-      });
-      comments.push(data.comment);
-      renderComments();
-      markCommentAnchors();
-      showToast('Decision recorded as review feedback.');
-    } catch (error) {
-      showToast('Error recording decision: ' + error.message);
-    }
+    const customText = compactDecisionText(customInput?.value);
+    await saveDecisionFeedback(decision, {
+      selectedText: optionText,
+      comment: 'Decision selected: ' + optionText + (customText ? ' — ' + customText : ''),
+      feedbackKind: 'decision',
+      decisionFeedbackStatus: 'selected',
+    });
+    showToast('Decision selection saved as review feedback.');
   }
 
-  function queueDecision(input) {
-    pendingDecisionWrite = pendingDecisionWrite.then(() => recordDecision(input));
+  async function saveStructuredDecisionFeedback(decision, confirmed) {
+    const state = readStructuredDecisionState(decision);
+    const status = decision.querySelector('.decision-status');
+    if (!state.validContract) throw new Error('Decision recorder is missing its anchor, controls, or source fingerprint.');
+    if (!state.selection) {
+      await clearDecisionFeedback(decision);
+      if (status) status.textContent = 'No decision selection is saved.';
+      showToast('Cleared stale decision feedback.');
+      return;
+    }
+    const payload = buildStructuredDecisionFeedbackPayload(state, confirmed);
+    if (!payload) throw new Error('Complete the decision, rationale, and owner before confirming it.');
+    await saveDecisionFeedback(decision, payload);
+    if (status) status.textContent = confirmed
+      ? 'Confirmed in review feedback. Canonical approval remains unchanged until reconciliation.'
+      : state.complete
+        ? 'Selection saved as review feedback. Check “Decision recorded” to confirm it.'
+        : 'Incomplete selection saved as review feedback.';
+    showToast(confirmed ? 'Decision confirmation saved as review feedback.' : 'Decision selection saved as review feedback.');
+  }
+
+  function queueDecisionFeedbackWrite(write, decision) {
+    const queued = decisionFeedbackWriteQueue.enqueue(decisionReviewId(decision) || 'unanchored-decision', write);
+    void queued.catch((error) => {
+      if (decision) {
+        decision.dataset.reviewDecisionDirty = 'true';
+        const status = decision.querySelector('.decision-status');
+        if (status) status.textContent = 'Decision feedback was not saved. Fix the error or finish again to retry.';
+      }
+      showToast('Error saving decision feedback: ' + error.message);
+    });
+    return queued;
+  }
+
+  function setDecisionControlsDisabled(disabled) {
+    document.querySelectorAll('[data-review-decision]').forEach((decision) => {
+      if (disabled) {
+        decision.dataset.reviewWasInert = String(Boolean(decision.inert));
+        decision.inert = true;
+      } else {
+        decision.inert = decision.dataset.reviewWasInert === 'true';
+        delete decision.dataset.reviewWasInert;
+      }
+    });
   }
 
   async function deleteComment(commentId) {
@@ -756,33 +942,55 @@ function getHtmlVisualReviewScript(sessionId: string, title: string): string {
       card.appendChild(makeText('snippet', comment.selectedText || '(empty selection)'));
       if (comment.reviewId) card.appendChild(makeText('anchor', comment.reviewId));
       card.appendChild(makeText('note', comment.comment || '(empty note)'));
-      const footer = document.createElement('div');
-      footer.className = 'comment-footer';
-      const button = document.createElement('button');
-      button.className = 'danger';
-      button.type = 'button';
-      button.textContent = 'Delete';
-      button.addEventListener('click', () => deleteComment(comment.id));
-      footer.appendChild(button);
-      card.appendChild(footer);
+      if (comment.feedbackKind !== 'decision') {
+        const footer = document.createElement('div');
+        footer.className = 'comment-footer';
+        const button = document.createElement('button');
+        button.className = 'danger';
+        button.type = 'button';
+        button.textContent = 'Delete';
+        button.addEventListener('click', () => deleteComment(comment.id));
+        footer.appendChild(button);
+        card.appendChild(footer);
+      }
       commentsEl.appendChild(card);
     });
   }
 
   async function finishReview() {
-    if (reviewCompleted) return;
+    if (reviewCompleted || finishingReview) return;
+    finishingReview = true;
+    finishButton.disabled = true;
+    finishButton.textContent = 'Finishing…';
+    document.querySelectorAll('[data-review-decision="single-choice"][data-review-decision-dirty="true"]').forEach((decision) => {
+      const selected = decision.querySelector('input[type="radio"]:checked');
+      if (!selected) return;
+      delete decision.dataset.reviewDecisionDirty;
+      queueDecisionFeedbackWrite(() => saveSingleChoiceFeedback(selected), decision);
+    });
+    document.querySelectorAll('[data-review-decision="recorded-decision"][data-review-decision-dirty="true"]').forEach((decision) => {
+      if (decision.getAttribute('data-decision-status') === 'accepted') return;
+      const confirmed = Boolean(decision.querySelector('[data-decision-recorded]')?.checked);
+      delete decision.dataset.reviewDecisionDirty;
+      queueDecisionFeedbackWrite(() => saveStructuredDecisionFeedback(decision, confirmed), decision);
+    });
+    setDecisionControlsDisabled(true);
     try {
-      await pendingDecisionWrite;
+      await decisionFeedbackWriteQueue.drain();
       const data = await fetchJson('/finish', { method: 'POST' });
       reviewCompleted = true;
       finishButton.textContent = 'Done';
-      finishButton.disabled = true;
       showToast('Review complete: ' + data.commentsWritten + ' comment(s) written to sidecar.');
       window.setTimeout(() => {
         try { window.close(); } catch (_error) { /* no-op */ }
       }, 120);
     } catch (error) {
-      showToast('Error finishing review: ' + error.message);
+      finishingReview = false;
+      finishButton.disabled = false;
+      finishButton.textContent = 'Finish Review';
+      setDecisionControlsDisabled(false);
+      document.querySelectorAll('[data-review-decision="recorded-decision"]:not([data-review-decision-dirty="true"])').forEach((decision) => updateStructuredDecisionUi(decision));
+      showToast('Error finishing review: ' + error.message + '. Your review remains open.');
     }
   }
 
@@ -801,14 +1009,56 @@ function getHtmlVisualReviewScript(sessionId: string, title: string): string {
     showToast('Opened external link in a new tab.');
   }
 
+  document.querySelectorAll('[data-review-decision="recorded-decision"]').forEach((decision) => updateStructuredDecisionUi(decision));
   document.addEventListener('click', openExternalLinksInNewTab, true);
-  document.addEventListener('change', (event) => {
+  document.addEventListener('input', (event) => {
+    if (finishingReview) return;
     const target = event.target instanceof Element ? event.target : null;
-    if (!target || !target.closest('[data-review-decision]')) return;
-    if (target.matches('input[type="radio"]')) queueDecision(target);
+    const decision = target?.closest('[data-review-decision]');
+    if (!target || !decision) return;
+    if (decision.getAttribute('data-review-decision') === 'single-choice') {
+      if (target.matches('input[type="text"], textarea')) decision.dataset.reviewDecisionDirty = 'true';
+      return;
+    }
+    if (!isStructuredDecision(decision) || target.matches('[data-decision-recorded]')) return;
+    if (target.matches('[data-decision-custom]')) {
+      const customOption = Array.from(decision.querySelectorAll('input[type="radio"]')).find((option) => option.value === 'other');
+      if (customOption) customOption.checked = true;
+    }
+    updateStructuredDecisionUi(decision, { markDirty: true });
+  });
+  document.addEventListener('change', (event) => {
+    if (finishingReview) return;
+    const target = event.target instanceof Element ? event.target : null;
+    const decision = target?.closest('[data-review-decision]');
+    if (!target || !decision) return;
+    if (isStructuredDecision(decision)) {
+      if (decision.getAttribute('data-decision-status') === 'accepted') return;
+      if (target.matches('[data-decision-recorded]')) {
+        updateStructuredDecisionUi(decision);
+        const confirmed = target.checked;
+        delete decision.dataset.reviewDecisionDirty;
+        queueDecisionFeedbackWrite(() => saveStructuredDecisionFeedback(decision, confirmed), decision);
+        return;
+      }
+      if (target.matches('input[type="radio"], input[type="text"], textarea')) {
+        updateStructuredDecisionUi(decision, { markDirty: true });
+        delete decision.dataset.reviewDecisionDirty;
+        queueDecisionFeedbackWrite(() => saveStructuredDecisionFeedback(decision, false), decision);
+      }
+      return;
+    }
+    if (decision.getAttribute('data-review-decision') !== 'single-choice') return;
+    if (target.matches('input[type="radio"]')) {
+      delete decision.dataset.reviewDecisionDirty;
+      queueDecisionFeedbackWrite(() => saveSingleChoiceFeedback(target), decision);
+    }
     if (target.matches('input[type="text"], textarea')) {
-      const selected = target.closest('[data-review-decision]')?.querySelector('input[type="radio"]:checked');
-      if (selected) queueDecision(selected);
+      const selected = decision.querySelector('input[type="radio"]:checked');
+      if (selected) {
+        delete decision.dataset.reviewDecisionDirty;
+        queueDecisionFeedbackWrite(() => saveSingleChoiceFeedback(selected), decision);
+      }
     }
   });
   document.addEventListener('selectionchange', () => window.setTimeout(updateSelectionState, 30));

@@ -5,7 +5,9 @@ import {
 	buildFinishDescription,
 	buildHtmlVisualReviewPage,
 	buildReviewPage,
+	buildStructuredDecisionFeedbackPayload,
 	computeSelectionMetadata,
+	createSerializedWriteQueue,
 	findFlexibleMatch,
 	formatPullRequestSessionContext,
 } from "./review-page.js";
@@ -178,11 +180,75 @@ test("buildReviewPage includes PR-mode context and line metadata hooks", () => {
 	assert.match(html, /pull_request/);
 });
 
+test("buildStructuredDecisionFeedbackPayload distinguishes selected and confirmed review input", () => {
+	const state = {
+		validContract: true,
+		optionId: "company",
+		selection: "Company accounts",
+		rationale: "Shared banking reality",
+		owner: "Product owner",
+		question: "Where should accounts live?",
+		sourceFingerprint: "a".repeat(64),
+		complete: true,
+	};
+
+	assert.deepEqual(buildStructuredDecisionFeedbackPayload(state, false), {
+		selectedText: "Where should accounts live?",
+		comment: `Decision selected: Company accounts | Option ID: company | Rationale: Shared banking reality | Owner: Product owner | Completion: complete | Source fingerprint: ${"a".repeat(64)} | Canonical approval: unchanged.`,
+		feedbackKind: "decision",
+		decisionFeedbackStatus: "selected",
+	});
+	assert.equal(buildStructuredDecisionFeedbackPayload({ ...state, complete: false }, true), undefined);
+	assert.equal(buildStructuredDecisionFeedbackPayload({ ...state, validContract: false }, false), undefined);
+	assert.equal(buildStructuredDecisionFeedbackPayload({ ...state, selection: "" }, false), undefined);
+	assert.equal(buildStructuredDecisionFeedbackPayload(state, true)?.decisionFeedbackStatus, "confirmed");
+	assert.match(
+		buildStructuredDecisionFeedbackPayload({ ...state, optionId: "other", selection: "Field accounts" }, false)?.comment ?? "",
+		/Decision selected: Field accounts \| Option ID: other/,
+	);
+});
+
+test("createSerializedWriteQueue serializes writes and retains failures until that decision retries", async () => {
+	const calls: string[] = [];
+	const queue = createSerializedWriteQueue();
+	let releaseFirst!: () => void;
+	let markFirstStarted!: () => void;
+	const firstGate = new Promise<void>((resolve) => {
+		releaseFirst = resolve;
+	});
+	const firstStarted = new Promise<void>((resolve) => {
+		markFirstStarted = resolve;
+	});
+	const failed = queue.enqueue("decision-a", async () => {
+		calls.push("first");
+		markFirstStarted();
+		await firstGate;
+		throw new Error("write failed");
+	});
+	const unrelatedSuccess = queue.enqueue("decision-b", async () => {
+		calls.push("second");
+	});
+	const draining = assert.rejects(queue.drain(), /write failed/);
+
+	await firstStarted;
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	assert.deepEqual(calls, ["first"]);
+	releaseFirst();
+	await assert.rejects(failed, /write failed/);
+	await unrelatedSuccess;
+	await draining;
+	await queue.enqueue("decision-a", async () => {
+		calls.push("retry");
+	});
+	await queue.drain();
+	assert.deepEqual(calls, ["first", "second", "retry"]);
+});
+
 test("buildHtmlVisualReviewPage injects top-level review overlay without an iframe", () => {
 	const html = buildHtmlVisualReviewPage(
 		"session-123",
 		"design.html",
-		'<!doctype html><html><head><base href="/"><meta http-equiv="Content-Security-Policy" content="default-src none"><title>Design</title></head><body><nav><a href="#summary">Summary</a></nav><section id="summary" data-review-id="summary">Hello</section><article data-review-id="gap-001"><div data-review-decision="single-choice"><label><input type="radio" name="gap" value="option-a">Option A</label></div></article><script>window.bad = true;</script></body></html>',
+		'<!doctype html><html><head><base href="/"><meta http-equiv="Content-Security-Policy" content="default-src none"><title>Design</title></head><body><nav><a href="#summary">Summary</a></nav><section id="summary" data-review-id="summary">Hello</section><article data-review-id="gap-001"><div data-review-decision="single-choice"><label><input type="radio" name="gap" value="option-a">Option A</label></div></article><fieldset data-review-id="decision-001" data-review-decision="recorded-decision" data-decision-status="proposed" data-decision-source-fingerprint="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"><legend>Where should accounts live?</legend><label><input type="radio" name="decision" value="company" checked><span>Company accounts</span></label><label><span>Rationale</span><textarea data-decision-rationale>Shared banking reality</textarea></label><label><span>Owner</span><input data-decision-owner value="Product owner"></label><label><input type="checkbox" data-decision-recorded disabled>Decision recorded</label><p class="decision-status">Not recorded</p></fieldset><script>window.bad = true;</script></body></html>',
 		{ nonce: "nonce-123" },
 	);
 
@@ -190,7 +256,14 @@ test("buildHtmlVisualReviewPage injects top-level review overlay without an ifra
 	assert.match(html, /Comment selection/);
 	assert.match(html, /data-review-id="summary"/);
 	assert.match(html, /data-review-decision="single-choice"/);
+	assert.match(html, /data-review-decision="recorded-decision"/);
 	assert.match(html, /Decision selected:/);
+	assert.match(html, /buildStructuredDecisionFeedbackPayload/);
+	assert.match(html, /feedbackKind: 'decision'/);
+	assert.match(html, /checkbox\.disabled = finishingReview \|\| !state\.complete/);
+	assert.match(html, /data-review-decision-dirty/);
+	assert.match(html, /finishingReview/);
+	assert.match(html, /target\.matches\('\[data-decision-custom\]'\)/);
 	assert.ok(html.includes(".replace(/\\s+/g, ' ')"));
 	assert.match(html, /href="#summary"/);
 	assert.match(html, /script nonce="nonce-123"/);

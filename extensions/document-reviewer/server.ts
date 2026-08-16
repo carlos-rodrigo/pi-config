@@ -37,6 +37,10 @@ export interface ReviewComment {
 	lineEnd?: number;
 	inlineEligible?: boolean;
 	fallbackReason?: string;
+	/** Machine-readable discriminator for reviewer-managed decision feedback. */
+	feedbackKind?: "decision";
+	/** Whether the reviewer has selected or explicitly confirmed the decision feedback. */
+	decisionFeedbackStatus?: "selected" | "confirmed";
 }
 
 export interface PullRequestReviewContext {
@@ -216,6 +220,10 @@ export function buildHtmlReviewSidecar(filePath: string, comments: readonly Revi
 		lines.push("");
 		if (comment.reviewId) {
 			lines.push(`- Anchor: \`${escapeFallbackMarkdown(comment.reviewId)}\``);
+		}
+		if (comment.feedbackKind === "decision") {
+			lines.push("- Feedback type: Decision");
+			lines.push(`- Decision feedback status: ${comment.decisionFeedbackStatus ?? "selected"}`);
 		}
 		lines.push(`- Selection: ${escapeFallbackMarkdown(snippet || "(empty selection)")}`);
 		lines.push(`- Comment: ${escapeFallbackMarkdown(normalizeFallbackText(comment.comment) || "(empty note)")}`);
@@ -571,7 +579,7 @@ export class DocumentReviewService {
 				return;
 			}
 
-			// POST /api/:sessionId/comments — add a comment
+			// POST /api/:sessionId/comments — add a comment or upsert typed decision feedback
 			const commentsPostMatch = pathname.match(/^\/api\/([a-f0-9]+)\/comments$/);
 			if (commentsPostMatch && req.method === "POST") {
 				const session = this.sessions.get(commentsPostMatch[1]!);
@@ -582,8 +590,24 @@ export class DocumentReviewService {
 				const body = await this.readBody(req);
 				const data = JSON.parse(body) as Record<string, unknown>;
 				const comment = this.createComment(session, data);
-				session.comments.push(comment);
-				this.sendJson(res, 201, { comment });
+				const created = this.upsertComment(session, comment);
+				this.sendJson(res, created ? 201 : 200, { comment });
+				return;
+			}
+
+			// DELETE /api/:sessionId/comments/decision/:reviewId — clear reviewer-managed decision feedback
+			const decisionDeleteMatch = pathname.match(/^\/api\/([a-f0-9]+)\/comments\/decision\/([^/]+)$/);
+			if (decisionDeleteMatch && req.method === "DELETE") {
+				const session = this.sessions.get(decisionDeleteMatch[1]!);
+				if (!session) {
+					this.sendJson(res, 404, { error: "Session not found" });
+					return;
+				}
+				const reviewId = decodeURIComponent(decisionDeleteMatch[2]!);
+				session.comments = session.comments.filter(
+					(comment) => comment.feedbackKind !== "decision" || comment.reviewId !== reviewId,
+				);
+				this.sendJson(res, 200, { cleared: reviewId });
 				return;
 			}
 
@@ -695,7 +719,7 @@ export class DocumentReviewService {
 		if (!this.isAllowedOrigin(origin)) return false;
 
 		res.setHeader("Access-Control-Allow-Origin", origin);
-		res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+		res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
 		res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 		res.setHeader("Vary", "Origin");
 		return true;
@@ -703,6 +727,22 @@ export class DocumentReviewService {
 
 	private isAllowedOrigin(origin: string): boolean {
 		return origin === `http://127.0.0.1:${this.port}` || origin === `http://localhost:${this.port}`;
+	}
+
+	private upsertComment(session: ActiveSession, comment: ReviewComment): boolean {
+		if (comment.feedbackKind === "decision" && comment.reviewId) {
+			const existingIndex = session.comments.findIndex(
+				(candidate) => candidate.feedbackKind === "decision" && candidate.reviewId === comment.reviewId,
+			);
+			if (existingIndex !== -1) {
+				comment.id = session.comments[existingIndex]!.id;
+				session.comments[existingIndex] = comment;
+				return false;
+			}
+		}
+
+		session.comments.push(comment);
+		return true;
 	}
 
 	private createComment(session: ActiveSession, data: Record<string, unknown>): ReviewComment {
@@ -722,6 +762,23 @@ export class DocumentReviewService {
 
 		if (session.sourceKind === "html") {
 			const reviewId = typeof data.reviewId === "string" && data.reviewId.trim() ? data.reviewId.trim() : undefined;
+			const feedbackKind = data.feedbackKind === "decision" ? "decision" : undefined;
+			const decisionFeedbackStatus =
+				data.decisionFeedbackStatus === "selected" || data.decisionFeedbackStatus === "confirmed"
+					? data.decisionFeedbackStatus
+					: undefined;
+			if (data.feedbackKind !== undefined && feedbackKind === undefined) {
+				throw new RequestError("Unsupported HTML review feedback kind.", 400);
+			}
+			if (feedbackKind === "decision" && !reviewId) {
+				throw new RequestError("Decision feedback requires a stable HTML review anchor.", 400);
+			}
+			if (feedbackKind === "decision" && !decisionFeedbackStatus) {
+				throw new RequestError("Decision feedback requires selected or confirmed status.", 400);
+			}
+			if (feedbackKind === undefined && data.decisionFeedbackStatus !== undefined) {
+				throw new RequestError("Decision feedback status is only valid for decision feedback.", 400);
+			}
 			const selectorInput = data.selector && typeof data.selector === "object" ? (data.selector as Record<string, unknown>) : undefined;
 			const selector = selectorInput
 				? {
@@ -739,6 +796,8 @@ export class DocumentReviewService {
 				offsetEnd: 0,
 				reviewId,
 				selector,
+				feedbackKind,
+				decisionFeedbackStatus,
 			};
 		}
 
