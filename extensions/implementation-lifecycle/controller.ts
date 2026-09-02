@@ -10,7 +10,6 @@ import { runProcess, scrubbedEnvironment } from "./process.ts";
 
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const PROTECTED_PATH = /(^|\/)(?:\.github\/workflows|infra|infrastructure|migrations?|schema|auth|payments?|privacy)(\/|$)|(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/i;
-const HUMAN_REVIEWED_SNAPSHOT_EXCEPTION = /\bhuman[- ]reviewed snapshot exception\b/i;
 
 export type ControllerUpdate = (run: DeliveryRunV1) => void;
 
@@ -72,7 +71,7 @@ export class ImplementationController {
 		return true;
 	}
 
-	async start(root: string, commonRoot: string, request: string, primaryProfileDigest: string, update: ControllerUpdate = () => undefined): Promise<DeliveryRunV1> {
+	async start(root: string, commonRoot: string, request: string, primaryProfileDigest: string, update: ControllerUpdate = () => undefined, options: { allowConfiguredFilters?: boolean } = {}): Promise<DeliveryRunV1> {
 		if (this.active()) throw new Error("An implementation delivery is already active in this session.");
 		this.fencedUnresolved = false;
 		this.abortController = new AbortController();
@@ -85,7 +84,7 @@ export class ImplementationController {
 			acquired = true;
 			update(run);
 			if (this.abortController.signal.aborted) return await this.finish("failed-safely", "cancelled", update);
-			this.workspace = new CandidateWorkspace(root, this.store.deliveryStateRoot, run.runId, { allowConfiguredFilters: HUMAN_REVIEWED_SNAPSHOT_EXCEPTION.test(request) });
+			this.workspace = new CandidateWorkspace(root, this.store.deliveryStateRoot, run.runId, options);
 			const signatures = new Set<string>(run.failureSignatures);
 			const taskContext = await this.dependencies.taskContextGraph(root, { task: request, limit: 12, signal: this.abortController.signal });
 			run = await this.store.update({ taskContext: taskContextReceipt(taskContext) }); update(run);

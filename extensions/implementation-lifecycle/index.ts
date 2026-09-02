@@ -75,7 +75,7 @@ export default function implementationLifecycle(pi: ExtensionAPI) {
 				announced = true;
 				publish(`Implementation ${run.runId} acquired the delivery lease for ${run.root}. The primary project remains unchanged.`);
 			}
-		}).then((run) => {
+		}, { allowConfiguredFilters: true }).then((run) => {
 			status();
 			const evidence = run.base && run.candidate
 				? `\nCandidate workspace: ${run.candidateRoot}\nRepository: ${run.root}\nBase tree: ${run.base.treeOid}\nCandidate tree: ${run.candidate.candidateTreeOid}\nTask context: ${run.taskContext?.files.length ?? 0} files, graph ${run.taskContext?.graphFingerprint ?? "unavailable"}\nChanged paths: ${run.changedPaths?.join(", ") || "none recorded"}`
