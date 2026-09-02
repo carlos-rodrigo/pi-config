@@ -1,0 +1,187 @@
+{
+  "schemaVersion": "system-diagram-v1",
+  "id": "trusted-implementation-lifecycle-behavior",
+  "title": "From normal implementation intent to independently evidenced delivery",
+  "desc": "Approved product behavior showing automatic implementation activation, deterministic mutation interception, one isolated writer, controller verification, independent review, bounded repair, safe escalation, and human-owned integration.",
+  "reviewPrefix": "trusted-implementation-lifecycle.diagram",
+  "reviewId": "svg",
+  "canvas": { "grid": true },
+  "padding": 36,
+  "nodes": [
+    {
+      "id": "request",
+      "reviewId": "node-request",
+      "kind": "entry",
+      "x": 100,
+      "y": 40,
+      "width": 390,
+      "height": 110,
+      "text": "Normal Pi conversation\nexplicit implementation request\nno command or mode"
+    },
+    {
+      "id": "gate",
+      "reviewId": "node-gate",
+      "kind": "policy",
+      "x": 100,
+      "y": 220,
+      "width": 390,
+      "height": 120,
+      "text": "Implementation boundary\nearly intent routing\ndeterministic mutation barrier"
+    },
+    {
+      "id": "writer",
+      "reviewId": "node-writer",
+      "kind": "service",
+      "x": 100,
+      "y": 410,
+      "width": 390,
+      "height": 120,
+      "text": "One isolated writer\nfrozen authority + base\nonly mutable capability"
+    },
+    {
+      "id": "verify",
+      "reviewId": "node-verify",
+      "kind": "policy",
+      "x": 100,
+      "y": 600,
+      "width": 390,
+      "height": 120,
+      "text": "Controller verification\nfrozen repository gate\nexact candidate receipt"
+    },
+    {
+      "id": "review",
+      "reviewId": "node-review",
+      "kind": "feedback",
+      "x": 100,
+      "y": 790,
+      "width": 390,
+      "height": 120,
+      "text": "Independent read-only review\nAre You Proud rubric\nstructured findings"
+    },
+    {
+      "id": "repair",
+      "reviewId": "node-repair",
+      "kind": "warning",
+      "x": 640,
+      "y": 600,
+      "width": 390,
+      "height": 120,
+      "text": "Bounded repair\nreturn evidence to writer\nmaximum two cycles"
+    },
+    {
+      "id": "decision",
+      "reviewId": "node-decision",
+      "kind": "warning",
+      "x": 640,
+      "y": 790,
+      "width": 390,
+      "height": 120,
+      "text": "Decision required or failed safely\nambiguity | protected scope\nrepeated or exhausted failure"
+    },
+    {
+      "id": "ready",
+      "reviewId": "node-ready",
+      "kind": "success",
+      "x": 100,
+      "y": 990,
+      "width": 390,
+      "height": 120,
+      "text": "MERGE READY\nverification + Proud match\nhuman owns integration"
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-to-gate",
+      "from": "request",
+      "to": "gate",
+      "kind": "primary",
+      "x": 295,
+      "y": 150,
+      "points": [[0, 0], [0, 70]],
+      "label": "authorizes implementation"
+    },
+    {
+      "id": "gate-to-writer",
+      "from": "gate",
+      "to": "writer",
+      "kind": "primary",
+      "x": 295,
+      "y": 340,
+      "points": [[0, 0], [0, 70]],
+      "label": "freezes request + candidate base"
+    },
+    {
+      "id": "writer-to-verify",
+      "from": "writer",
+      "to": "verify",
+      "kind": "primary",
+      "x": 295,
+      "y": 530,
+      "points": [[0, 0], [0, 70]],
+      "label": "produces candidate"
+    },
+    {
+      "id": "verify-to-review",
+      "from": "verify",
+      "to": "review",
+      "kind": "primary",
+      "x": 295,
+      "y": 720,
+      "points": [[0, 0], [0, 70]],
+      "label": "passing candidate receipt"
+    },
+    {
+      "id": "verify-to-repair",
+      "from": "verify",
+      "to": "repair",
+      "kind": "warning",
+      "x": 490,
+      "y": 660,
+      "points": [[0, 0], [150, 0]],
+      "label": "check fails",
+      "labelPosition": [565, 630]
+    },
+    {
+      "id": "review-to-repair",
+      "from": "review",
+      "to": "repair",
+      "kind": "warning",
+      "x": 490,
+      "y": 850,
+      "points": [[0, 0], [75, 0], [75, -190], [150, -190]],
+      "label": "review blocks",
+      "labelPosition": [560, 850]
+    },
+    {
+      "id": "repair-to-verify",
+      "from": "repair",
+      "to": "verify",
+      "kind": "feedback",
+      "x": 835,
+      "y": 720,
+      "points": [[0, 0], [0, 60], [-540, 60], [-540, 0]],
+      "label": "new candidate invalidates receipts",
+      "labelPosition": [560, 755]
+    },
+    {
+      "id": "repair-to-decision",
+      "from": "repair",
+      "to": "decision",
+      "kind": "warning",
+      "x": 835,
+      "y": 720,
+      "points": [[0, 0], [0, 70]],
+      "label": "budget or authority stops"
+    },
+    {
+      "id": "review-to-ready",
+      "from": "review",
+      "to": "ready",
+      "kind": "success",
+      "x": 295,
+      "y": 910,
+      "points": [[0, 0], [0, 80]],
+      "label": "Proud + no blocking findings"
+    }
+  ]
+}

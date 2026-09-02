@@ -7,6 +7,9 @@ import { join } from "node:path";
 import codeIntelExtension, {
 	buildAstGrepArgs,
 	buildDependencyGraph,
+	isDependencyGraphFresh,
+	taskContextGraph,
+	formatTaskContextGraph,
 	codeFind,
 	formatCodeFindResults,
 	formatDependencyMap,
@@ -78,6 +81,39 @@ export function checkout() { return formatMoney(42); }
 	}
 });
 
+test("repository graph includes symbols, test associations, and freshness", () => {
+	const dir = makeProject({
+		"src/money.ts": "export function formatMoney(value: number) { return `$${value}`; }\n",
+		"src/payments/checkout.ts": "import { formatMoney } from '../money';\nexport function checkout() { return formatMoney(42); }\n",
+		"src/payments/checkout.test.ts": "import { checkout } from './checkout';\ncheckout();\n",
+	});
+	try {
+		const graph = buildDependencyGraph(dir);
+		assert.deepEqual(graph.testFiles, ["src/payments/checkout.test.ts"]);
+		assert.equal(graph.nodes["src/payments/checkout.ts"]?.symbols[0]?.name, "checkout");
+		assert.deepEqual(graph.nodes["src/payments/checkout.ts"]?.tests, ["src/payments/checkout.test.ts"]);
+		assert.equal(isDependencyGraphFresh(graph), true);
+
+		writeFileSync(join(dir, "src/money.ts"), "export function formatMoney(value: number) { return String(value); }\n", "utf8");
+		assert.equal(isDependencyGraphFresh(graph), false);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("repository graph handles an empty repository", () => {
+	const dir = makeProject({});
+	try {
+		const graph = buildDependencyGraph(dir);
+		assert.deepEqual(graph.files, []);
+		assert.deepEqual(graph.testFiles, []);
+		assert.match(graph.fingerprint, /^[a-f0-9]{64}$/);
+		assert.equal(isDependencyGraphFresh(graph), true);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("code_find combines exact, symbol, and semantic candidates", async () => {
 	const dir = makeProject({
 		"src/payments/checkout.ts": `export async function createCheckoutSession(customerId: string) {
@@ -95,6 +131,29 @@ test("code_find combines exact, symbol, and semantic candidates", async () => {
 		assert.ok(checkout!.strategies.some((strategy) => ["exact", "symbol", "semantic"].includes(strategy)));
 		assert.match(formatted, /Code find results/);
 		assert.match(formatted, /src\/payments\/checkout\.ts/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("task context graph returns bounded, explainable code and documentation context", async () => {
+	const dir = makeProject({
+		"src/money.ts": "export function formatMoney(value: number) { return `$${value}`; }\n",
+		"src/payments/checkout.ts": "import { formatMoney } from '../money';\nexport function checkout() { return formatMoney(42); }\n",
+		"src/payments/checkout.test.ts": "import { checkout } from './checkout';\ncheckout();\n",
+		"src/app.ts": "import { checkout } from './payments/checkout';\ncheckout();\n",
+		"docs/payments.md": "Checkout payment behavior and verification.\n",
+	});
+	try {
+		const report = await taskContextGraph(dir, { task: "checkout payment", limit: 3, useSemantic: false });
+		const formatted = formatTaskContextGraph(report);
+		assert.equal(report.files.length, 3);
+		assert.ok(report.files.some((file) => file.path === "src/payments/checkout.ts"));
+		assert.ok(report.files.some((file) => file.tests.includes("src/payments/checkout.test.ts")));
+		assert.ok(report.documentation.some((result) => result.path === "docs/payments.md"));
+		assert.ok(report.files.every((file) => file.reasons.length > 0));
+		assert.match(formatted, /Suggested verification:/);
+		assert.match(formatted, /bash scripts\/verify\.sh/);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
@@ -148,6 +207,19 @@ test("code-intel tools honor already-aborted signals", async () => {
 	);
 });
 
+test("task_context_graph tool executes a read-only report", async () => {
+	const dir = makeProject({ "src/checkout.ts": "export function checkout() { return true; }\n" });
+	try {
+		const tools = new Map<string, any>();
+		codeIntelExtension({ registerTool(definition: any) { tools.set(definition.name, definition); } } as any);
+		const result = await tools.get("task_context_graph").execute("call-1", { task: "checkout", limit: 2, useSemantic: false }, new AbortController().signal, undefined, { cwd: dir });
+		assert.match(result.content[0].text, /Task context for/);
+		assert.match(result.content[0].text, /src\/checkout\.ts/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("code-intel extension registers non-semantic code navigation tools", () => {
 	const tools = new Map<string, any>();
 	codeIntelExtension({
@@ -157,6 +229,7 @@ test("code-intel extension registers non-semantic code navigation tools", () => 
 	} as any);
 
 	assert.ok(tools.has("code_find"));
+	assert.ok(tools.has("task_context_graph"));
 	assert.ok(tools.has("symbol_search"));
 	assert.ok(tools.has("dependency_map"));
 	assert.ok(tools.has("git_pickaxe"));

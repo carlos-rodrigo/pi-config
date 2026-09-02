@@ -1,0 +1,185 @@
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="44 4 982 1482" role="img" aria-labelledby="trusted-implementation-lifecycle-architecture-title trusted-implementation-lifecycle-architecture-desc" data-diagram-style="infrastructure-v1" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.svg"><title id="trusted-implementation-lifecycle-architecture-title">The parent Pi process owns a restartable delivery transaction</title><desc id="trusted-implementation-lifecycle-architecture-desc">Approved architecture showing the always-on extension intercepting mutation, a delivery run store, an isolated writer process, deterministic verification, read-only review, bounded repair, and human-owned integration.</desc><!-- svg-source:system-diagram --><!-- svg-spec-sha256:2528bc4f322a824550a1878f561133a4e63392bb94902d1da09f11d5f787e93a --><metadata>{"schemaVersion":"system-diagram-v1","style":"infrastructure-v1"}</metadata><defs><style>
+.diagram-canvas {
+  fill: #fff;
+}
+
+.diagram-grid {
+  opacity: .82;
+}
+
+.diagram-node,
+.diagram-edge,
+.diagram-edge-label,
+.diagram-group {
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-rendering: geometricPrecision;
+}
+
+.diagram-node__surface {
+  fill: #fff;
+  stroke: #d8d8d3;
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}
+
+.diagram-node__title {
+  fill: #171717;
+  font-weight: 650;
+  letter-spacing: -.01em;
+}
+
+.diagram-node__detail {
+  fill: #666663;
+  font-weight: 450;
+}
+
+.diagram-node__kind {
+  fill: #73736f;
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: .1em;
+}
+
+.diagram-node__accent,
+.diagram-node--repository .diagram-node__accent,
+.diagram-node--domain .diagram-node__accent,
+.diagram-node--policy .diagram-node__accent {
+  fill: #73736f;
+}
+
+.diagram-node--decision .diagram-node__accent,
+.diagram-node--warning .diagram-node__accent {
+  fill: #b45309;
+}
+
+.diagram-node--feedback .diagram-node__accent,
+.diagram-node--success .diagram-node__accent {
+  fill: #047857;
+}
+
+.diagram-node--risk .diagram-node__accent {
+  fill: #dc2626;
+}
+
+.diagram-node__dot {
+  fill: #fff;
+  stroke: #d8d8d3;
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}
+
+.diagram-node--entry .diagram-node__dot {
+  fill: #73736f;
+  stroke: #73736f;
+}
+
+.diagram-node--feedback .diagram-node__dot,
+.diagram-node--success .diagram-node__dot {
+  fill: #047857;
+  stroke: #047857;
+}
+
+.diagram-node--risk .diagram-node__dot {
+  fill: #dc2626;
+  stroke: #dc2626;
+}
+
+.diagram-edge__path {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.diagram-edge--primary .diagram-edge__path {
+  stroke: #0070f3;
+}
+
+.diagram-edge--secondary .diagram-edge__path,
+.diagram-edge--boundary .diagram-edge__path {
+  stroke: #73736f;
+}
+
+.diagram-edge--boundary .diagram-edge__path {
+  stroke-dasharray: 5 5;
+}
+
+.diagram-edge--feedback .diagram-edge__path,
+.diagram-edge--success .diagram-edge__path {
+  stroke: #047857;
+}
+
+.diagram-edge--warning .diagram-edge__path {
+  stroke: #b45309;
+  stroke-dasharray: 6 5;
+}
+
+.diagram-edge--risk .diagram-edge__path {
+  stroke: #dc2626;
+  stroke-dasharray: 6 5;
+}
+
+.diagram-edge-label__surface {
+  fill: #fff;
+  stroke: #e5e5e1;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.diagram-edge-label__text {
+  fill: #52524f;
+  font-weight: 650;
+  letter-spacing: .01em;
+}
+
+.diagram-edge-label--feedback .diagram-edge-label__text,
+.diagram-edge-label--success .diagram-edge-label__text {
+  fill: #047857;
+}
+
+.diagram-edge-label--warning .diagram-edge-label__text {
+  fill: #92400e;
+}
+
+.diagram-edge-label--risk .diagram-edge-label__text {
+  fill: #b91c1c;
+}
+
+.diagram-group__surface {
+  fill: #fafafa;
+  fill-opacity: .7;
+  stroke: #cfcfca;
+  stroke-width: 1;
+  stroke-dasharray: 6 6;
+  vector-effect: non-scaling-stroke;
+}
+
+.diagram-group--ownership .diagram-group__surface {
+  fill: #fafafa;
+  fill-opacity: .72;
+  stroke: #b7b7b2;
+}
+
+.diagram-group--proposed .diagram-group__surface {
+  fill: #fff7ed;
+  fill-opacity: .5;
+  stroke: #d7a76d;
+}
+
+.diagram-group__label-bg {
+  fill: #fff;
+}
+
+.diagram-group__label {
+  fill: #666663;
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: .08em;
+}
+
+.diagram-reveal {
+  opacity: 1;
+  transform: none;
+}
+</style><pattern id="trusted-implementation-lifecycle-architecture--grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0V24" fill="none" stroke="#ecece8" stroke-width="1"></path></pattern><filter id="trusted-implementation-lifecycle-architecture--shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#171717" flood-opacity=".07"></feDropShadow></filter><marker id="trusted-implementation-lifecycle-architecture--arrow-primary" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#0070f3" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></marker><marker id="trusted-implementation-lifecycle-architecture--arrow-secondary" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#73736f" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></marker><marker id="trusted-implementation-lifecycle-architecture--arrow-feedback" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#047857" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></marker><marker id="trusted-implementation-lifecycle-architecture--arrow-success" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#047857" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></marker><marker id="trusted-implementation-lifecycle-architecture--arrow-warning" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#b45309" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></marker><marker id="trusted-implementation-lifecycle-architecture--arrow-risk" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#dc2626" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></marker></defs><rect class="diagram-canvas" x="44" y="4" width="982" height="1482"></rect><rect class="diagram-grid" x="44" y="4" width="982" height="1482" fill="url(#trusted-implementation-lifecycle-architecture--grid)"></rect><g class="diagram-groups"></g><g class="diagram-edges"><g class="diagram-edge diagram-edge--primary diagram-reveal" style="--reveal-delay:0ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge.session-controller"><path class="diagram-edge__path" d="M270 150L270 220" marker-end="url(#trusted-implementation-lifecycle-architecture--arrow-primary)"></path></g><g class="diagram-edge diagram-edge--feedback diagram-reveal" style="--reveal-delay:120ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge.controller-store"><path class="diagram-edge__path" d="M460 285L610 285" marker-end="url(#trusted-implementation-lifecycle-architecture--arrow-feedback)"></path></g><g class="diagram-edge diagram-edge--primary diagram-reveal" style="--reveal-delay:240ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge.controller-candidate"><path class="diagram-edge__path" d="M270 350L270 440" marker-end="url(#trusted-implementation-lifecycle-architecture--arrow-primary)"></path></g><g class="diagram-edge diagram-edge--primary diagram-reveal" style="--reveal-delay:360ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge.candidate-writer"><path class="diagram-edge__path" d="M270 570L270 660" marker-end="url(#trusted-implementation-lifecycle-architecture--arrow-primary)"></path></g><g class="diagram-edge diagram-edge--primary diagram-reveal" style="--reveal-delay:480ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge.writer-verifier"><path class="diagram-edge__path" d="M270 790L270 880" marker-end="url(#trusted-implementation-lifecycle-architecture--arrow-primary)"></path></g><g class="diagram-edge diagram-edge--primary diagram-reveal" style="--reveal-delay:600ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge.verifier-reviewer"><path class="diagram-edge__path" d="M270 1010L270 1100" marker-end="url(#trusted-implementation-lifecycle-architecture--arrow-primary)"></path></g><g class="diagram-edge diagram-edge--warning diagram-reveal" style="--reveal-delay:720ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge.verifier-repair"><path class="diagram-edge__path" d="M460 945L610 945" marker-end="url(#trusted-implementation-lifecycle-architecture--arrow-warning)"></path></g><g class="diagram-edge diagram-edge--warning diagram-reveal" style="--reveal-delay:840ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge.reviewer-repair"><path class="diagram-edge__path" d="M460 1165L535 1165L535 945L610 945" marker-end="url(#trusted-implementation-lifecycle-architecture--arrow-warning)"></path></g><g class="diagram-edge diagram-edge--feedback diagram-reveal" style="--reveal-delay:960ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge.repair-verifier"><path class="diagram-edge__path" d="M800 1010L800 1065L270 1065L270 1010" marker-end="url(#trusted-implementation-lifecycle-architecture--arrow-feedback)"></path></g><g class="diagram-edge diagram-edge--success diagram-reveal" style="--reveal-delay:1080ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge.reviewer-terminal"><path class="diagram-edge__path" d="M270 1230L270 1320" marker-end="url(#trusted-implementation-lifecycle-architecture--arrow-success)"></path></g><g class="diagram-edge diagram-edge--feedback diagram-reveal" style="--reveal-delay:1200ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge.store-terminal"><path class="diagram-edge__path" d="M800 350L800 1385L460 1385" marker-end="url(#trusted-implementation-lifecycle-architecture--arrow-feedback)"></path></g></g><g class="diagram-nodes"><g class="diagram-node diagram-node--entry diagram-reveal" style="--reveal-delay:0ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.node-session" aria-labelledby="trusted-implementation-lifecycle-architecture--session-text"><rect class="diagram-node__surface" x="80" y="40" width="380" height="110" rx="10" filter="url(#trusted-implementation-lifecycle-architecture--shadow)"></rect><rect class="diagram-node__accent" x="80" y="52" width="3" height="86" rx="1.5"></rect><circle class="diagram-node__dot" cx="443" cy="57" r="3.5"></circle><text class="diagram-node__kind" x="100" y="63">ENTRY</text><text id="trusted-implementation-lifecycle-architecture--session-text" class="diagram-node__title" x="100" y="87" font-size="16">Primary Pi session</text><text class="diagram-node__detail" x="100" y="110" font-size="14"><tspan x="100" y="110">normal input + read-only exploration</tspan><tspan x="100" y="129">human authority</tspan></text></g><g class="diagram-node diagram-node--policy diagram-reveal" style="--reveal-delay:120ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.node-controller" aria-labelledby="trusted-implementation-lifecycle-architecture--controller-text"><rect class="diagram-node__surface" x="80" y="220" width="380" height="130" rx="10" filter="url(#trusted-implementation-lifecycle-architecture--shadow)"></rect><rect class="diagram-node__accent" x="80" y="232" width="3" height="106" rx="1.5"></rect><circle class="diagram-node__dot" cx="443" cy="237" r="3.5"></circle><text class="diagram-node__kind" x="100" y="243">POLICY</text><text id="trusted-implementation-lifecycle-architecture--controller-text" class="diagram-node__title" x="100" y="267" font-size="16">ImplementationLifecycleController</text><text class="diagram-node__detail" x="100" y="290" font-size="14"><tspan x="100" y="290">interactive authority + root lease</tspan><tspan x="100" y="309">effect barrier + cancel/reattach</tspan></text></g><g class="diagram-node diagram-node--repository diagram-reveal" style="--reveal-delay:240ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.node-store" aria-labelledby="trusted-implementation-lifecycle-architecture--store-text"><rect class="diagram-node__surface" x="610" y="220" width="380" height="130" rx="10" filter="url(#trusted-implementation-lifecycle-architecture--shadow)"></rect><rect class="diagram-node__accent" x="610" y="232" width="3" height="106" rx="1.5"></rect><circle class="diagram-node__dot" cx="973" cy="237" r="3.5"></circle><text class="diagram-node__kind" x="630" y="243">STORAGE</text><text id="trusted-implementation-lifecycle-architecture--store-text" class="diagram-node__title" x="630" y="267" font-size="16">DeliveryRunStore</text><text class="diagram-node__detail" x="630" y="290" font-size="14"><tspan x="630" y="290">sole manifest + receipt writer</tspan><tspan x="630" y="309">authority tuple + process evidence</tspan></text></g><g class="diagram-node diagram-node--service diagram-reveal" style="--reveal-delay:360ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.node-candidate" aria-labelledby="trusted-implementation-lifecycle-architecture--candidate-text"><rect class="diagram-node__surface" x="80" y="440" width="380" height="130" rx="10" filter="url(#trusted-implementation-lifecycle-architecture--shadow)"></rect><rect class="diagram-node__accent" x="80" y="452" width="3" height="106" rx="1.5"></rect><circle class="diagram-node__dot" cx="443" cy="457" r="3.5"></circle><text class="diagram-node__kind" x="100" y="463">SERVICE</text><text id="trusted-implementation-lifecycle-architecture--candidate-text" class="diagram-node__title" x="100" y="487" font-size="16">CandidateWorkspace</text><text class="diagram-node__detail" x="100" y="510" font-size="14"><tspan x="100" y="510">complete clean/dirty Git tree</tspan><tspan x="100" y="529">candidate + disposable verifier</tspan></text></g><g class="diagram-node diagram-node--service diagram-reveal" style="--reveal-delay:480ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.node-writer" aria-labelledby="trusted-implementation-lifecycle-architecture--writer-text"><rect class="diagram-node__surface" x="80" y="660" width="380" height="130" rx="10" filter="url(#trusted-implementation-lifecycle-architecture--shadow)"></rect><rect class="diagram-node__accent" x="80" y="672" width="3" height="106" rx="1.5"></rect><circle class="diagram-node__dot" cx="443" cy="677" r="3.5"></circle><text class="diagram-node__kind" x="100" y="683">SERVICE</text><text id="trusted-implementation-lifecycle-architecture--writer-text" class="diagram-node__title" x="100" y="707" font-size="16">Headless Pi writer</text><text class="diagram-node__detail" x="100" y="730" font-size="14"><tspan x="100" y="730">explicit path guard · no shell</tspan><tspan x="100" y="749">mutable tools only in candidate</tspan></text></g><g class="diagram-node diagram-node--policy diagram-reveal" style="--reveal-delay:600ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.node-verifier" aria-labelledby="trusted-implementation-lifecycle-architecture--verifier-text"><rect class="diagram-node__surface" x="80" y="880" width="380" height="130" rx="10" filter="url(#trusted-implementation-lifecycle-architecture--shadow)"></rect><rect class="diagram-node__accent" x="80" y="892" width="3" height="106" rx="1.5"></rect><circle class="diagram-node__dot" cx="443" cy="897" r="3.5"></circle><text class="diagram-node__kind" x="100" y="903">POLICY</text><text id="trusted-implementation-lifecycle-architecture--verifier-text" class="diagram-node__title" x="100" y="927" font-size="16">ExplicitVerifier</text><text class="diagram-node__detail" x="100" y="950" font-size="14"><tspan x="100" y="950">protected base test closure</tspan><tspan x="100" y="969">disposable immutable snapshot</tspan></text></g><g class="diagram-node diagram-node--feedback diagram-reveal" style="--reveal-delay:720ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.node-reviewer" aria-labelledby="trusted-implementation-lifecycle-architecture--reviewer-text"><rect class="diagram-node__surface" x="80" y="1100" width="380" height="130" rx="10" filter="url(#trusted-implementation-lifecycle-architecture--shadow)"></rect><rect class="diagram-node__accent" x="80" y="1112" width="3" height="106" rx="1.5"></rect><circle class="diagram-node__dot" cx="443" cy="1117" r="3.5"></circle><text class="diagram-node__kind" x="100" y="1123">PROOF</text><text id="trusted-implementation-lifecycle-architecture--reviewer-text" class="diagram-node__title" x="100" y="1147" font-size="16">Read-only Pi reviewer</text><text class="diagram-node__detail" x="100" y="1170" font-size="14"><tspan x="100" y="1170">controller-owned profile + rubric</tspan><tspan x="100" y="1189">exact supplied-input digest</tspan></text></g><g class="diagram-node diagram-node--warning diagram-reveal" style="--reveal-delay:840ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.node-repair" aria-labelledby="trusted-implementation-lifecycle-architecture--repair-text"><rect class="diagram-node__surface" x="610" y="880" width="380" height="130" rx="10" filter="url(#trusted-implementation-lifecycle-architecture--shadow)"></rect><rect class="diagram-node__accent" x="610" y="892" width="3" height="106" rx="1.5"></rect><circle class="diagram-node__dot" cx="973" cy="897" r="3.5"></circle><text class="diagram-node__kind" x="630" y="903">WARNING</text><text id="trusted-implementation-lifecycle-architecture--repair-text" class="diagram-node__title" x="630" y="927" font-size="16">Repair attempt</text><text class="diagram-node__detail" x="630" y="950" font-size="14"><tspan x="630" y="950">writer receives bounded evidence</tspan><tspan x="630" y="969">new candidate invalidates receipts</tspan></text></g><g class="diagram-node diagram-node--success diagram-reveal" style="--reveal-delay:960ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.node-terminal" aria-labelledby="trusted-implementation-lifecycle-architecture--terminal-text"><rect class="diagram-node__surface" x="80" y="1320" width="380" height="130" rx="10" filter="url(#trusted-implementation-lifecycle-architecture--shadow)"></rect><rect class="diagram-node__accent" x="80" y="1332" width="3" height="106" rx="1.5"></rect><circle class="diagram-node__dot" cx="443" cy="1337" r="3.5"></circle><text class="diagram-node__kind" x="100" y="1343">OUTCOME</text><text id="trusted-implementation-lifecycle-architecture--terminal-text" class="diagram-node__title" x="100" y="1367" font-size="16">Terminal receipt</text><text class="diagram-node__detail" x="100" y="1390" font-size="14"><tspan x="100" y="1390">full tuple rechecked</tspan><tspan x="100" y="1409">no integration · human decides</tspan></text></g></g><g class="diagram-edge-labels"><g class="diagram-edge-label diagram-edge-label--primary diagram-reveal" style="--reveal-delay:48ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge-label.session-controller"><rect class="diagram-edge-label__surface" x="280" y="171" width="249.36" height="28" rx="5"></rect><text class="diagram-edge-label__text" x="404.68" y="189.76" font-size="14" text-anchor="middle"><tspan x="404.68" y="189.76">direct human mutation request</tspan></text></g><g class="diagram-edge-label diagram-edge-label--feedback diagram-reveal" style="--reveal-delay:168ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge-label.controller-store"><rect class="diagram-edge-label__surface" x="496.56" y="241" width="76.88" height="28" rx="5"></rect><text class="diagram-edge-label__text" x="535" y="259.76" font-size="14" text-anchor="middle"><tspan x="535" y="259.76">records</tspan></text></g><g class="diagram-edge-label diagram-edge-label--primary diagram-reveal" style="--reveal-delay:288ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge-label.controller-candidate"><rect class="diagram-edge-label__surface" x="280" y="381" width="218" height="28" rx="5"></rect><text class="diagram-edge-label__text" x="389" y="399.76" font-size="14" text-anchor="middle"><tspan x="389" y="399.76">freezes base + provisions</tspan></text></g><g class="diagram-edge-label diagram-edge-label--primary diagram-reveal" style="--reveal-delay:408ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge-label.candidate-writer"><rect class="diagram-edge-label__surface" x="280" y="601" width="155.28" height="28" rx="5"></rect><text class="diagram-edge-label__text" x="357.64" y="619.76" font-size="14" text-anchor="middle"><tspan x="357.64" y="619.76">sets isolated cwd</tspan></text></g><g class="diagram-edge-label diagram-edge-label--primary diagram-reveal" style="--reveal-delay:528ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge-label.writer-verifier"><rect class="diagram-edge-label__surface" x="280" y="821" width="155.28" height="28" rx="5"></rect><text class="diagram-edge-label__text" x="357.64" y="839.76" font-size="14" text-anchor="middle"><tspan x="357.64" y="839.76">returns candidate</tspan></text></g><g class="diagram-edge-label diagram-edge-label--primary diagram-reveal" style="--reveal-delay:648ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge-label.verifier-reviewer"><rect class="diagram-edge-label__surface" x="280" y="1041" width="139.6" height="28" rx="5"></rect><text class="diagram-edge-label__text" x="349.8" y="1059.76" font-size="14" text-anchor="middle"><tspan x="349.8" y="1059.76">passing receipt</tspan></text></g><g class="diagram-edge-label diagram-edge-label--warning diagram-reveal" style="--reveal-delay:768ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge-label.verifier-repair"><rect class="diagram-edge-label__surface" x="504" y="901" width="62" height="28" rx="5"></rect><text class="diagram-edge-label__text" x="535" y="919.76" font-size="14" text-anchor="middle"><tspan x="535" y="919.76">fails</tspan></text></g><g class="diagram-edge-label diagram-edge-label--warning diagram-reveal" style="--reveal-delay:888ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge-label.reviewer-repair"><rect class="diagram-edge-label__surface" x="496.56" y="1121" width="76.88" height="28" rx="5"></rect><text class="diagram-edge-label__text" x="535" y="1139.76" font-size="14" text-anchor="middle"><tspan x="535" y="1139.76">finding</tspan></text></g><g class="diagram-edge-label diagram-edge-label--feedback diagram-reveal" style="--reveal-delay:1008ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge-label.repair-verifier"><rect class="diagram-edge-label__surface" x="492.64" y="1026" width="84.72" height="28" rx="5"></rect><text class="diagram-edge-label__text" x="535" y="1044.76" font-size="14" text-anchor="middle"><tspan x="535" y="1044.76">reverify</tspan></text></g><g class="diagram-edge-label diagram-edge-label--success diagram-reveal" style="--reveal-delay:1128ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge-label.reviewer-terminal"><rect class="diagram-edge-label__surface" x="280" y="1261" width="233.68" height="28" rx="5"></rect><text class="diagram-edge-label__text" x="396.84" y="1279.76" font-size="14" text-anchor="middle"><tspan x="396.84" y="1279.76">finalizes matching receipts</tspan></text></g><g class="diagram-edge-label diagram-edge-label--feedback diagram-reveal" style="--reveal-delay:1248ms" data-review-id="trusted-implementation-lifecycle.architecture.trusted-implementation-lifecycle-architecture.edge-label.store-terminal"><rect class="diagram-edge-label__surface" x="687.08" y="1276" width="225.84" height="28" rx="5"></rect><text class="diagram-edge-label__text" x="800" y="1294.76" font-size="14" text-anchor="middle"><tspan x="800" y="1294.76">recovers terminal evidence</tspan></text></g></g></svg>

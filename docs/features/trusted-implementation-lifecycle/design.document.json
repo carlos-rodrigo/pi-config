@@ -1,0 +1,762 @@
+{
+  "schemaVersion": "canonical-report-v1",
+  "document": {
+    "id": "trusted-implementation-lifecycle-design",
+    "kind": "design",
+    "status": "Approved",
+    "title": "Trusted Implementation Lifecycle — Technical Design",
+    "summary": "An always-on parent extension handles an idle direct human mutation request before the primary agent, creating a durable fail-closed transaction with one path-confined writer, immutable verification/review evidence, bounded repair, and human integration.",
+    "reviewFocus": "Confirm the input/write interception seam, candidate and receipt ownership, child-role capability boundaries, headless verification, repair invalidation, and fail-closed behavior.",
+    "updated": "2026-09-01",
+    "sources": [
+      "docs/features/trusted-implementation-lifecycle/prd.document.json",
+      "docs/features/trusted-implementation-lifecycle/prd.html",
+      "extensions/agent-jobs/index.ts",
+      "extensions/verify/index.ts",
+      "extensions/worktree-manager/lib/worktree.ts",
+      "extensions/agent-jobs/agents.ts",
+      "Pi extension documentation: input, before_agent_start, tool_call, agent_settled",
+      "Pi CLI documentation: --print, --no-session, --no-extensions, --tools",
+      "Pi security and containerization documentation",
+      "Product owner architecture approval: automatic local lifecycle and Alphonse ChangeExecutor adapters, 2026-09-01"
+    ],
+    "approval": {
+      "approvedBy": "Product owner",
+      "approvedAt": "2026-09-01"
+    },
+    "feature": "Trusted Implementation Lifecycle",
+    "featureHome": "docs/features/trusted-implementation-lifecycle",
+    "relatedArtifacts": [
+      {
+        "label": "Approved product requirements",
+        "href": "prd.html"
+      },
+      {
+        "label": "Architecture diagram source",
+        "href": "trusted-implementation-lifecycle-architecture.diagram.json"
+      },
+      {
+        "label": "Architecture diagram",
+        "href": "trusted-implementation-lifecycle-architecture.diagram.svg"
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "trusted-delivery-design.authority",
+      "role": "authority",
+      "kicker": "Authority",
+      "title": "Automatic implementation must become controller-owned before mutation",
+      "summary": "The approved PRD requires normal conversational entry, deterministic mutation interception, independent evidence, bounded repair, and human integration without a command or skill gate.",
+      "blocks": [
+        {
+          "type": "facts",
+          "id": "authority.evidence",
+          "items": [
+            [
+              "Authority",
+              "Approved PRD: docs/features/trusted-implementation-lifecycle/prd.document.json"
+            ],
+            [
+              "Acceptance",
+              "scenario-001 through scenario-004 and ac-001 through ac-004"
+            ],
+            [
+              "Current seams",
+              "Pi input/tool_call lifecycle, agent-jobs detached launcher, verify runner, and Git worktree helpers"
+            ],
+            [
+              "Boundary",
+              "Trusted local Git repositories first; real process containment remains required before untrusted unattended execution"
+            ]
+          ]
+        },
+        {
+          "type": "architecture-approval",
+          "id": "authority.approval",
+          "decision": "Make one always-loaded ImplementationLifecycleController the mutation admission and delivery-completion authority for direct Pi sessions.",
+          "recommendation": "In input, accept only an idle direct interactive TUI user request with explicit edit/implementation intent, atomically create the root lease, return handled, and start the transaction before any primary agent runs. For all other turns, a deny-by-default tool_call barrier permits audited read-only tools only, blocks unauthorized mutations without creating authority, marks the whole batch blocked, and aborts the primary run. Capture a complete clean-or-dirty Git snapshot, launch path-confined child roles, verify a disposable candidate snapshot, persist the immutable evidence tuple, and return a human integration decision.",
+          "goal": "Implementation requested through normal Pi conversation cannot mutate or complete outside a candidate-bound verifier and independent review lifecycle.",
+          "shape": "ImplementationLifecycleController owns admission and policy; DeliveryRunStore alone owns the atomic cross-process root lease and durable evidence; CandidateWorkspace captures complete nonignored base/candidate trees and disposable verification snapshots; HeadlessPiRoleRunner launches no-discovery children with one controller-owned path guard extension; ExplicitVerifier owns executable gates; the primary session owns user communication only.",
+          "why": "The input boundary is the only point that can bind trusted direct-human authority before an agent turn; tool_call is the final effect boundary for every other turn. Parent orchestration plus controller-owned role profiles prevents the writer or candidate from changing policy, verification, reviewer authority, receipts, or integration state.",
+          "approve": "Add interactive-only admission, provenance/effect-bound read-only primary tools, atomic root lease, complete snapshot, one guarded no-shell writer, protected verification closure, controller-profiled read-only reviewer, two pre-counted repairs, process-stopped cancellation/reload reattachment, durable fail-closed records, and zero-integration terminal outcomes.",
+          "notBuilding": "A /deliver command, skill-triggered enforcement, mutable worker fan-out, automatic merge, unbounded retries, project-local controller policy, or a shared Alphonse runtime package.",
+          "risks": "Child Pi processes retain host identity and provider credentials unless separately contained. Version one therefore omits writer bash/PowerShell and confines built-in edits through a controller-owned guard extension, but this remains trusted-local rather than an OS sandbox. Intent classification is authority-sensitive and must fail closed on ambiguity.",
+          "readiness": "Approved by the product owner on 2026-09-01; implementation must fail closed when repository, verifier, candidate, or child-role proof is unavailable."
+        }
+      ]
+    },
+    {
+      "id": "trusted-delivery-design.pressure",
+      "role": "pressure",
+      "kicker": "Pressure",
+      "title": "The primary session cannot be both an unrestricted writer and its own delivery controller",
+      "summary": "Current extensions provide useful pieces, but none owns the complete authority-to-candidate lifecycle or prevents a normal agent from writing before those pieces run.",
+      "blocks": [
+        {
+          "type": "list",
+          "id": "pressure.forces",
+          "style": "bullets",
+          "items": [
+            "agent-jobs can persist detached processes but marks model/process termination rather than accepted software quality.",
+            "verify runs after interactive agent completion and intentionally skips headless contexts; it is not an explicit candidate-bound service.",
+            "worktree-manager creates feature branches from a configured base and may copy local hidden environment by default; delivery needs a current-base detached candidate with no environment copy.",
+            "before_agent_start can influence prompts but cannot enforce behavior; tool_call can block the actual edit/write/bash operation.",
+            "A child Pi process discovers the same global extensions unless launched with a restricted profile, creating controller recursion and capability leakage.",
+            "A session entry is conversational and ephemeral; restart-safe run state must live outside the transcript."
+          ]
+        },
+        {
+          "type": "callout",
+          "id": "pressure.rejected",
+          "tone": "risk",
+          "title": "Rejected obvious seams",
+          "text": "Do not rely on implement-task to remember the lifecycle, run verification only in agent_end, let the primary session mutate and review its own tree, or load the delivery extension inside writer/reviewer children. Each choice leaves self-certification or recursive authority in place."
+        }
+      ]
+    },
+    {
+      "id": "trusted-delivery-design.seam",
+      "role": "seam",
+      "kicker": "Owning seam",
+      "title": "ImplementationLifecycleController owns mutation admission and terminal truth",
+      "summary": "Existing extensions become collaborators behind one controller instead of independent advisory features.",
+      "blocks": [
+        {
+          "type": "steps",
+          "id": "seam.ownership",
+          "items": [
+            {
+              "id": "seam.controller",
+              "title": "ImplementationLifecycleController",
+              "text": "The input handler accepts only idle direct interactive TUI user input with explicit mutation intent, asks for clarification on ambiguity, atomically acquires the canonical-root lease, returns handled, and starts one run before the primary agent. before_agent_start selects controller-owned path-confined controller-owned read/grep/find/ls wrappers plus explicitly fingerprinted read-only tools; tool_call rejects any definition/provenance/input mismatch, blocks the remaining parallel batch, and calls ctx.abort(). Direct interactive ‘cancel implementation’ kills and waits for the child process group; session_before_switch refuses new/resume/fork until terminal, and reload adopts only a proven-dead lease, reconciles child evidence, and terminates non-favorably; it never resumes to the lease."
+            },
+            {
+              "id": "seam.store",
+              "title": "DeliveryRunStore",
+              "text": "Is the sole manifest and receipt writer. It atomically acquires one cross-process lease per canonical Git common root, persists one atomically updated per-run manifest with append-only attempt evidence under the Git common directory at pi-delivery/runs; its terminal evidence becomes immutable and guards the active lease with nonce, PID, and process-start identity, and records trusted interactive request ID, authority digest, complete snapshots, exact primary/writer/reviewer tool/rubric/resource-profile digests, protected verification closure/results, supplied-review-input digest, repairCount, child process-group/exit evidence, cancellation, and terminal reason. It rejects stale or mismatched receipts."
+            },
+            {
+              "id": "seam.workspace",
+              "title": "CandidateWorkspace",
+              "text": "Uses an alternate private Git index to capture the complete current nonignored clean-or-dirty working state—including staged, unstaged, untracked files, modes, symlinks, deletions, and renames—as a base tree without changing the user index. It creates one detached no-copy sibling worktree from that tree with hooks and fsmonitor disabled, freezes candidate trees, creates a disposable verification worktree from each candidate tree, and removes only manifest-owned paths."
+            },
+            {
+              "id": "seam.roles",
+              "title": "HeadlessPiRoleRunner",
+              "text": "Uses a controller-local stopped-start process-group primitive with durable pending-launch intent plus pre-release PID/start persistence, complete output hashing, TERM→KILL, and group-absence proof; agent-jobs remains independent. Each child disables discovered extensions, skills, prompt templates, and context files, then loads one explicit controller-owned role-policy extension and a controller-injected hashed role rubric. Writer/repair receives path-confined read/ls/edit/write only—no bash/PowerShell—and cannot reach Git/run-record paths. Reviewer receives path-confined read/ls plus a bounded report tool; candidate instructions are data only. Parent wrappers, never children, write authoritative logs and receipts."
+            },
+            {
+              "id": "seam.verifier",
+              "title": "ExplicitVerifier",
+              "text": "Exports explicit verification as passed | failed | missing | timeout | mutated. It freezes and hashes the base verify script, package scripts/lockfile, CI/test/build configuration, and existing test suite as a protected closure; authorized exceptions are part of authority. It rejects candidate changes to that closure and exports the candidate into a standalone disposable snapshot without shared Git metadata, runs the frozen base gate and rejects added or changed tests whose execution cannot be proven, records command/result/output digest, recomputes the tree to detect side effects, and rejects missing, changed, weakened, timed-out, or mutating verification."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "trusted-delivery-design.shape",
+      "role": "shape",
+      "kicker": "System shape",
+      "title": "One run manifest binds authority, candidate, verification, and review",
+      "summary": "The implementation is a small controller plus reusable services; existing feature commands and automatic verify behavior remain compatible.",
+      "blocks": [
+        {
+          "type": "facts",
+          "id": "shape.impact",
+          "items": [
+            [
+              "Architecture and modules — Changed",
+              "Add extensions/implementation-lifecycle and focused candidate/role/run-store helpers; keep explicit candidate verification local to the lifecycle so the UI-oriented verify extension remains independent"
+            ],
+            [
+              "API and contracts — Changed",
+              "Add internal DeliveryRunV1, CandidateIdentity, VerificationReceipt, ReviewReceipt, and terminal-state contracts; no public network API"
+            ],
+            [
+              "Domain model — Changed",
+              "Introduce deterministic lifecycle states and two-key completion; no product-domain entities"
+            ],
+            [
+              "Data and persistence — Changed",
+              "Owner-local Git-common-directory pi-delivery manifests with atomic writes; no schema migration outside versioned local records"
+            ],
+            [
+              "Delivery and interface — Changed",
+              "Existing Pi status/notification/follow-up surfaces report automatic activation and terminal evidence; no command or custom screen"
+            ],
+            [
+              "Integrations — Changed",
+              "Child pi CLI with one explicit guard, Git complete/disposable worktrees, protected scripts/verify.sh closure, controller-profiled reviewer, process-group timeout/cancellation, and reload reconciliation"
+            ],
+            [
+              "Operations and rollout — Changed",
+              "Authorize trusted local Git only from interactive TUI; RPC/print/JSON mutation fails closed; session switch waits for terminal; reload reconciles the recorded child and reattaches to the lease"
+            ],
+            [
+              "Verification shape — Changed",
+              "Input provenance/mode and mixed-batch interception tests, complete Git snapshots, guarded real child roles, disposable verifier, immutable tuple, process reconciliation, and full project gate"
+            ]
+          ]
+        },
+        {
+          "type": "code",
+          "id": "shape.contracts",
+          "label": "Reference run contracts",
+          "content": "type DeliveryState = 'authorizing'|'preparing-candidate'|'writing'|'verifying'|'reviewing'|'repairing'|'cancelling'|'merge-ready'|'decision-required'|'failed-safely'\ntype SnapshotIdentity = { headSha:string; treeOid:string; statusDigest:string }\ntype CandidateIdentity = { base:SnapshotIdentity; candidateTreeOid:string; diffSha256:string }\ntype VerificationPolicy = { command:['bash','scripts/verify.sh']; closure:Array<{path:string;mode:string;blobOid:string}>; environmentDigest:string; digest:string }\ntype VerificationReceipt = { candidateTreeOid:string; policyDigest:string; status:'passed'|'failed'|'missing'|'timeout'|'mutated'; exitCode?:number; durationMs:number; outputSha256:string; redactedFailureOutputTail?:string; verifiedTreeOid?:string }\ntype ReviewReceipt = { candidateTreeOid:string; reviewerProfileDigest:string; reviewInputDigest:string; reviewOutputDigest:string; verdict:'proud'|'needs-attention'; findings:Array<{severity:'must-fix'|'should-fix'|'optional';code:string;summary:string;evidence:string}> }\ntype DeliveryAttemptRecord = { attempt:number; candidateTreeOid:string; writerProfileDigest:string; writerProcessOutputDigest:string; verification?:VerificationReceipt; review?:ReviewReceipt; invalidatedAt?:string }\ntype LeaseRecord = { leaseNonce:string; runId:string; pid:number; processStart:string; root:string }\ntype DeliveryRunV1 = { schemaVersion:1; runId:string; root:string; state:DeliveryState; authority:{requestId:string;source:'interactive';request:string;requestDigest:string}; primaryProfileDigest:string; base?:SnapshotIdentity; candidate?:CandidateIdentity; candidateRoot?:string; verificationPolicy?:VerificationPolicy; baselineVerification?:VerificationReceipt; verification?:VerificationReceipt; review?:ReviewReceipt; expectedReviewerProfileDigest?:string; expectedReviewInputDigest?:string; repairCount:number; failureSignatures:string[]; attempts:DeliveryAttemptRecord[]; pendingChild?:{role:string;readyPath:string;preparedAt:string}; child?:{role:'writer'|'repair'|'verifier'|'reviewer';pid:number;processStart:string;startedAt:string}; childExits:Array<{role:string;observedAt:string;exitCode?:number;timedOut:boolean;recovery?:boolean}>; finalTupleDigest?:string; terminalReason?:string }\n\nThe active lease is mutable and nonce-fenced. Each run owns a separate append-only evidence history inside its durable manifest. Only markMergeReady recomputes and validates the canonical authority/base/policy/baseline/writer/candidate/verifier/reviewer/exit/repair tuple before persisting MERGE READY."
+        },
+        {
+          "type": "code",
+          "id": "shape.mutation-policy",
+          "label": "Mutation admission decision",
+          "content": "on input:\n  if active lease and direct interactive text means cancel: persist cancelling; TERM process group; wait; KILL after timeout; terminal only after parent-observed process-group exit evidence\n  reject RPC/extension/queued/steering/follow-up authority\n  if mode is rpc/json/print and request implies mutation: handle with fail-closed result\n  if TUI is idle and direct interactive request explicitly authorizes mutation:\n    canonicalize Git root; atomically acquire lease; persist AuthorityIdentity; return handled; acknowledge run ID; start controller\n  if ambiguous mutation intent: return handled and ask one clarification\n  otherwise select controller-owned controller-owned read/grep/find/ls wrappers plus provenance/effect-fingerprinted read-only tools\n\non primary tool_call without an authorized handled run:\n  require tool object/provenance digest and input policy to match selected profile\n  any mismatch or effect-capable/unknown tool: block, mark batch blocked, call ctx.abort(); create no authority\n\nsession_before_switch refuses new/resume/fork until terminal; reload/session_start adopts a lease only after matching PID/start identity proves the owner dead, fences the old nonce, stops the recorded group, and terminates non-favorably. Controller-issued children disable context/skills/prompts/discovered extensions and carry signed run/role provenance; writer omits bash/PowerShell. No prompt, workflow mode, sibling, or child can override policy."
+        },
+        {
+          "type": "code",
+          "id": "shape.completion-policy",
+          "label": "Two-key completion and repair",
+          "content": "writer exits → freeze complete candidate tree; parent records child exit\nreject final-candidate changes to the frozen base verify/package/CI/test-config/existing-test closure; export a standalone disposable candidate snapshot; run the frozen base gate; reject added/changed tests until an adapter can prove their execution; require unchanged verified tree\n  eligible verifier failure = nonzero frozen command + unchanged policy/environment + candidate-specific signature\nreview exact tuple in fresh no-context/no-skills/no-prompts/no-discovered-extensions path-confined child using controller-injected rubric\n  eligible review failure = validated Must/Should + candidate evidence + no protected-authority need\nfor eligible new signature while repairCount < 2: DeliveryRunStore invalidates receipts and increments repairCount before one fresh writer launch\nmissing/timeout/side-effect/provider/infrastructure/malformed/repeated/protected failure → FAILED SAFELY or DECISION REQUIRED; no repair\nbefore merge-ready: audit no integration invocation; recheck primary snapshot, candidate tree, policy/results, reviewer profile, and supplied-input digest\nmatching pass + Proud + no Must/Should + complete writer/verifier/reviewer exit evidence → RunStore validates and hashes one canonical tuple through markMergeReady\ncontroller and role command allowlists never advance a branch/ref, merge, push, remotely mutate, or deploy; Git may create one unreachable synthetic commit object solely as a detached-worktree anchor; primary files and integration state remain unchanged"
+        }
+      ]
+    },
+    {
+      "id": "trusted-delivery-design.path",
+      "role": "path",
+      "kicker": "Causal path",
+      "title": "A blocked primary mutation becomes one detached candidate transaction",
+      "summary": "The path keeps authority in the original session and mutation in a child workspace while every acceptance signal binds to one candidate identity.",
+      "blocks": [
+        {
+          "type": "steps",
+          "id": "path.sequence",
+          "items": [
+            {
+              "id": "path.request",
+              "title": "Capture authority",
+              "text": "While Pi is idle, input accepts only a direct interactive TUI request with explicit mutation intent, canonicalizes the Git root, atomically acquires its cross-process lease, persists trusted request ID/source/digest, returns handled, and immediately acknowledges the run. Ambiguity asks once; print/JSON fails closed."
+            },
+            {
+              "id": "path.intercept",
+              "title": "Intercept mutation",
+              "text": "For every non-authorizing primary turn, the controller selects its own path-confined read wrappers plus tools whose exact definition/provenance/effect fingerprint and inputs are audited read-only. Any override, mismatch, edit/write/bash/PowerShell/custom/command/unknown effect is blocked without a run; the extension marks the parallel batch blocked and calls ctx.abort."
+            },
+            {
+              "id": "path.candidate",
+              "title": "Prepare candidate",
+              "text": "CandidateWorkspace uses a private alternate index to capture the complete current clean-or-dirty nonignored state as a tree, records modes/symlinks/deletes/renames through Git identity, creates a detached no-copy sibling worktree with hooks/fsmonitor disabled, and stores manifest ownership before effects."
+            },
+            {
+              "id": "path.writer",
+              "title": "Run writer",
+              "text": "A headless Pi child disables discovered extensions and loads only the controller-owned role guard. The writer receives read/search/edit/write without bash/PowerShell; every path is confined to the candidate and Git/run records are denied. Parent process evidence—not child output—advances state."
+            },
+            {
+              "id": "path.evidence",
+              "title": "Verify and review",
+              "text": "ExplicitVerifier rejects changes or additions to the frozen base verify/package/CI/test-config/existing-test closure, exports a standalone disposable candidate snapshot without shared Git metadata, runs the frozen base gate, and rejects missing/timeout/policy weakening or any resulting nonignored tree change. Only a pass starts a no-context/no-skills/no-prompts/no-discovered-extensions path-confined reviewer with a controller-injected rubric and exact profile/input digest."
+            },
+            {
+              "id": "path.repair",
+              "title": "Repair or stop",
+              "text": "Eligibility is positive: a nonzero frozen command under unchanged policy/environment, or a validated candidate-evidenced Must/Should finding requiring no protected authority. For a new signature while repairCount is below two, DeliveryRunStore invalidates receipts and increments repairCount before launch. Every other failure stops."
+            },
+            {
+              "id": "path.terminal",
+              "title": "Publish terminal state",
+              "text": "Immediately before terminalization, the controller audits zero integration invocation and rechecks the complete primary base, candidate tree, verification tuple, reviewer profile, and supplied-input digest. DeliveryRunStore persists one terminal state before one follow-up. Direct interactive Cancel waits for process-group exit; session switches refuse while nonterminal; reload adopts only a proven-dead lease, reconciles child evidence, and terminates non-favorably; it never resumes to the lease and reconciles child evidence."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "trusted-delivery-design.slices",
+      "role": "slices",
+      "kicker": "Architecture slices",
+      "title": "Three vertical outcomes establish automatic trusted delivery",
+      "summary": "Admission, evidence, and recovery are independently testable but compose through one run contract.",
+      "blocks": [
+        {
+          "type": "slice",
+          "id": "design-slice-001",
+          "title": "Direct mutation authority automatically enters an isolated candidate",
+          "outcome": "an idle direct human mutation request creates one root lease and candidate before any primary agent runs, while unauthorized model mutation is blocked without creating authority",
+          "boundary": "Trusted input provenance, intent classification, input handling, cross-process lease, deny-by-default tool barrier, complete clean/dirty snapshot, and detached worktree; no verification or review verdict yet.",
+          "story": {
+            "id": "design-story-001",
+            "actor": "the primary Pi session",
+            "capability": "route an authorized mutation into an isolated candidate",
+            "outcome": "the project remains unchanged while delivery begins"
+          },
+          "scenarios": [
+            {
+              "id": "design-scenario-001",
+              "title": "Direct input owns activation and the barrier cannot invent it",
+              "given": "Pi is idle with no root lease",
+              "when": "a direct interactive TUI user explicitly requests mutation, or a non-authorizing agent later attempts any unaudited tool",
+              "then": "the direct request is handled into one persisted run before an agent starts, while the unauthorized call is blocked and aborts without creating a run"
+            }
+          ],
+          "mode": "visual",
+          "steps": [
+            {
+              "id": "design-step-001",
+              "title": "Admit",
+              "context": "The primary agent is about to mutate.",
+              "action": "The extension resolves authority and blocks the call.",
+              "response": "A durable run and candidate are created once.",
+              "outcome": "No primary-tree mutation occurs."
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "ac-101",
+              "text": "Event and temporary-Git tests prove idle direct interactive TUI mutation input is handled into one atomic root lease and complete clean/dirty no-copy candidate before an agent turn; unauthorized edit/write/bash/PowerShell/custom/command/mixed-sibling calls create no run and abort; print/JSON fails closed; read-only exploration remains available."
+            }
+          ],
+          "after": "The candidate is ready for the only mutable writer.",
+          "acceptanceAnchors": [
+            "ac-001"
+          ],
+          "dependsOn": [],
+          "escalateIf": "The request has no explicit human implementation authority, the repository is unsupported, or isolation cannot be proven; owner: developer.",
+          "entryPoint": "Pi input for trusted authorization; deny-by-default tool_call for unauthorized effects",
+          "participatingElements": [
+            "ImplementationLifecycleController",
+            "DeliveryRunStore",
+            "CandidateWorkspace"
+          ],
+          "contractDelta": [
+            "AuthorityIdentity and atomic canonical-root lease",
+            "Deny-by-default tool capability result and batch-abort marker",
+            "Complete Git SnapshotIdentity and manifest-owned candidate"
+          ],
+          "stateAndInvariants": [
+            "The accepted direct request is handled before a primary agent turn",
+            "Unauthorized model mutation never creates authority or executes",
+            "One canonical Git root owns at most one cross-process lease",
+            "Candidate creation follows durable manifest creation",
+            "No project-local environment files are copied; host/provider permissions remain disclosed"
+          ],
+          "failureRecovery": [
+            "Unsupported Git, ambiguous/untrusted input, lease collision, or candidate creation failure leaves the primary tree unchanged",
+            "Complete dirty-state capture either proves one tree or fails safely",
+            "Manifest-owned paths are the only cleanup targets"
+          ],
+          "proof": [
+            "Input source/mode/idle classifier, mixed parallel tool batch, cross-process lease race, alternate-index clean/dirty snapshot, manifest ordering, and worktree acceptance fixtures"
+          ]
+        },
+        {
+          "type": "slice",
+          "id": "design-slice-002",
+          "title": "Independent evidence gates merge-ready",
+          "outcome": "writer process termination cannot become success until verification and read-only review pass for the same candidate",
+          "boundary": "Parent-owned child process evidence, explicit no-context/no-skill no-shell writer guard, complete candidate snapshot, protected verification closure on a disposable snapshot, controller-owned no-context/no-skill reviewer profile and supplied input digest, immutable tuple, and two-key terminal policy; no integration invocation.",
+          "story": {
+            "id": "design-story-002",
+            "actor": "the delivery controller",
+            "capability": "separate writing from verification and review",
+            "outcome": "only matching independent evidence can produce merge-ready"
+          },
+          "scenarios": [
+            {
+              "id": "design-scenario-002",
+              "title": "False completion remains blocked",
+              "given": "a writer process has exited",
+              "when": "verification is missing/failed/timed out/mutating, policy or base changed, review input is stale, or review reports a blocking finding",
+              "then": "the sole run store cannot write merge-ready and records the immutable mismatch for eligible repair or safe termination"
+            }
+          ],
+          "mode": "visual",
+          "steps": [
+            {
+              "id": "design-step-002",
+              "title": "Prove",
+              "context": "The candidate exists after a writer attempt.",
+              "action": "The controller computes identity, verifies, and reviews read-only.",
+              "response": "Receipts bind to the same identity.",
+              "outcome": "Writer prose has no completion authority."
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "ac-102",
+              "text": "Role-policy, temporary-Git, and verifier/reviewer fixtures prove child absolute-path/Git-ref/run-record escapes are blocked, writer has no bash/PowerShell/context/skills/prompts/discovered extensions, process success is insufficient, frozen base verify/package/CI/test-config/existing-test closure cannot be weakened, disposable verification side effects/missing/timeout fail, candidate instructions cannot alter the controller-owned reviewer profile, malformed/stale review input fails, and only the same fully rechecked tuple can produce merge-ready."
+            }
+          ],
+          "after": "Passing evidence is ready for human integration or concrete evidence is ready for bounded repair.",
+          "acceptanceAnchors": [
+            "ac-002",
+            "ac-003"
+          ],
+          "dependsOn": [
+            "design-slice-001"
+          ],
+          "escalateIf": "No credible verifier exists, reviewer capability cannot be made read-only, or candidate identity cannot be reproduced; owner: developer.",
+          "entryPoint": "Headless writer process completion",
+          "participatingElements": [
+            "HeadlessPiRoleRunner",
+            "ExplicitVerifier",
+            "CandidateIdentityBuilder",
+            "ReadOnlyReviewer",
+            "DeliveryRunStore"
+          ],
+          "contractDelta": [
+            "Parent-owned child PID/exit/event record",
+            "Complete SnapshotIdentity/CandidateIdentity",
+            "Protected base verification closure and VerificationReceipt",
+            "controller-owned reviewer ToolProfile, supplied-input digest, and ReviewReceipt",
+            "Immutable tuple terminal policy"
+          ],
+          "stateAndInvariants": [
+            "Writer owns no authoritative log or acceptance receipt, is path-confined without shell, and loads no context/skills/prompts/discovered extensions",
+            "Reviewer has no mutable tool, writer history, candidate-owned authority, or run-record access; controller injects and hashes its rubric/profile",
+            "Verification overlays the protected base closure on a disposable immutable snapshot and cannot change it",
+            "Verification and review bind trusted authority, unchanged base, full candidate, policy/result, reviewer profile, and exact supplied input",
+            "Deterministic failure cannot be upgraded by prose"
+          ],
+          "failureRecovery": [
+            "Missing/timeout/mutating verification, malformed output, provider error, base/candidate/policy/review-input drift fails closed",
+            "Concrete candidate failures may advance only to bounded repair",
+            "Immediately before merge-ready every tuple component revalidates"
+          ],
+          "proof": [
+            "Explicit child guard path-escape/Git-ref/context-profile tests, parent-owned process evidence, protected-base-closure/disposable-verifier tests, complete snapshot identity, candidate-instruction isolation, reviewer parser/profile/input digest, false-completion, integration-command audit, and final tuple recheck tests"
+          ]
+        },
+        {
+          "type": "slice",
+          "id": "design-slice-003",
+          "title": "Repair and restart preserve authority",
+          "outcome": "candidate-specific failures may converge without indefinite retries, stale evidence, speculative process resumption, or hidden integration",
+          "boundary": "repairCount budget, eligibility/signature policy, sole-writer receipt invalidation, child process reconciliation, restart-to-decision-required, terminal follow-up, and manifest-owned cleanup.",
+          "story": {
+            "id": "design-story-003",
+            "actor": "the developer awaiting delegated work",
+            "capability": "receive autonomous correction within an explicit bound",
+            "outcome": "the run either converges with evidence or stops precisely without changing authority"
+          },
+          "scenarios": [
+            {
+              "id": "design-scenario-003",
+              "title": "Repair cannot outgrow the request",
+              "given": "verification or review has a concrete blocking failure",
+              "when": "the controller starts repair",
+              "then": "the same writer role receives only the frozen request and evidence, all receipts invalidate, and ambiguity or a second unsuccessful repair stops"
+            }
+          ],
+          "mode": "visual",
+          "steps": [
+            {
+              "id": "design-step-003",
+              "title": "Recover",
+              "context": "An eligible attempt failed, or a parent session reloaded while a child might remain.",
+              "action": "The controller reloads the manifest, reconciles the recorded process group and parent-observed exit evidence, terminates unresolved children, and either starts an explicitly eligible repair or marks decision-required.",
+              "response": "No stage is inferred from model prose and no nonterminal child is speculatively resumed.",
+              "outcome": "Authority and candidate history remain auditable."
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "ac-103",
+              "text": "State-machine and process fixtures prove the positive eligibility predicate, receipt invalidation plus repairCount increment before each launch, crash-consumed budget maximum two, repeated/non-candidate/provider/infrastructure/malformed/unchanged-candidate stop, natural-language Cancel waiting through TERM/KILL exit, switch refusal, proven-dead lease adoption, child reconciliation, and non-favorable termination, one terminal follow-up, zero controller/role integration capability and unchanged primary integration state, and unchanged primary files, refs, remotes, and deployment state."
+            }
+          ],
+          "after": "The human receives one trustworthy terminal state and retains integration authority.",
+          "acceptanceAnchors": [
+            "ac-004"
+          ],
+          "dependsOn": [
+            "design-slice-002"
+          ],
+          "escalateIf": "Repair requires product/architecture authority, crosses protected scope, repeats a failure signature, or exhausts two cycles; owner: developer.",
+          "entryPoint": "Concrete failed verifier/reviewer receipt or parent-session restart",
+          "participatingElements": [
+            "ImplementationLifecycleController",
+            "DeliveryRunStore",
+            "HeadlessPiRoleRunner",
+            "CandidateWorkspace"
+          ],
+          "contractDelta": [
+            "repairCount and repair eligibility predicate",
+            "Failure signature history",
+            "Sole-writer pre-mutation receipt invalidation rule",
+            "Child PID/process-group/exit reconciliation",
+            "Terminal follow-up acknowledgement"
+          ],
+          "stateAndInvariants": [
+            "DeliveryRunStore increments repairCount before launch, so at most two fresh writer repairs and every crash consumes budget",
+            "Only nonzero frozen-command failures under unchanged policy/environment or candidate-evidenced Must/Should findings requiring no protected authority are eligible",
+            "Every repair invalidates verifier and reviewer receipts before increment and mutation",
+            "Provider/infrastructure failure, malformed evidence, unchanged candidate, or interruption is not repairable",
+            "Controller and role command/tool audit proves no commit/merge/push/remote/deploy invocation throughout; primary integration state remains unchanged",
+            "Corrupt state never triggers automatic cleanup"
+          ],
+          "failureRecovery": [
+            "Direct interactive Cancel persists cancelling, sends TERM then KILL, and becomes terminal only after exit evidence; session switch is refused while nonterminal",
+            "Reload reattaches to the root lease and process evidence; corrupt or exhausted runs preserve evidence and stop safely"
+          ],
+          "proof": [
+            "Transition/eligibility table, pre-launch count crash cases, atomic lease/write fault injection, TERM/KILL/exit cancellation, switch refusal, reload reattachment, follow-up deduplication, receipt invalidation, integration-invocation audit, and cleanup ownership tests"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "trusted-delivery-design.traceability",
+      "role": "traceability",
+      "kicker": "Requirement fit",
+      "title": "Every approved requirement has one owning path and proof",
+      "summary": "The architecture keeps conversational activation, independent completion, and bounded human authority distinct.",
+      "blocks": [
+        {
+          "type": "architecture",
+          "id": "arch-001",
+          "title": "Implementation activates without a special invocation",
+          "sourceType": "Approved product truth",
+          "source": "req-001; scenario-001 and scenario-002; ac-001",
+          "requirementRefs": [
+            "ac-101"
+          ],
+          "sliceRefs": [
+            "design-slice-001"
+          ],
+          "entryPoint": "Idle direct interactive TUI input; deny-by-default tool_call only for unauthorized effects",
+          "participatingElements": [
+            "ImplementationLifecycleController",
+            "DeliveryRunStore",
+            "CandidateWorkspace"
+          ],
+          "contractState": "Trusted idle direct input atomically owns one canonical-root lease and is handled before an agent turn; tool_call cannot create authority and denies every unaudited effect. One root may own only one cross-process run.",
+          "effect": "A direct mutation request starts without a command, while unauthorized model mutation is blocked and aborts without a run.",
+          "failureRecovery": "Ambiguous/untrusted input, print/JSON, repository failure, or lease collision fails safely before mutation; reload reconciles the existing run rather than duplicating it.",
+          "proof": "ac-101 input provenance/mode, atomic lease, mixed-batch interception, complete dirty snapshot, and no-primary-mutation evidence.",
+          "fit": "fits"
+        },
+        {
+          "type": "architecture",
+          "id": "arch-002",
+          "title": "The writer cannot certify itself",
+          "sourceType": "Approved product truth",
+          "source": "req-002; scenario-003 and scenario-004; ac-002 and ac-003",
+          "requirementRefs": [
+            "ac-102"
+          ],
+          "sliceRefs": [
+            "design-slice-002"
+          ],
+          "entryPoint": "Writer child process completion",
+          "participatingElements": [
+            "HeadlessPiRoleRunner",
+            "ExplicitVerifier",
+            "ReadOnlyReviewer",
+            "CandidateIdentityBuilder",
+            "DeliveryRunStore"
+          ],
+          "contractState": "Writer is path-confined without shell/context/skills/prompts/discovered extensions and has no authoritative log/receipt capability; parent verification overlays the protected base closure, and controller-profiled read-only review binds one authority/base/complete-candidate/policy-result/reviewer-profile/supplied-input tuple; terminal policy requires both after final recheck.",
+          "effect": "Only an unchanged tuple with passing disposable verification and Proud/no-Must-or-Should review produces merge-ready.",
+          "failureRecovery": "Missing, timeout, mutating, malformed, failed, policy-weakened, or stale evidence advances only to eligible repair or safe termination and cannot be overridden by prose.",
+          "proof": "ac-102 child path/ref escape, parent process evidence, complete snapshot, disposable verifier, review-input digest, and false-completion evidence.",
+          "fit": "fits"
+        },
+        {
+          "type": "architecture",
+          "id": "arch-003",
+          "title": "Autonomous repair remains bounded by human authority",
+          "sourceType": "Approved product truth",
+          "source": "req-003; scenario-003 and scenario-004; ac-004",
+          "requirementRefs": [
+            "ac-103"
+          ],
+          "sliceRefs": [
+            "design-slice-003"
+          ],
+          "entryPoint": "Concrete failed verifier/reviewer receipt or process restart",
+          "participatingElements": [
+            "ImplementationLifecycleController",
+            "DeliveryRunStore",
+            "HeadlessPiRoleRunner",
+            "CandidateWorkspace"
+          ],
+          "contractState": "DeliveryRunStore invalidates receipts and increments repairCount before at most two fresh writers, only for the positive candidate-specific eligibility predicate; repeated/non-candidate/protected/ambiguous failure terminates; cancellation waits for child exit; audited terminal evidence never invokes integration.",
+          "effect": "The run converges within authority or reports a precise human decision without hidden continuation or speculative restart resumption.",
+          "failureRecovery": "Corrupt state, unresolved child, exhausted budget, authority conflict, or cleanup uncertainty stops and preserves candidate/evidence for inspection.",
+          "proof": "ac-103 eligibility/count, process reconciliation, follow-up, immutable integration surfaces, and cleanup evidence.",
+          "fit": "fits"
+        }
+      ]
+    },
+    {
+      "id": "trusted-delivery-design.diagram",
+      "role": "diagram",
+      "kicker": "Architecture path",
+      "title": "The parent process owns the transaction; role processes own bounded work",
+      "summary": "The diagram shows the only mutable role, deterministic evidence path, persistent state, and bounded repair feedback.",
+      "blocks": [
+        {
+          "type": "diagram",
+          "id": "diagram.delivery-architecture",
+          "question": "How does the parent Pi process admit a direct human mutation request before an agent turn and produce a restart-safe independently verified candidate?",
+          "caption": "The always-on extension owns admission and state; child Pi roles operate with narrower capabilities in one candidate; verifier and reviewer receipts converge before human integration.",
+          "svgPath": "trusted-implementation-lifecycle-architecture.diagram.svg",
+          "sourcePath": "trusted-implementation-lifecycle-architecture.diagram.json",
+          "walkthrough": [
+            "An idle direct interactive TUI mutation request is handled before a primary agent turn; unauthorized tool effects are denied without creating authority.",
+            "ImplementationLifecycleController atomically acquires the canonical-root lease and DeliveryRunStore records authority before CandidateWorkspace captures the complete clean/dirty base and creates the candidate.",
+            "A headless no-discovery writer with one explicit path guard is the only mutable role; it has no shell or receipt-writing authority.",
+            "ExplicitVerifier overlays the protected base verification/test closure on a disposable immutable candidate snapshot; only its passing tuple reaches a no-context/no-skill path-confined reviewer using a controller-owned hashed rubric/profile.",
+            "Positive eligible verifier/reviewer failures consume repairCount before at most two fresh repairs; direct Cancel waits for process-group exit, session switch refuses nonterminal state, and reload adopts only a proven-dead lease, reconciles child evidence, and terminates non-favorably; it never resumes to the lease.",
+            "A final recheck of authority, base, candidate, policy/results, and review input produces one terminal record and follow-up; every integration surface remains human-owned and unchanged."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "trusted-delivery-design.decisions",
+      "role": "decisions",
+      "kicker": "Architecture decision",
+      "title": "Trusted direct input owns activation; the write barrier enforces no unauthorized effects",
+      "summary": "This choice is blocking because another seam would make the lifecycle optional or permit mutation before evidence ownership exists.",
+      "blocks": [
+        {
+          "type": "decision",
+          "id": "d-arch-001",
+          "question": "Which boundary should activate and enforce direct Pi implementation delivery?",
+          "status": "accepted",
+          "decisionDrivers": [
+            "No user command, skill invocation, or workflow mode",
+            "No mutation before controller ownership",
+            "Normal read-only exploration remains available",
+            "Deterministic enforcement despite model routing errors"
+          ],
+          "consequences": [
+            "Idle direct interactive TUI input with explicit mutation intent creates authority, acquires the root lease, and is handled before a primary agent turn.",
+            "tool_call is deny-by-default for non-authorizing turns, creates no authority, blocks mixed mutation batches, and aborts the primary run.",
+            "Child roles disable discovered extensions and load one explicit controller guard; writer omits bash/PowerShell and is path-confined.",
+            "Worktree/tool policy remains trusted-local process safety rather than an OS sandbox claim."
+          ],
+          "revisitTrigger": "Revisit if Pi gains a native first-class implementation transaction event or all mutable tools can be routed into an OS sandbox without a parent write barrier.",
+          "options": [
+            {
+              "id": "tool-call-controller",
+              "label": "Always-on trusted-input admission plus deterministic effect barrier",
+              "summary": "Handle an idle direct mutation request into a root lease before the agent; deny every unauthorized model-reachable effect without creating authority.",
+              "benefits": [
+                "No explicit user invocation",
+                "Cannot be skipped by model routing",
+                "Preserves read-only exploration"
+              ],
+              "costs": [
+                "Requires explicit trusted-input classification and cross-process lease",
+                "Requires an audited read-only primary tool allowlist and child path guard",
+                "Ambiguous requests must ask rather than infer"
+              ]
+            },
+            {
+              "id": "command-or-skill",
+              "label": "Explicit command or implementation skill",
+              "summary": "Ask the user or model to opt into the delivery workflow.",
+              "benefits": [
+                "Simple activation",
+                "No mutation classifier"
+              ],
+              "costs": [
+                "Makes trust optional",
+                "Can be forgotten or bypassed"
+              ],
+              "rejectionReason": "Rejected explicitly by the product owner on 2026-09-01."
+            },
+            {
+              "id": "agent-end-review",
+              "label": "Let the primary write, then verify and review at agent end",
+              "summary": "Retain the current mutable session and add post-hoc evidence.",
+              "benefits": [
+                "Small implementation change",
+                "No child writer process"
+              ],
+              "costs": [
+                "Primary tree is already mutated",
+                "Writer can alter verifier inputs",
+                "No isolated integration boundary"
+              ],
+              "rejectionReason": "Rejected because the approved behavior requires isolated mutation and controller-owned completion."
+            }
+          ],
+          "selectedOptionId": "tool-call-controller",
+          "rationale": "Pi input can handle a direct human request before an agent turn, which is the only safe authority-creation seam. tool_call remains the final deterministic effect boundary for all other turns, ensuring no unauthorized model mutation occurs while never manufacturing permission from an attempted edit.",
+          "owner": "Technical design reviewer",
+          "blocking": true,
+          "approvedBy": "Product owner",
+          "approvedAt": "2026-09-01"
+        }
+      ]
+    },
+    {
+      "id": "trusted-delivery-design.proof",
+      "role": "proof",
+      "kicker": "Proof and risk",
+      "title": "Trust comes from negative tests and candidate identity, not agent narration",
+      "summary": "The verification strategy attacks bypass, false completion, stale evidence, repair drift, and unsafe recovery directly.",
+      "blocks": [
+        {
+          "type": "list",
+          "id": "proof.strategy",
+          "style": "checks",
+          "items": [
+            "Input fixtures cover source, streaming behavior, idle state, explicit/ambiguous/non-mutation language, interactive TUI authority plus RPC/print/JSON failure.",
+            "Extension harness proves unauthorized write/edit/bash/PowerShell/custom/command and mixed parallel batches create no run, never execute, and abort; concurrent sessions race for one atomic canonical-root lease.",
+            "Temporary repositories prove alternate-index complete clean/dirty snapshots, modes/symlinks/deletes/renames, detached no-copy candidate, final base drift, and manifest-owned cleanup.",
+            "Child role-policy tests prove absolute/parent/symlink/Git-ref/run-record escapes are blocked, writer has no shell/context/skills/prompts/discovered extensions, reviewer uses a controller-hashed profile and treats candidate instructions as data, and only parent wrappers write process evidence/receipts.",
+            "Verifier fixtures prove frozen policy/test digest, disposable candidate snapshot, absent/timeout/changed/failing/mutating checks, complete tuple identity, and final recheck reject false merge-ready.",
+            "Transition tests prove positive eligibility, pre-launch repairCount≤2 with crash consumption, repeated/non-candidate stop, TERM/KILL/exit cancellation, switch refusal, proven-dead lease adoption, child reconciliation, and non-favorable termination, receipt invalidation, one terminal follow-up, zero integration invocation, and unchanged primary/ref/remote/deployment state.",
+            "Project regression gate remains scripts/verify.sh; agent-backed benchmark adoption follows after controller correctness."
+          ]
+        },
+        {
+          "type": "callout",
+          "id": "proof.sandbox",
+          "tone": "warning",
+          "title": "Security boundary",
+          "text": "The first implementation may be enabled only for trusted local repositories. --no-extensions and a worktree narrow capabilities but do not isolate the child process from the host. Untrusted unattended execution remains blocked until container or micro-VM routing is integrated and tested."
+        }
+      ]
+    },
+    {
+      "id": "trusted-delivery-design.boundary",
+      "role": "boundary",
+      "kicker": "Boundary",
+      "title": "Keep existing tools focused and defer shared orchestration",
+      "summary": "The design adds one owner without turning every extension into a delivery framework.",
+      "blocks": [
+        {
+          "type": "facts",
+          "id": "boundary.unchanged",
+          "items": [
+            [
+              "agent-jobs",
+              "Retains public background agent/loop tools unchanged; delivery owns its stricter stopped-start process primitive locally"
+            ],
+            [
+              "verify",
+              "Retains setup, manual command, and interactive auto behavior unchanged; delivery uses its own standalone candidate verifier"
+            ],
+            [
+              "worktree-manager",
+              "Retains user feature worktrees and copy-local behavior; delivery uses a separate no-copy detached candidate helper"
+            ],
+            [
+              "Alphonse",
+              "Uses the same vocabulary and evidence invariants behind ChangeExecutor but does not import this extension or a shared package"
+            ],
+            [
+              "Deferred",
+              "OS sandbox, mutable parallel workers, auto-merge, agent-backed benchmarks, policy profiles, and shared core extraction"
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}

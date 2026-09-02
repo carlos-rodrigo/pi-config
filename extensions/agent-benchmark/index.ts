@@ -6,6 +6,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { SELF_IMPROVEMENT_DIR } from "../self-improvement-archive/index.ts";
+import { buildDependencyGraph } from "../code-intel/index.ts";
 
 const BENCHMARK_DIR = "benchmarks";
 const REGRESSION_SEED_DIR = "benchmark-regressions";
@@ -248,6 +249,23 @@ export function builtInBenchmarks(): BenchmarkCase[] {
 				return missing.length === 0
 					? pass("code-navigation-fixture", "code-intel navigation tools are registered.")
 					: fail("code-navigation-fixture", `Missing code-intel tool registration(s): ${missing.join(", ")}`, { missing });
+			},
+		},
+		{
+			id: "graph-context-fixture",
+			tier: "scenario",
+			description: "graph-aware preparation exposes bounded structural context and test relationships",
+			run(cwd) {
+				const started = Date.now();
+				const source = readText(join(cwd, "extensions", "code-intel", "index.ts"));
+				const graph = buildDependencyGraph(cwd);
+				const edges = Object.values(graph.nodes).reduce((total, node) => total + node.imports.length + node.importedBy.length, 0);
+				const associatedTests = Object.values(graph.nodes).reduce((total, node) => total + node.tests.length, 0);
+				const boundedContext = source.includes(".slice(0, limit)");
+				const details = { graphFiles: graph.files.length, testFiles: graph.testFiles.length, edges, associatedTests, boundedContext, contextBuildMs: Date.now() - started };
+				return graph.fingerprint && edges > 0 && associatedTests > 0 && boundedContext
+					? pass("graph-context-fixture", "Graph context discovers dependencies and tests within a bounded result set.", details)
+					: fail("graph-context-fixture", "Graph context fixture is missing dependency, test, or bounded-context evidence.", details);
 			},
 		},
 	];

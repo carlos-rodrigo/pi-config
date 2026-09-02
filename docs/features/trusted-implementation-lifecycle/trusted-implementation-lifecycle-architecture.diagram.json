@@ -1,0 +1,115 @@
+{
+  "schemaVersion": "system-diagram-v1",
+  "id": "trusted-implementation-lifecycle-architecture",
+  "title": "The parent Pi process owns a restartable delivery transaction",
+  "desc": "Approved architecture showing the always-on extension intercepting mutation, a delivery run store, an isolated writer process, deterministic verification, read-only review, bounded repair, and human-owned integration.",
+  "reviewPrefix": "trusted-implementation-lifecycle.architecture",
+  "reviewId": "svg",
+  "canvas": { "grid": true },
+  "padding": 36,
+  "nodes": [
+    {
+      "id": "session",
+      "reviewId": "node-session",
+      "kind": "entry",
+      "x": 80,
+      "y": 40,
+      "width": 380,
+      "height": 110,
+      "text": "Primary Pi session\nnormal input + read-only exploration\nhuman authority"
+    },
+    {
+      "id": "controller",
+      "reviewId": "node-controller",
+      "kind": "policy",
+      "x": 80,
+      "y": 220,
+      "width": 380,
+      "height": 130,
+      "text": "ImplementationLifecycleController\ninteractive authority + root lease\neffect barrier + cancel/reattach"
+    },
+    {
+      "id": "store",
+      "reviewId": "node-store",
+      "kind": "repository",
+      "x": 610,
+      "y": 220,
+      "width": 380,
+      "height": 130,
+      "text": "DeliveryRunStore\nsole manifest + receipt writer\nauthority tuple + process evidence"
+    },
+    {
+      "id": "candidate",
+      "reviewId": "node-candidate",
+      "kind": "service",
+      "x": 80,
+      "y": 440,
+      "width": 380,
+      "height": 130,
+      "text": "CandidateWorkspace\ncomplete clean/dirty Git tree\ncandidate + disposable verifier"
+    },
+    {
+      "id": "writer",
+      "reviewId": "node-writer",
+      "kind": "service",
+      "x": 80,
+      "y": 660,
+      "width": 380,
+      "height": 130,
+      "text": "Headless Pi writer\nexplicit path guard · no shell\nmutable tools only in candidate"
+    },
+    {
+      "id": "verifier",
+      "reviewId": "node-verifier",
+      "kind": "policy",
+      "x": 80,
+      "y": 880,
+      "width": 380,
+      "height": 130,
+      "text": "ExplicitVerifier\nprotected base test closure\ndisposable immutable snapshot"
+    },
+    {
+      "id": "reviewer",
+      "reviewId": "node-reviewer",
+      "kind": "feedback",
+      "x": 80,
+      "y": 1100,
+      "width": 380,
+      "height": 130,
+      "text": "Read-only Pi reviewer\ncontroller-owned profile + rubric\nexact supplied-input digest"
+    },
+    {
+      "id": "repair",
+      "reviewId": "node-repair",
+      "kind": "warning",
+      "x": 610,
+      "y": 880,
+      "width": 380,
+      "height": 130,
+      "text": "Repair attempt\nwriter receives bounded evidence\nnew candidate invalidates receipts"
+    },
+    {
+      "id": "terminal",
+      "reviewId": "node-terminal",
+      "kind": "success",
+      "x": 80,
+      "y": 1320,
+      "width": 380,
+      "height": 130,
+      "text": "Terminal receipt\nfull tuple rechecked\nno integration · human decides"
+    }
+  ],
+  "edges": [
+    { "id": "session-controller", "from": "session", "to": "controller", "kind": "primary", "x": 270, "y": 150, "points": [[0,0],[0,70]], "label": "direct human mutation request" },
+    { "id": "controller-store", "from": "controller", "to": "store", "kind": "feedback", "x": 460, "y": 285, "points": [[0,0],[150,0]], "label": "records", "labelPosition": [535,255] },
+    { "id": "controller-candidate", "from": "controller", "to": "candidate", "kind": "primary", "x": 270, "y": 350, "points": [[0,0],[0,90]], "label": "freezes base + provisions" },
+    { "id": "candidate-writer", "from": "candidate", "to": "writer", "kind": "primary", "x": 270, "y": 570, "points": [[0,0],[0,90]], "label": "sets isolated cwd" },
+    { "id": "writer-verifier", "from": "writer", "to": "verifier", "kind": "primary", "x": 270, "y": 790, "points": [[0,0],[0,90]], "label": "returns candidate" },
+    { "id": "verifier-reviewer", "from": "verifier", "to": "reviewer", "kind": "primary", "x": 270, "y": 1010, "points": [[0,0],[0,90]], "label": "passing receipt" },
+    { "id": "verifier-repair", "from": "verifier", "to": "repair", "kind": "warning", "x": 460, "y": 945, "points": [[0,0],[150,0]], "label": "fails", "labelPosition": [535,915] },
+    { "id": "reviewer-repair", "from": "reviewer", "to": "repair", "kind": "warning", "x": 460, "y": 1165, "points": [[0,0],[75,0],[75,-220],[150,-220]], "label": "finding", "labelPosition": [535,1135] },
+    { "id": "repair-verifier", "from": "repair", "to": "verifier", "kind": "feedback", "x": 800, "y": 1010, "points": [[0,0],[0,55],[-530,55],[-530,0]], "label": "reverify", "labelPosition": [535,1040] },
+    { "id": "reviewer-terminal", "from": "reviewer", "to": "terminal", "kind": "success", "x": 270, "y": 1230, "points": [[0,0],[0,90]], "label": "finalizes matching receipts" },
+    { "id": "store-terminal", "from": "store", "to": "terminal", "kind": "feedback", "x": 800, "y": 350, "points": [[0,0],[0,1035],[-340,1035]], "label": "recovers terminal evidence", "labelPosition": [800,1290] }
+  ]
+}

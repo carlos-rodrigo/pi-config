@@ -1,0 +1,414 @@
+{
+  "schemaVersion": "canonical-report-v1",
+  "document": {
+    "id": "trusted-implementation-lifecycle-prd",
+    "kind": "prd",
+    "status": "Approved",
+    "title": "Trusted Implementation Lifecycle",
+    "summary": "Direct Pi implementation work automatically enters an isolated, verifier-led lifecycle without requiring the user to remember a command, skill, or workflow mode.",
+    "reviewFocus": "Confirm that only an idle direct human implementation request authorizes one controlled run; every model-reachable mutation route is fail-closed; verification and review bind one immutable evidence tuple; repair is discriminating and bounded; and version one performs no integration.",
+    "updated": "2026-09-01",
+    "sources": [
+      "Product owner request: improve consistently high-quality code, subagent use, and trustworthy Alphonse-to-Pi delegation, 2026-09-01",
+      "Product owner approval: implementation should automatically receive the trusted lifecycle rather than require a skill or command; Alphonse may use its ChangeExecutor, 2026-09-01",
+      "docs/features/context-engineering/strategy.md",
+      "extensions/agent-jobs/README.md",
+      "extensions/verify/index.ts",
+      "extensions/worktree-manager/README.md",
+      "Pi extension documentation: input, before_agent_start, tool_call, agent_settled, 2026-09-01"
+    ],
+    "approval": {
+      "approvedBy": "Product owner",
+      "approvedAt": "2026-09-01"
+    },
+    "feature": "Trusted Implementation Lifecycle",
+    "featureHome": "docs/features/trusted-implementation-lifecycle",
+    "relatedArtifacts": [
+      {
+        "label": "Product behavior diagram source",
+        "href": "trusted-implementation-lifecycle.diagram.json"
+      },
+      {
+        "label": "Product behavior diagram",
+        "href": "trusted-implementation-lifecycle.diagram.svg"
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "trusted-implementation.product",
+      "role": "product",
+      "kicker": "Product",
+      "title": "Implementation automatically becomes a controlled delivery run",
+      "summary": "For a developer delegating implementation in Pi, an idle direct human implementation request automatically starts a quality-gated run, resulting in independently verified merge-ready evidence or a precise safe blocker; unauthorized mutation is blocked without creating authority and ordinary exploration remains unchanged.",
+      "blocks": [
+        {
+          "type": "approval",
+          "id": "product.approval",
+          "product": "Trusted Implementation Lifecycle",
+          "why": "The current implementation agent can write, test, review, and declare its own completion, so a polished response can overstate correctness or maintainability.",
+          "how": "Recognize implementation before mutation, enforce a mutation barrier, delegate one isolated writer, run controller-owned verification, obtain independent read-only review, repair at most twice, and return evidence to the human.",
+          "approve": "Make this lifecycle automatic for implementation work, preserve explicit human authority, and use risk-tiered independent review without requiring a command, skill invocation, or standing agent team.",
+          "notBuilding": "Automatic merge, push, deployment, unbounded repair, mutable parallel workers, automatic policy rewriting, or a generic quality score."
+        },
+        {
+          "type": "facts",
+          "id": "product.facts",
+          "items": [
+            [
+              "Actor",
+              "Developer delegating a code behavior change through normal Pi conversation"
+            ],
+            [
+              "Entry",
+              "A direct, idle interactive TUI user request that explicitly authorizes one mutation; RPC, extension-generated, queued, steering, follow-up, skill/template-expanded, and model-authored content cannot start a run"
+            ],
+            [
+              "Result",
+              "MERGE READY, DECISION REQUIRED, or FAILED SAFELY with candidate-bound evidence"
+            ],
+            [
+              "Boundary",
+              "The controller may coordinate implementation and repair but never grants itself product authority or integrates the result"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "trusted-implementation.problem",
+      "role": "problem",
+      "kicker": "Problem",
+      "title": "Advisory discipline cannot make self-certification trustworthy",
+      "summary": "Skills improve behavior, but the acting model can still skip them, weaken checks, review its own work, or treat process completion as software completion.",
+      "blocks": [
+        {
+          "type": "list",
+          "id": "problem.evidence",
+          "style": "bullets",
+          "items": [
+            "Sourced fact — the current implement-task workflow asks the implementation agent to run and resolve its own Are You Proud review.",
+            "Sourced fact — the current verify extension skips automatic verification in headless sessions.",
+            "Sourced fact — agent-jobs records process completion, not independently accepted code quality.",
+            "Sourced fact — worktrees isolate Git state but do not constrain host credentials, filesystem access, or network access."
+          ]
+        },
+        {
+          "type": "callout",
+          "id": "problem.consequence",
+          "tone": "risk",
+          "title": "Consequence",
+          "text": "Without controller-owned evidence and separation of duties, a delegated run can report success even when tests are weak, checks were skipped, scope expanded, or the implementation is unnecessarily complex."
+        }
+      ]
+    },
+    {
+      "id": "trusted-implementation.behavior",
+      "role": "behavior",
+      "kicker": "Behavior",
+      "title": "The controller activates automatically and owns completion",
+      "summary": "Conversation remains lightweight until implementation is requested; once authorized, mutation, evidence, review, repair, and integration state belong to the controller rather than the writer.",
+      "blocks": [
+        {
+          "type": "steps",
+          "id": "behavior.path",
+          "items": [
+            {
+              "id": "behavior.authorize",
+              "title": "Recognize implementation authority",
+              "text": "Only a direct idle interactive TUI user request with explicit mutation language arms one lifecycle. Extension-generated, queued, steering, follow-up, skill-expanded, prompt-template, and model-authored content cannot create implementation authority; an ambiguous request remains read-only and asks for clarification."
+            },
+            {
+              "id": "behavior.write",
+              "title": "Delegate one isolated writer",
+              "text": "The controller freezes the authorized direct-user request, complete nonignored base snapshot, verification policy, and current base identity; it prepares one detached candidate without copying project environment files and gives exactly one writer role mutation capability. The writer still runs with the user’s local Pi/provider and host permissions until a separate sandbox is approved."
+            },
+            {
+              "id": "behavior.verify",
+              "title": "Verify independently",
+              "text": "The controller freezes repository-owned verification before mutation, rejects unauthorized changes to that policy or its tests, runs it against one complete candidate snapshot, and confirms model-reachable checks did not change that snapshot. Missing, failed, stale, or policy-weakened evidence cannot become success."
+            },
+            {
+              "id": "behavior.review",
+              "title": "Review independently",
+              "text": "A fresh process with no writer history or mutable tools receives the frozen authority, base/candidate snapshots, verification-policy digest, tests, commands, and verifier receipt, then returns structured findings and a Proud or needs-attention verdict bound to that immutable review input."
+            },
+            {
+              "id": "behavior.repair",
+              "title": "Repair within a bound",
+              "text": "A concrete in-authority verifier failure or Must/Should review finding requires one fresh writer repair unless the same signature repeated, the repair would cross protected authority, or two repairs already ran. One cycle is one repair process followed by a new complete candidate snapshot and both gates; every mutation invalidates earlier receipts."
+            },
+            {
+              "id": "behavior.finish",
+              "title": "Return control to the human",
+              "text": "The run terminates as MERGE READY only when the frozen base is unchanged and matching final receipts pass; DECISION REQUIRED for ambiguity, protected scope, or external drift; and FAILED SAFELY for unavailable infrastructure, repeated failure, or exhausted repair. Version one categorically ends before any branch/ref integration commit, merge, push, deployment, or any primary-worktree mutation."
+            }
+          ]
+        },
+        {
+          "type": "list",
+          "id": "behavior.rules",
+          "style": "checks",
+          "items": [
+            "Read-only exploration remains available. Model-reachable tests, builds, generators, and unknown shell/custom tools are treated as potentially mutating and run only inside a controlled candidate; direct human shell input remains outside this agent-tool policy.",
+            "Every model-reachable filesystem or repository mutation—including documentation—is controlled in version one. A direct human request to edit documentation authorizes the same lifecycle; this avoids treating executable instructions or generated policy as harmless prose.",
+            "A skill may guide a role but cannot create authority, activate, verify, approve, or complete the lifecycle.",
+            "Every model-reachable tool is denied in the primary session except the controller-owned, final-argument-validating read wrappers; edit, write, bash, PowerShell, unknown extension effects, and parallel sibling calls cannot bypass admission. Direct operational slash commands and direct human shell remain governed by their own explicit human contracts, while final base drift still blocks favorable delivery.",
+            "One durable lease exists per canonical Git root. Steering, queued/follow-up input and RPC cannot start or alter it. A direct interactive Cancel request sends TERM then KILL to the recorded process group and becomes terminal only after parent-observed process-group exit evidence; session switch/new/resume/fork is refused until terminal, and reload reconciles the recorded lease/process into a non-favorable terminal without permitting stale completion.",
+            "Verifier and reviewer capabilities are read-only; only one writer/repair process may mutate the candidate. The reviewer uses a controller-owned system prompt/rubric and resource profile with context files, skills, prompts, project extensions, and writer history disabled; candidate instructions are evidence only, and its complete profile plus supplied input is receipt-bound.",
+            "Run records persist outside the conversation and bind trusted interactive request ID, authority digest, base snapshot, complete candidate snapshot, protected verification-policy closure, commands/results, controller-owned reviewer-profile digest, supplied-review-input digest, repairCount, child process evidence, and terminal state.",
+            "The initial release authorizes new runs only from interactive TUI input in trusted local repositories. RPC, print, and JSON mutation requests fail closed, and worktree/tool restrictions are not represented as an OS sandbox or secret-isolation boundary."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "trusted-implementation.diagram",
+      "role": "diagram",
+      "kicker": "Product behavior",
+      "title": "Implementation intent crosses a deterministic quality boundary",
+      "summary": "The figure shows the automatic trigger, isolated candidate, independent evidence gates, bounded recovery, and human-owned integration outcome.",
+      "blocks": [
+        {
+          "type": "diagram",
+          "id": "diagram.lifecycle",
+          "question": "How does a normal Pi implementation request become a trustworthy candidate without requiring a special command?",
+          "caption": "Approved product behavior: implementation activates automatically, while mutation, verification, review, repair, and integration retain separate owners.",
+          "svgPath": "trusted-implementation-lifecycle.diagram.svg",
+          "sourcePath": "trusted-implementation-lifecycle.diagram.json",
+          "walkthrough": [
+            "An idle direct interactive TUI user message explicitly authorizes one mutation; RPC and the mutation barrier cannot create authority from automated content or an agent’s attempted edit.",
+            "The controller freezes authority and creates one isolated candidate for the only mutable writer.",
+            "Controller-owned verification and independent review bind the same authority, base, complete candidate, verification-policy, command-result, and review-input tuple, so weakened or stale evidence cannot pass.",
+            "Concrete failures may return to the writer twice; ambiguity, protected scope, or exhausted repair stops safely.",
+            "Only a passing candidate becomes merge-ready, and the human retains integration authority."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "trusted-implementation.slices",
+      "role": "slices",
+      "kicker": "Product slice",
+      "title": "Delegate one implementation without supervising its mechanics",
+      "summary": "One vertical slice covers automatic activation through independently evidenced completion while preserving ordinary exploratory conversation.",
+      "blocks": [
+        {
+          "type": "slice",
+          "id": "slice-trusted-implementation",
+          "title": "Automatically govern one implementation request",
+          "outcome": "the developer can request implementation normally and receive an independently verified candidate or precise safe blocker without remembering a workflow command",
+          "boundary": "This slice covers one authorized implementation, one isolated mutable writer, deterministic verification, independent review, two repairs, durable evidence, and human integration; it excludes mutable parallelism, automatic integration, deployment, and policy self-modification.",
+          "story": {
+            "id": "story-001",
+            "actor": "a developer delegating implementation",
+            "capability": "request a code change through normal conversation",
+            "outcome": "the resulting candidate is independently evidenced before integration"
+          },
+          "scenarios": [
+            {
+              "id": "scenario-001",
+              "title": "A direct implementation request starts automatically",
+              "given": "Pi is idle in TUI and a direct interactive user message explicitly authorizes one bounded mutation",
+              "when": "the request is submitted",
+              "then": "the controller acknowledges one run identity and starts an isolated lifecycle without a command, skill invocation, or mode switch"
+            },
+            {
+              "id": "scenario-002",
+              "title": "Unauthorized or competing mutation cannot create authority",
+              "given": "no direct implementation authorization exists, or one run already owns the Git root",
+              "when": "a model attempts any write-capable built-in, shell, PowerShell, extension, command, generated-test, or parallel sibling effect",
+              "then": "the effect is blocked before execution and Pi asks for authority or attaches to the existing run without starting another run"
+            },
+            {
+              "id": "scenario-003",
+              "title": "False completion cannot become merge-ready",
+              "given": "the writer reports completion but verification is missing, failed, stale, changed by the candidate, mutates the candidate, or independent review has a Must or Should finding",
+              "when": "the controller compares authority, base, candidate, verification policy, command results, and review input",
+              "then": "a nonzero frozen-command failure with unchanged policy/environment or a validated Must/Should candidate finding consumes repairCount before one fresh writer launch and receives repair while repairCount is at most two; ambiguity, infrastructure/provider failure, malformed evidence, unchanged candidate, protected scope, repetition, drift, or exhaustion terminates without merge-ready"
+            },
+            {
+              "id": "scenario-004",
+              "title": "Passing work returns human-owned evidence",
+              "given": "the unchanged frozen base and one complete final candidate snapshot share passing frozen-policy verification and an independent Proud review with no Must or Should finding",
+              "when": "the controller rechecks every identity immediately before finalization",
+              "then": "the developer receives merge-ready evidence while the primary tree, refs, remotes, deployment state, and candidate integration remain unchanged"
+            }
+          ],
+          "mode": "visual",
+          "steps": [
+            {
+              "id": "storyboard-001",
+              "title": "Request",
+              "context": "Normal Pi conversation is active.",
+              "action": "The developer asks for an implementation.",
+              "response": "The controller freezes the request and starts the delivery lifecycle.",
+              "outcome": "No command or skill invocation is required."
+            },
+            {
+              "id": "storyboard-002",
+              "title": "Prove",
+              "context": "The writer has produced a candidate.",
+              "action": "The controller verifies and independently reviews it.",
+              "response": "Failures repair within budget; stale evidence is discarded.",
+              "outcome": "Completion follows evidence rather than writer confidence."
+            },
+            {
+              "id": "storyboard-003",
+              "title": "Decide",
+              "context": "The lifecycle has reached a terminal state.",
+              "action": "The developer inspects the concise receipt and decides whether to integrate.",
+              "response": "The candidate stays isolated until that decision.",
+              "outcome": "Implementation mechanics are delegated while product and integration authority remain human-owned."
+            }
+          ],
+          "acceptance": [
+            {
+              "id": "ac-001",
+              "text": "A qualifying idle direct interactive TUI message atomically acquires exactly one canonical-root lease and starts one bounded run before any primary agent turn. RPC, extension/queued/steering/follow-up/skill/template/model content cannot authorize. Only direct interactive Cancel controls an active run; cancellation can never be favorable and becomes terminal after parent-observed process-group exit. New/resume/fork is refused while nonterminal; reload reconciles the same lease and recorded process into a non-favorable terminal; print/JSON/RPC mutation fails closed."
+            },
+            {
+              "id": "ac-002",
+              "text": "Throughout every primary turn, only controller-owned read wrappers are active. Each wrapper revalidates final invocation arguments, path confinement, and abort state immediately before I/O; changed, unknown, overridden, write-capable, shell, PowerShell, custom-effect, generated-test/build, and mixed parallel sibling calls are blocked and abort without creating authority. Exactly one path-confined no-shell writer may mutate one no-copy-local candidate; reviewer/verifier cannot mutate it, direct human shell remains outside this model-tool policy, and the product makes no OS sandbox or secret-isolation claim."
+            },
+            {
+              "id": "ac-003",
+              "text": "MERGE READY requires one immutable tuple of trusted interactive authority digest, unchanged base snapshot, complete candidate snapshot, protected verification closure, successful command result, controller-owned effective reviewer profile, complete supplied-review-input digest, bounded review output receipt, and parent-observed child exit evidence. Verification protects the base verify script, repository scripts, package/CI/test configuration, and existing tests from candidate change, runs all frozen commands in a standalone exported snapshot with an isolated credential-free home, and rejects filesystem side effects. A fresh reviewer inherits no conversation or project resources—only the controller prompt and immutable review packet—and must return Proud with no Must/Should finding; all identities are rechecked immediately before finalization."
+            },
+            {
+              "id": "ac-004",
+              "text": "A repair occurs exactly when a new candidate-attributable in-authority failure has unchanged policy/environment, requires no protected crossing, and repairCount is below two: either a nonzero frozen command or a validated Must/Should finding. The sole run store atomically records the failure signature, invalidates receipts, and increments repairCount before exactly one fresh writer launch; infrastructure, malformed, repeated, protected, or exhausted failures do not consume another attempt. Controller and role capabilities contain no commit, merge, push, remote mutation, or deploy operation; verification has no shared Git metadata or host credential environment, and finalization rechecks primary files, HEAD/tree identity, candidate identity, and zero controller-owned integration. Trusted repository verification still runs as the host user with network access, so untrusted or unattended execution requires stronger containment."
+            }
+          ],
+          "after": "Direct Pi implementation behaves as a controlled delivery transaction by default while exploration remains lightweight."
+        }
+      ]
+    },
+    {
+      "id": "trusted-implementation.requirements",
+      "role": "requirements",
+      "kicker": "Coherence",
+      "title": "Automatic activation, independent evidence, and human authority compose",
+      "summary": "The lifecycle is automatic only after user implementation authority and never turns automation into permission to define scope or integrate results.",
+      "blocks": [
+        {
+          "type": "requirement",
+          "id": "req-001",
+          "title": "Implementation activates without a special invocation",
+          "sourceType": "Approved product truth",
+          "source": "Product owner approval, 2026-09-01: do not require a deliver skill or command; apply the behavior when implementation starts.",
+          "bddRefs": [
+            "scenario-001",
+            "scenario-002"
+          ],
+          "path": "An idle direct interactive TUI user message with explicit bounded mutation language creates one root lease; early routing acknowledges it, while the provenance-and-effect-bound barrier blocks every model-reachable write path. Without that trusted authorization the barrier blocks but creates no run.",
+          "dependencies": [
+            "Trusted direct-interactive request ID",
+            "Explicit mutation classifier",
+            "Tool provenance/effect fingerprint policy",
+            "Atomic root lease",
+            "Process-group cancellation/reload reconciliation"
+          ],
+          "interactions": [
+            "Exploration remains read-only until authority exists; RPC, steering, queued/follow-up, extension, skill/template, and model content cannot start a run; session switch waits for terminal; reload reattaches; print/JSON fails closed."
+          ],
+          "collision": "none",
+          "resolution": "Input provenance creates authority, while the mutation barrier enforces it; neither agent behavior nor a blocked edit can manufacture permission.",
+          "proof": "ac-001 distinguishes interactive authority from RPC/automated content, unauthorized block, atomic root lease, visible lifecycle, process-stopped cancellation, switch refusal, reload reattachment, and unsupported headless behavior.",
+          "status": "covered"
+        },
+        {
+          "type": "requirement",
+          "id": "req-002",
+          "title": "The writer cannot certify itself",
+          "sourceType": "Approved product truth",
+          "source": "Product owner approval of controller verification and independent review, 2026-09-01.",
+          "bddRefs": [
+            "scenario-003",
+            "scenario-004"
+          ],
+          "path": "One path-confined no-shell writer produces a complete candidate snapshot; the controller overlays and executes the protected base verification-policy closure on a disposable snapshot, then gives a fresh controller-profiled no-context/no-skills/no-prompts/no-project-extensions reviewer the same authority/base/candidate/policy/result tuple as evidence only; only matching receipts after final base recheck permit merge-ready.",
+          "dependencies": [
+            "Complete base and candidate snapshots",
+            "Protected base verify/package/CI/test-config/existing-test closure",
+            "Deterministic disposable verifier",
+            "Controller-owned reviewer system/resource/tool profile",
+            "Supplied-review-input digest",
+            "Final identity recheck"
+          ],
+          "interactions": [
+            "Any mutation or base drift invalidates both receipts; candidate instructions cannot become reviewer authority; policy/test weakening, stale evidence, or verifier side effects fail closed."
+          ],
+          "collision": "none",
+          "resolution": "Separate capability surfaces plus one immutable evidence tuple prevent writer confidence, weakened checks, stale bytes, or reviewer prose from replacing proof.",
+          "proof": "ac-002 and ac-003 require effect-complete mutation isolation and discriminating two-key completion for one immutable tuple.",
+          "status": "covered"
+        },
+        {
+          "type": "requirement",
+          "id": "req-003",
+          "title": "Autonomous repair remains bounded by human authority",
+          "sourceType": "Approved product truth",
+          "source": "Product owner approval of bounded repair and human integration ownership, 2026-09-01.",
+          "bddRefs": [
+            "scenario-003",
+            "scenario-004"
+          ],
+          "path": "A nonzero frozen-command result with unchanged policy/environment or a validated candidate-specific Must/Should finding requiring no protected authority is eligible. DeliveryRunStore increments repairCount before launch, then one fresh writer produces a new snapshot and both gates rerun; the same signature, non-candidate failure, ambiguity, or repairCount two terminates precisely. Passing evidence returns with audited zero integration invocation.",
+          "dependencies": [
+            "Positive repair eligibility predicate",
+            "Pre-launch durable repairCount",
+            "Failure signatures",
+            "Protected-authority policy",
+            "Parent/child integration-command audit"
+          ],
+          "interactions": [
+            "Automatic orchestration never grants new product, architecture, exception, branch/ref integration, merge, push, deploy, or primary-tree authority."
+          ],
+          "collision": "none",
+          "resolution": "Mandatory eligible repair and a fixed process-plus-reverification cycle make convergence meaningful without allowing the system to redefine or integrate the change.",
+          "proof": "ac-004 discriminates eligible repair, cycle accounting, early stop, terminal predicates, and unchanged integration surfaces.",
+          "status": "covered"
+        }
+      ]
+    },
+    {
+      "id": "trusted-implementation.scope",
+      "role": "scope",
+      "kicker": "Scope",
+      "title": "Trustworthy sequential delivery before mutable parallelism",
+      "summary": "The first release makes one implementation candidate trustworthy; agent count and autonomous integration are deliberately not goals.",
+      "blocks": [
+        {
+          "type": "facts",
+          "id": "scope.boundary",
+          "items": [
+            [
+              "In scope",
+              "Automatic implementation activation, write barrier, one isolated writer, explicit verification, independent review, two repairs, durable receipts, and human integration"
+            ],
+            [
+              "Non-goals",
+              "Parallel mutable workers, autonomous delete/rename operations, auto-merge, branch/ref commit, push, or deploy, hidden policy changes, generic quality scoring, and importing untrusted project extensions"
+            ],
+            [
+              "Assumption",
+              "The initial adapter authorizes only interactive TUI requests in trusted local Git repositories with a protectable repository-owned verification closure; RPC/print/JSON, untrusted unattended work, or absent credible verification cannot become merge-ready"
+            ],
+            [
+              "Mockups",
+              "Not applicable — the feature uses existing Pi conversation, status, and follow-up surfaces rather than adding a new interface"
+            ]
+          ]
+        },
+        {
+          "type": "callout",
+          "id": "scope.security",
+          "tone": "warning",
+          "title": "Isolation boundary",
+          "text": "A Git worktree and tool policy protect repository state but are not an operating-system sandbox. The writer still uses the user’s Pi provider credentials and host permissions. Untrusted or unattended execution remains out of scope until a container or micro-VM routes every model-reachable tool and project command without exposing host secrets."
+        }
+      ]
+    }
+  ]
+}

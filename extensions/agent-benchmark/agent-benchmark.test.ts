@@ -28,9 +28,12 @@ function makeFixture(options?: { includeInventoryEntries?: boolean }) {
 	);
 	fs.writeFileSync(
 		path.join(root, "extensions", "code-intel", "index.ts"),
-		["code_find", "symbol_search", "dependency_map", "git_pickaxe", "ast_search"].map((name) => `pi.registerTool({ name: \"${name}\" });`).join("\n"),
+		["code_find", "symbol_search", "dependency_map", "git_pickaxe", "ast_search", "task_context_graph"].map((name) => `pi.registerTool({ name: \"${name}\" });`).join("\n") + "\n.slice(0, limit)",
 		"utf8",
 	);
+	fs.writeFileSync(path.join(root, "source.ts"), "export function source() { return true; }\n", "utf8");
+	fs.writeFileSync(path.join(root, "dependent.ts"), "import { source } from './source';\nsource();\n", "utf8");
+	fs.writeFileSync(path.join(root, "source.test.ts"), "import { source } from './source';\nsource();\n", "utf8");
 	const inventory = options?.includeInventoryEntries
 		? "self-improvement-archive\nagent-benchmark\noverseer\n"
 		: "self-improvement-archive\n";
@@ -92,6 +95,7 @@ test("built-in benchmarks list local self-improvement checks by tier", (t) => {
 		{ id: "verify-smoke", tier: "smoke" },
 		{ id: "extension-inventory", tier: "harness" },
 		{ id: "code-navigation-fixture", tier: "scenario" },
+		{ id: "graph-context-fixture", tier: "scenario" },
 	]);
 	const list = formatBenchmarkList(fixture.root);
 	assert.match(list, /smoke/);
@@ -108,10 +112,10 @@ test("runBenchmarks scores pass and failure cases", (t) => {
 
 	const result = runBenchmarks(fixture.root);
 	assert.deepEqual(result.tiers, ["smoke", "harness", "scenario"]);
-	assert.equal(result.results.length, 3);
-	assert.equal(result.passed, 2);
+	assert.equal(result.results.length, 4);
+	assert.equal(result.passed, 3);
 	assert.equal(result.failed, 1);
-	assert.equal(result.totalScore, 2 / 3);
+	assert.equal(result.totalScore, 3 / 4);
 	assert.equal(result.results.find((item) => item.id === "extension-inventory")?.tier, "harness");
 	assert.match(formatBenchmarkResult(result), /\[harness\] extension-inventory/);
 });

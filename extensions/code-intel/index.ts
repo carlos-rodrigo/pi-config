@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { dirname, extname, join, resolve, sep } from "node:path";
@@ -101,10 +102,20 @@ export type SymbolSearchOptions = {
 	limit?: number;
 };
 
+export type DependencyGraphNode = {
+	imports: string[];
+	importedBy: string[];
+	external: string[];
+	symbols: CodeSymbol[];
+	tests: string[];
+};
+
 export type DependencyGraph = {
 	cwd: string;
 	files: string[];
-	nodes: Record<string, { imports: string[]; importedBy: string[]; external: string[] }>;
+	testFiles: string[];
+	fingerprint: string;
+	nodes: Record<string, DependencyGraphNode>;
 };
 
 export type GitPickaxeMode = "string" | "regex";
@@ -155,6 +166,35 @@ export type CodeFindReport = {
 	strategies: CodeFindStrategy[];
 	results: CodeFindResult[];
 	notes: string[];
+};
+
+export type TaskContextGraphOptions = {
+	task: string;
+	paths?: string[];
+	limit?: number;
+	signal?: AbortSignal;
+	useSemantic?: boolean;
+	useEmbeddings?: boolean;
+};
+
+export type TaskContextFile = {
+	path: string;
+	score: number;
+	reasons: string[];
+	symbols: CodeSymbol[];
+	imports: string[];
+	importedBy: string[];
+	tests: string[];
+	risks: string[];
+};
+
+export type TaskContextGraphReport = {
+	task: string;
+	files: TaskContextFile[];
+	documentation: CodeFindResult[];
+	graph: { files: number; testFiles: number; fingerprint: string; fresh: boolean };
+	notes: string[];
+	suggestedVerification: string[];
 };
 
 function abortError(): Error {
@@ -455,14 +495,25 @@ function resolveLocalImport(fromPath: string, specifier: string, fileSet: Set<st
 	return candidates.find((candidate) => fileSet.has(candidate));
 }
 
-export function buildDependencyGraph(cwd: string): DependencyGraph {
-	const absoluteCwd = resolve(cwd);
-	const files = sourceFiles(absoluteCwd).filter((path) => [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"].includes(extname(path).toLowerCase()));
+const CODE_GRAPH_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"]);
+
+function graphFingerprint(files: string[], texts: Map<string, string>): string {
+	const hash = createHash("sha256");
+	for (const file of files) hash.update(file).update("\0").update(texts.get(file) ?? "").update("\0");
+	return hash.digest("hex");
+}
+
+function isTestFile(file: string): boolean {
+	return /(?:^|\/)(?:test|tests|__tests__)(?:\/|$)|(?:\.test|\.spec)\.[^.]+$/i.test(file);
+}
+
+function buildGraphFromTexts(cwd: string, files: string[], texts: Map<string, string>): DependencyGraph {
 	const fileSet = new Set(files);
 	const nodes: DependencyGraph["nodes"] = {};
+	const testFiles = files.filter(isTestFile);
 
 	for (const file of files) {
-		const text = readTextFile(absoluteCwd, file) ?? "";
+		const text = texts.get(file) ?? "";
 		const imports: string[] = [];
 		const external: string[] = [];
 		for (const specifier of extractImportSpecifiers(text)) {
@@ -470,37 +521,48 @@ export function buildDependencyGraph(cwd: string): DependencyGraph {
 			if (resolved) imports.push(resolved);
 			else if (!isRelativeImport(specifier)) external.push(specifier);
 		}
-		nodes[file] = { imports: [...new Set(imports)].sort(), external: [...new Set(external)].sort(), importedBy: [] };
+		nodes[file] = {
+			imports: [...new Set(imports)].sort(),
+			external: [...new Set(external)].sort(),
+			importedBy: [],
+			symbols: extractSymbolsFromText(file, text),
+			tests: [],
+		};
 	}
 
 	for (const [file, node] of Object.entries(nodes)) {
 		for (const dependency of node.imports) nodes[dependency]?.importedBy.push(file);
+		if (isTestFile(file)) {
+			for (const dependency of node.imports) nodes[dependency]?.tests.push(file);
+		}
 	}
-	for (const node of Object.values(nodes)) node.importedBy.sort();
-	return { cwd: absoluteCwd, files, nodes };
+	for (const node of Object.values(nodes)) {
+		node.importedBy.sort();
+		node.tests = [...new Set(node.tests)].sort();
+	}
+	return { cwd, files, testFiles, fingerprint: graphFingerprint(files, texts), nodes };
+}
+
+export function buildDependencyGraph(cwd: string): DependencyGraph {
+	const absoluteCwd = resolve(cwd);
+	const files = sourceFiles(absoluteCwd).filter((path) => CODE_GRAPH_EXTENSIONS.has(extname(path).toLowerCase()));
+	const texts = new Map(files.map((file) => [file, readTextFile(absoluteCwd, file) ?? ""]));
+	return buildGraphFromTexts(absoluteCwd, files, texts);
+}
+
+export function isDependencyGraphFresh(graph: DependencyGraph): boolean {
+	const current = buildDependencyGraph(graph.cwd);
+	return current.files.length === graph.files.length
+		&& current.files.every((file, index) => file === graph.files[index])
+		&& current.fingerprint === graph.fingerprint;
 }
 
 async function buildDependencyGraphAsync(cwd: string, signal?: AbortSignal): Promise<DependencyGraph> {
 	const absoluteCwd = resolve(cwd);
-	const files = (await sourceFilesAsync(absoluteCwd, undefined, signal)).filter((filePath) => [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"].includes(extname(filePath).toLowerCase()));
-	const fileSet = new Set(files);
-	const nodes: DependencyGraph["nodes"] = {};
-	for (const file of files) {
-		const text = await readTextFileAsync(absoluteCwd, file, signal) ?? "";
-		const imports: string[] = [];
-		const external: string[] = [];
-		for (const specifier of extractImportSpecifiers(text)) {
-			const resolved = resolveLocalImport(file, specifier, fileSet);
-			if (resolved) imports.push(resolved);
-			else if (!isRelativeImport(specifier)) external.push(specifier);
-		}
-		nodes[file] = { imports: [...new Set(imports)].sort(), external: [...new Set(external)].sort(), importedBy: [] };
-	}
-	for (const [file, node] of Object.entries(nodes)) {
-		for (const dependency of node.imports) nodes[dependency]?.importedBy.push(file);
-	}
-	for (const node of Object.values(nodes)) node.importedBy.sort();
-	return { cwd: absoluteCwd, files, nodes };
+	const files = (await sourceFilesAsync(absoluteCwd, undefined, signal)).filter((filePath) => CODE_GRAPH_EXTENSIONS.has(extname(filePath).toLowerCase()));
+	const texts = new Map<string, string>();
+	for (const file of files) texts.set(file, await readTextFileAsync(absoluteCwd, file, signal) ?? "");
+	return buildGraphFromTexts(absoluteCwd, files, texts);
 }
 
 function resolveGraphTarget(graph: DependencyGraph, target: string | undefined): string | undefined {
@@ -892,6 +954,98 @@ export async function codeFind(cwd: string, options: CodeFindOptions): Promise<C
 	};
 }
 
+export async function taskContextGraph(cwd: string, options: TaskContextGraphOptions): Promise<TaskContextGraphReport> {
+	const limit = clampLimit(options.limit);
+	const codeFindReport = await codeFind(cwd, {
+		query: options.task,
+		paths: options.paths,
+		limit,
+		useSemantic: options.useSemantic,
+		useEmbeddings: options.useEmbeddings,
+		signal: options.signal,
+	});
+	const graph = await buildDependencyGraphAsync(cwd, options.signal);
+	const fileMap = new Map<string, TaskContextFile>();
+	const documentation = codeFindReport.results.filter((result) => result.path && /\.(?:md|mdx)$/i.test(result.path));
+
+	const addFile = (path: string, score: number, reason: string): void => {
+		const node = graph.nodes[path];
+		if (!node) return;
+		const existing = fileMap.get(path);
+		if (existing) {
+			existing.score = Math.max(existing.score, score);
+			existing.reasons = [...new Set([...existing.reasons, reason])];
+			return;
+		}
+		const degree = node.imports.length + node.importedBy.length;
+		const risks = [
+			...(degree >= 4 ? ["shared dependency with high graph degree"] : []),
+			...(node.tests.length === 0 && !isTestFile(path) ? ["no associated test discovered"] : []),
+		];
+		fileMap.set(path, {
+			path,
+			score,
+			reasons: [reason],
+			symbols: node.symbols,
+			imports: node.imports,
+			importedBy: node.importedBy,
+			tests: node.tests,
+			risks,
+		});
+	};
+
+	for (const result of codeFindReport.results) {
+		if (!result.path || documentation.some((doc) => doc.path === result.path)) continue;
+		addFile(result.path, result.score, result.reason);
+	}
+	const initialPaths = [...fileMap.keys()];
+	for (const path of initialPaths) {
+		const node = graph.nodes[path];
+		if (!node) continue;
+		for (const dependency of node.imports) addFile(dependency, 40, `imported by ${path}`);
+		for (const dependent of node.importedBy) addFile(dependent, 35, `imports ${path}`);
+		for (const test of node.tests) addFile(test, 45, `test for ${path}`);
+	}
+
+	return {
+		task: options.task,
+		files: [...fileMap.values()]
+			.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+			.slice(0, limit),
+		documentation: documentation.slice(0, limit),
+		graph: { files: graph.files.length, testFiles: graph.testFiles.length, fingerprint: graph.fingerprint, fresh: true },
+		notes: codeFindReport.notes,
+		suggestedVerification: ["bash scripts/verify.sh"],
+	};
+}
+
+export function formatTaskContextGraph(report: TaskContextGraphReport): string {
+	const lines = [
+		`Task context for "${report.task}":`,
+		`Graph: ${report.graph.files} source files, ${report.graph.testFiles} test files (${report.graph.fresh ? "fresh" : "stale"})`,
+	];
+	if (report.files.length === 0) lines.push("", "Files: none found");
+	else {
+		lines.push("", "Files:");
+		for (const [index, file] of report.files.entries()) {
+			lines.push(`${index + 1}. ${file.path} (score ${file.score})`);
+			lines.push(`   Why: ${file.reasons.join("; ")}`);
+			if (file.symbols.length > 0) lines.push(`   Symbols: ${file.symbols.slice(0, 8).map((symbol) => `${symbol.name} (${symbol.kind})`).join(", ")}`);
+			if (file.imports.length > 0) lines.push(`   Imports: ${file.imports.join(", ")}`);
+			if (file.importedBy.length > 0) lines.push(`   Imported by: ${file.importedBy.join(", ")}`);
+			if (file.tests.length > 0) lines.push(`   Tests: ${file.tests.join(", ")}`);
+			if (file.risks.length > 0) lines.push(`   Risks: ${file.risks.join("; ")}`);
+		}
+	}
+	if (report.documentation.length > 0) {
+		lines.push("", "Documentation:");
+		for (const result of report.documentation) lines.push(`- ${result.path}${result.line ? `:${result.line}` : ""} — ${result.reason}`);
+	}
+	if (report.suggestedVerification.length > 0) lines.push("", "Suggested verification:", ...report.suggestedVerification.map((command) => `- ${command}`));
+	if (report.notes.length > 0) lines.push("", "Notes:", ...report.notes.map((note) => `- ${note}`));
+	return lines.join("\n");
+}
+
 export function formatCodeFindResults(report: CodeFindReport): string {
 	const lines = [
 		`Code find results for "${report.query}" (${report.results.length} shown):`,
@@ -943,6 +1097,33 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 			const report = await codeFind(ctx.cwd, { ...(params as CodeFindOptions), signal });
 			return {
 				content: [{ type: "text" as const, text: formatCodeFindResults(report) }],
+				details: report,
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "task_context_graph",
+		label: "Task Context Graph",
+		description: "Build a bounded, explainable repository context neighborhood for an implementation task.",
+		promptSnippet: "Map the relevant code, dependencies, tests, and documentation before implementing a task",
+		promptGuidelines: [
+			"Use task_context_graph before implementing a task when the relevant repository surface is not already known.",
+			"Treat returned relationships as navigation evidence and read the reported files before editing.",
+		],
+		parameters: Type.Object({
+			task: Type.String({ description: "Task description to map onto the repository." }),
+			paths: Type.Optional(Type.Array(Type.String(), { description: "Optional path prefixes/substrings to constrain the search." })),
+			limit: Type.Optional(Type.Number({ description: `Maximum files and documentation results (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}).`, minimum: 1, maximum: MAX_LIMIT })),
+			useSemantic: Type.Optional(Type.Boolean({ description: "Allow semantic index candidates. Defaults to true." })),
+			useEmbeddings: Type.Optional(Type.Boolean({ description: "Use Ollama embeddings when the semantic index supports them." })),
+		}),
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			onUpdate?.({ content: [{ type: "text", text: `Mapping task context: ${params.task}` }], details: {} });
+			throwIfAborted(signal);
+			const report = await taskContextGraph(ctx.cwd, { ...(params as TaskContextGraphOptions), signal });
+			return {
+				content: [{ type: "text" as const, text: formatTaskContextGraph(report) }],
 				details: report,
 			};
 		},

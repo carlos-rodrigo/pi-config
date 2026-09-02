@@ -24,6 +24,18 @@ import {
 } from "./index.ts";
 
 const execFileAsync = promisify(execFile);
+const inheritedOllamaBaseUrl = process.env.OLLAMA_BASE_URL;
+const inheritedOllamaHost = process.env.OLLAMA_HOST;
+test.before(() => {
+	delete process.env.OLLAMA_BASE_URL;
+	delete process.env.OLLAMA_HOST;
+});
+test.after(() => {
+	if (inheritedOllamaBaseUrl === undefined) delete process.env.OLLAMA_BASE_URL;
+	else process.env.OLLAMA_BASE_URL = inheritedOllamaBaseUrl;
+	if (inheritedOllamaHost === undefined) delete process.env.OLLAMA_HOST;
+	else process.env.OLLAMA_HOST = inheritedOllamaHost;
+});
 
 type FakeContext = {
 	cwd: string;
