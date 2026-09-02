@@ -101,12 +101,14 @@ export async function verifyCandidate(
 		return match ? [match[3], { mode: match[1], blobOid: match[2] }] as const : undefined;
 	}).filter((entry): entry is readonly [string, { mode: string; blobOid: string }] => Boolean(entry)));
 	const protectedPaths = new Set(policy.closure.map((entry) => entry.path));
-	const addedProtectedInput = [...candidateEntries.keys()].some((path) => (PROTECTED_CONFIGURATION.test(path) || EXISTING_TEST.test(path)) && !protectedPaths.has(path));
-	if (addedProtectedInput || policy.closure.some((entry) => {
+	const addedProtectedPaths = [...candidateEntries.keys()].filter((path) => (PROTECTED_CONFIGURATION.test(path) || EXISTING_TEST.test(path)) && !protectedPaths.has(path));
+	const changedProtectedPaths = policy.closure.filter((entry) => {
 		const candidateEntry = candidateEntries.get(entry.path);
 		return !candidateEntry || candidateEntry.mode !== entry.mode || candidateEntry.blobOid !== entry.blobOid;
-	})) {
-		return { candidateTreeOid: candidate.candidateTreeOid, policyDigest: policy.digest, status: "mutated", durationMs: Date.now() - started, outputSha256: sha("protected verification closure changed") };
+	}).map((entry) => entry.path);
+	const mutationPaths = [...new Set([...addedProtectedPaths, ...changedProtectedPaths])].sort();
+	if (mutationPaths.length > 0) {
+		return { candidateTreeOid: candidate.candidateTreeOid, policyDigest: policy.digest, status: "mutated", durationMs: Date.now() - started, outputSha256: sha("protected verification closure changed"), mutationPaths };
 	}
 	const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-delivery-verify-"));
 	const verificationRoot = join(temporaryRoot, "candidate");

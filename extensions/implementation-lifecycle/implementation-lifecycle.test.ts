@@ -474,7 +474,9 @@ test("explicit verification passes the exact candidate and rejects verification-
 	assert.equal((await verifyCandidate(root, candidate, policy)).status, "passed");
 	await writeFile(join(prepared.candidateRoot, "candidate.test.js"), "throw new Error('must not be silently skipped');\n");
 	candidate = await workspace.capture(prepared.base);
-	assert.equal((await verifyCandidate(root, candidate, policy)).status, "mutated");
+	const addedTest = await verifyCandidate(root, candidate, policy);
+	assert.equal(addedTest.status, "mutated");
+	assert.deepEqual(addedTest.mutationPaths, ["candidate.test.js"]);
 	await rm(join(prepared.candidateRoot, "candidate.test.js"));
 	await writeFile(join(prepared.candidateRoot, "jest.config.js"), "export default {};\n");
 	candidate = await workspace.capture(prepared.base);
