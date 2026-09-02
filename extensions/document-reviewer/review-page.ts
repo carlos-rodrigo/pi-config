@@ -891,6 +891,8 @@ function getHtmlVisualReviewScript(sessionId: string, title: string): string {
     document.querySelectorAll('[data-review-decision]').forEach((decision) => {
       if (disabled) {
         decision.dataset.reviewWasInert = String(Boolean(decision.inert));
+        const activeElement = document.activeElement;
+        if (activeElement && decision.contains(activeElement) && typeof activeElement.blur === 'function') activeElement.blur();
         decision.inert = true;
       } else {
         decision.inert = decision.dataset.reviewWasInert === 'true';
