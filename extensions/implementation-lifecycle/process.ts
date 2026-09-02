@@ -15,6 +15,7 @@ export type ProcessResult = {
 };
 
 const SAFE_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM", "SHELL"] as const;
+export const COMPLETE_EVIDENCE_OUTPUT_LIMIT_BYTES = 64 * 1024 * 1024;
 
 export function scrubbedEnvironment(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 	const environment: NodeJS.ProcessEnv = {};

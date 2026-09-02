@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CandidateIdentity, VerificationPolicy, VerificationReceipt } from "./contracts.ts";
-import { runProcess, scrubbedEnvironment } from "./process.ts";
+import { COMPLETE_EVIDENCE_OUTPUT_LIMIT_BYTES, runProcess, scrubbedEnvironment } from "./process.ts";
 
 function sha(value: string | Buffer): string { return createHash("sha256").update(value).digest("hex"); }
 function redact(value: string): string {
@@ -18,7 +18,7 @@ function redact(value: string): string {
 		.replace(/\b([a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s]+@/gi, "$1[REDACTED]@");
 }
 async function git(root: string, args: string[], env: NodeJS.ProcessEnv = {}): Promise<string> {
-	const result = await runProcess("git", ["-C", root, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd: root, env: scrubbedEnvironment(env), timeoutMs: 60_000 });
+	const result = await runProcess("git", ["-C", root, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd: root, env: scrubbedEnvironment(env), timeoutMs: 60_000, maxOutputBytes: COMPLETE_EVIDENCE_OUTPUT_LIMIT_BYTES });
 	if (result.code !== 0) throw new Error(result.stderr.trim() || `git ${args[0]} failed`);
 	if (result.overflowed) throw new Error(`git ${args[0]} exceeded the complete-evidence output bound`);
 	return result.stdout.trim();

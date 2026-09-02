@@ -3,9 +3,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CandidateIdentity, SnapshotIdentity } from "./contracts.ts";
-import { runProcess, scrubbedEnvironment } from "./process.ts";
-
-const GIT_OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
+import { COMPLETE_EVIDENCE_OUTPUT_LIMIT_BYTES, runProcess, scrubbedEnvironment } from "./process.ts";
 
 function sha(value: string): string { return createHash("sha256").update(value).digest("hex"); }
 function credentialPath(path: string): boolean {
@@ -15,7 +13,7 @@ function credentialPath(path: string): boolean {
 }
 
 async function gitRaw(root: string, args: string[], environment: NodeJS.ProcessEnv = {}): Promise<string> {
-	const result = await runProcess("git", ["-C", root, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd: root, env: scrubbedEnvironment(environment), timeoutMs: 60_000, maxOutputBytes: GIT_OUTPUT_LIMIT_BYTES });
+	const result = await runProcess("git", ["-C", root, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd: root, env: scrubbedEnvironment(environment), timeoutMs: 60_000, maxOutputBytes: COMPLETE_EVIDENCE_OUTPUT_LIMIT_BYTES });
 	if (result.code !== 0) throw new Error(result.stderr.trim() || `git ${args[0]} failed`);
 	if (result.overflowed) throw new Error(`git ${args[0]} exceeded the complete-evidence output bound`);
 	return result.stdout;
