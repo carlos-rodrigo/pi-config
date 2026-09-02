@@ -566,7 +566,7 @@ test("the primary mutation barrier blocks edit calls and noninteractive implemen
 	} as any;
 	implementationLifecycle(pi);
 	let aborted = false;
-	const ctx = { cwd: root, mode: "rpc", hasUI: false, ui: { setStatus() {}, notify() {} }, abort() { aborted = true; } };
+	const ctx = { cwd: root, mode: "rpc", hasUI: false, ui: { setStatus() {}, notify() {}, async confirm() { return false; } }, abort() { aborted = true; } };
 	const ambiguous = await handlers.get("input")?.({ text: "Implement the approved task", source: "interactive", streamingBehavior: undefined, images: [] }, { ...ctx, mode: "tui" });
 	assert.equal(ambiguous.action, "continue");
 	assert.match(messages.at(-1) ?? "", /exact bounded software and change you authorize/);
@@ -574,7 +574,10 @@ test("the primary mutation barrier blocks edit calls and noninteractive implemen
 	assert.equal(input.action, "handled");
 	assert.match(messages.at(-1) ?? "", /only an idle, direct interactive TUI request/);
 	await handlers.get("before_agent_start")?.({ systemPrompt: "base" }, ctx);
-	assert.deepEqual(activeTools, ["trusted_delivery_read", "trusted_delivery_grep", "trusted_delivery_find", "trusted_delivery_ls"]);
+	assert.deepEqual(activeTools, ["trusted_delivery_read", "trusted_delivery_grep", "trusted_delivery_find", "trusted_delivery_ls", "implementation_start"]);
+	const startTool = registered.find((tool) => tool.name === "implementation_start");
+	const declined = await startTool.execute("start", { request: "Modify source.js" }, new AbortController().signal, undefined, { ...ctx, mode: "tui", hasUI: true });
+	assert.match(declined.content[0].text, /Approval was declined/);
 	const readTool = registered.find((tool) => tool.name === "trusted_delivery_read");
 	assert.match((await readTool.execute("read", { path: "readable.txt" }, new AbortController().signal, undefined, ctx)).content[0].text, /safe/);
 	await assert.rejects(readTool.execute("read", { path: "escape.txt" }, new AbortController().signal, undefined, ctx), /escapes/);

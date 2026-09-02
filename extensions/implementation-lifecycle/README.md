@@ -6,7 +6,7 @@ Always-on delivery control for direct Pi implementation requests:
 
 ## Behavior
 
-- Only an idle, direct interactive TUI request can authorize implementation.
+- The primary session remains read-only, but it can request implementation through the controller-owned `implementation_start` tool. Pi asks for one interactive approval per request, then launches the isolated writer; direct interactive implementation requests use the same approval flow.
 - The primary agent is read-only. Mutation and unknown-effect tool calls are blocked and abort the batch without creating authority.
 - The controller captures staged, unstaged, untracked, deleted, renamed, mode, and symlink state through a private Git index, then creates a detached candidate worktree without copying `.env` files or project-local Pi resources. Repositories with configured Git content filters require the request to include the exact phrase `human-reviewed snapshot exception`; without it, the run stops as `DECISION REQUIRED`, and with it, the human's explicit exception authorizes the snapshot path.
 - Writer and repair children run with path-confined `read`, `ls`, `edit`, and `write`; no shell or PowerShell. Delete and rename requests stop for a human decision in version one.

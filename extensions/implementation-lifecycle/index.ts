@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,7 @@ import { PRIMARY_READ_ONLY_TOOLS, primaryProfileDigest, registerPrimaryReadOnlyT
 import { runProcess, scrubbedEnvironment } from "./process.ts";
 
 const READ_ONLY_TOOLS = new Set<string>(PRIMARY_READ_ONLY_TOOLS);
+const IMPLEMENTATION_START_TOOL = "implementation_start";
 const CANCEL = /^(?:cancel|stop|abort)(?:\s+(?:the\s+)?implementation|\s+delivery)?[.!]?$/i;
 const CONTROLLER_EXTENSION_PATH = resolve(fileURLToPath(import.meta.url));
 
@@ -51,6 +53,50 @@ export default function implementationLifecycle(pi: ExtensionAPI) {
 		if (lastContext?.hasUI) lastContext.ui.setStatus("implementation-lifecycle", text);
 	};
 	let lastContext: ExtensionContext | undefined;
+
+	const startImplementation = async (text: string, ctx: ExtensionContext): Promise<string> => {
+		const intent = classifyImplementationIntent(text);
+		if (intent !== "implementation") return formatAmbiguousImplementationRequest(text);
+		if (controller.active()) return "An implementation delivery already owns this repository. Cancel it or wait for a terminal result.";
+		if (ctx.mode !== "tui" || !ctx.hasUI) return "Implementation approval requires an interactive TUI session. Continue with read-only analysis or reopen Pi in TUI mode.";
+		const approved = await ctx.ui.confirm("Approve isolated implementation?", `${text}\n\nThe writer will work in an isolated candidate. The primary project will not be modified.`);
+		if (!approved) return "Implementation not started. Approval was declined; read-only analysis remains available.";
+		if (highRiskRequest(text)) return "DECISION REQUIRED: this request targets a protected or high-risk surface and cannot be autonomously implemented.";
+		let repository;
+		try { repository = await resolveRepository(ctx.cwd); } catch { return "FAILED SAFELY: trusted implementation requires a supported local Git repository."; }
+		let profileDigest: string;
+		try { profileDigest = await primaryProfile; } catch { return "FAILED SAFELY: the controller-owned primary capability profile could not be fingerprinted."; }
+		ctx.ui.notify("Starting an isolated quality-gated implementation. The primary project will not be modified.", "info");
+		status("delivery: authorizing");
+		let announced = false;
+		void controller.start(repository.root, repository.commonRoot, text, profileDigest, (run) => {
+			status(`delivery: ${run.state}`);
+			if (!announced) {
+				announced = true;
+				publish(`Implementation ${run.runId} acquired the delivery lease for ${run.root}. The primary project remains unchanged.`);
+			}
+		}).then((run) => {
+			status();
+			const evidence = run.base && run.candidate
+				? `\nCandidate workspace: ${run.candidateRoot}\nRepository: ${run.root}\nBase tree: ${run.base.treeOid}\nCandidate tree: ${run.candidate.candidateTreeOid}\nTask context: ${run.taskContext?.files.length ?? 0} files, graph ${run.taskContext?.graphFingerprint ?? "unavailable"}\nChanged paths: ${run.changedPaths?.join(", ") || "none recorded"}`
+				: "";
+			publish(`${run.state === "merge-ready" ? "MERGE READY" : run.state === "decision-required" ? "DECISION REQUIRED" : "FAILED SAFELY"}: ${run.terminalReason ?? "unknown"}.${evidence}\nNo branch/ref integration, merge, push, deploy, or primary-tree mutation was performed.`);
+		}).catch((error) => {
+			status();
+			publish(`DELIVERY BLOCKED: ${error instanceof Error ? error.message : String(error)} No integration was performed; any retained lease must be reconciled before another run.`);
+		});
+		return "Implementation approved and started in an isolated candidate workspace.";
+	};
+
+	pi.registerTool({
+		name: IMPLEMENTATION_START_TOOL,
+		label: "Start implementation",
+		description: "Request one-time approval to start the isolated, quality-gated implementation lifecycle.",
+		parameters: Type.Object({ request: Type.String({ description: "The bounded implementation request to approve." }) }, { additionalProperties: false }),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			return { content: [{ type: "text" as const, text: await startImplementation(params.request, ctx) }], details: {} };
+		},
+	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		lastContext = ctx;
@@ -151,39 +197,7 @@ export default function implementationLifecycle(pi: ExtensionAPI) {
 			publish("Implementation was not started because image-backed authority cannot yet be frozen deterministically. Provide a complete text request.");
 			return { action: "handled" as const };
 		}
-		if (highRiskRequest(text)) {
-			publish("DECISION REQUIRED: version one will not autonomously mutate this protected or high-risk surface. Keep the implementation human-controlled or use a separately approved contained workflow.");
-			return { action: "handled" as const };
-		}
-		let repository;
-		try { repository = await resolveRepository(ctx.cwd); } catch {
-			publish("FAILED SAFELY: trusted implementation requires a supported local Git repository.");
-			return { action: "handled" as const };
-		}
-		let profileDigest: string;
-		try { profileDigest = await primaryProfile; } catch {
-			publish("FAILED SAFELY: the controller-owned primary capability profile could not be fingerprinted.");
-			return { action: "handled" as const };
-		}
-		ctx.ui.notify("Starting an isolated quality-gated implementation. The primary project will not be modified.", "info");
-		status("delivery: authorizing");
-		let announced = false;
-		void controller.start(repository.root, repository.commonRoot, text, profileDigest, (run) => {
-			status(`delivery: ${run.state}`);
-			if (!announced) {
-				announced = true;
-				publish(`Implementation ${run.runId} acquired the delivery lease for ${run.root}. The primary project remains unchanged.`);
-			}
-		}).then((run) => {
-			status();
-			const evidence = run.base && run.candidate
-				? `\nCandidate workspace: ${run.candidateRoot}\nRepository: ${run.root}\nBase tree: ${run.base.treeOid}\nCandidate tree: ${run.candidate.candidateTreeOid}\nTask context: ${run.taskContext?.files.length ?? 0} files, graph ${run.taskContext?.graphFingerprint ?? "unavailable"}\nChanged paths: ${run.changedPaths?.join(", ") || "none recorded"}`
-				: "";
-			publish(`${run.state === "merge-ready" ? "MERGE READY" : run.state === "decision-required" ? "DECISION REQUIRED" : "FAILED SAFELY"}: ${run.terminalReason ?? "unknown"}.${evidence}\nNo branch/ref integration, merge, push, deploy, or primary-tree mutation was performed.`);
-		}).catch((error) => {
-			status();
-			publish(`DELIVERY BLOCKED: ${error instanceof Error ? error.message : String(error)} No integration was performed; any retained lease must be reconciled before another run.`);
-		});
+		publish(await startImplementation(text, ctx));
 		return { action: "handled" as const };
 	});
 
@@ -195,12 +209,12 @@ export default function implementationLifecycle(pi: ExtensionAPI) {
 			const tool = allTools.find((candidate) => candidate.name === name);
 			return controllerOwnedTool(tool);
 		});
-		pi.setActiveTools(controllerTools.length === PRIMARY_READ_ONLY_TOOLS.length ? [...controllerTools] : []);
+		pi.setActiveTools(controllerTools.length === PRIMARY_READ_ONLY_TOOLS.length ? [...controllerTools, IMPLEMENTATION_START_TOOL] : []);
 		return { systemPrompt: `${_event.systemPrompt}\n\nThe primary session is read-only. Any implementation must be authorized through the automatic isolated lifecycle; do not attempt mutation tools.` };
 	});
 	pi.on("tool_call", async (event, ctx) => {
 		const definition = pi.getAllTools().find((tool) => tool.name === event.toolName);
-		const controllerOwned = READ_ONLY_TOOLS.has(event.toolName) && controllerOwnedTool(definition);
+		const controllerOwned = (READ_ONLY_TOOLS.has(event.toolName) || event.toolName === IMPLEMENTATION_START_TOOL) && controllerOwnedTool(definition);
 		if (blockedBatch || !controllerOwned) {
 			blockedBatch = true;
 			void ctx.abort();
