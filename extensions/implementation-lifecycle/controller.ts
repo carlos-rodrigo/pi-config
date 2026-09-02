@@ -5,7 +5,7 @@ import { taskContextGraph, type TaskContextGraphReport } from "../code-intel/ind
 import { DeliveryRunStore, mergeReadyTupleDigest } from "./store.ts";
 import { CandidateWorkspace, SnapshotReviewRequiredError, captureSnapshot } from "./workspace.ts";
 import { freezeVerificationPolicy, verifyCandidate } from "./verifier.ts";
-import { runReviewer, runWriter } from "./roles.ts";
+import { runReviewer, runWriter, type RuntimeSelection } from "./roles.ts";
 import { runProcess, scrubbedEnvironment } from "./process.ts";
 
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -71,7 +71,7 @@ export class ImplementationController {
 		return true;
 	}
 
-	async start(root: string, commonRoot: string, request: string, primaryProfileDigest: string, update: ControllerUpdate = () => undefined, options: { allowConfiguredFilters?: boolean } = {}): Promise<DeliveryRunV1> {
+	async start(root: string, commonRoot: string, request: string, primaryProfileDigest: string, update: ControllerUpdate = () => undefined, options: { allowConfiguredFilters?: boolean; runtimeSelection?: RuntimeSelection } = {}): Promise<DeliveryRunV1> {
 		if (this.active()) throw new Error("An implementation delivery is already active in this session.");
 		this.fencedUnresolved = false;
 		this.abortController = new AbortController();
@@ -119,7 +119,7 @@ export class ImplementationController {
 				const role = attempt === 0 ? "writer" : "repair";
 				run = await this.store.update({ state: attempt === 0 ? "writing" : "repairing", child: undefined }); update(run);
 				const writerRequest = taskContextPrompt(request, this.store.current().taskContext);
-				const writer = await this.dependencies.runWriter(prepared.candidateRoot, writerRequest, repairEvidence, this.abortController.signal, (pid) => this.checkpointChild(role, pid, update), (readyPath) => this.prepareChild(role, readyPath, update));
+				const writer = await this.dependencies.runWriter(prepared.candidateRoot, writerRequest, repairEvidence, this.abortController.signal, (pid) => this.checkpointChild(role, pid, update), (readyPath) => this.prepareChild(role, readyPath, update), options.runtimeSelection);
 				await this.recordChildExit(role, writer.code, writer.timedOut, update);
 				if (this.abortController.signal.aborted) return await this.finish("failed-safely", "cancelled", update);
 				if (writer.code !== 0 || writer.timedOut) return await this.finish("failed-safely", writer.timedOut ? "writer-timeout" : "writer-failed", update);
@@ -184,6 +184,7 @@ export class ImplementationController {
 							update(evidenceRun);
 						},
 						(readyPath) => this.prepareChild("reviewer", readyPath, update),
+						options.runtimeSelection,
 					);
 				} catch {
 					return await this.finish("failed-safely", "reviewer-failed-or-malformed", update);
@@ -338,10 +339,11 @@ export function classifyImplementationIntent(text: string): "implementation" | "
 	const strongMutation = /\b(?:implement|fix|refactor|edit|write)\b/i.test(normalized) || /^code\b/i.test(normalized);
 	const weakMutation = /\b(?:create|add|update|change|build|modify)\b/i.test(normalized);
 	const softwareObject = /\b(?:bug|code|file|test|feature|function|class|component|module|service|endpoint|api|ui|page|docs?|readme|config(?:uration)?|dependency|schema|migration|script|logging|behavior)\b|(?:^|\s)[\w./-]+\.[a-z0-9]{1,8}\b|(?:^|[\s`'\"(])[\w.-]+\/[\w./-]*/i.test(normalized);
+	const approvedScopeReference = /\b(?:scope\s+\d+|approved\s+list)\b/i.test(normalized);
 	const asksForMutation = strongMutation || weakMutation || destructiveMutation;
 	if (asksForMutation) {
 		if (destructiveMutation) return "ambiguous";
-		if (!softwareObject || /\b(?:maybe|perhaps|could we|should we|idea)\b/i.test(normalized)) return "ambiguous";
+		if ((!softwareObject && !approvedScopeReference) || /\b(?:maybe|perhaps|could we|should we|idea)\b/i.test(normalized)) return "ambiguous";
 		return "implementation";
 	}
 	if (/^(?:why|what|where|when|who|how)\b/i.test(normalized)

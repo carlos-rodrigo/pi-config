@@ -32,6 +32,7 @@ test.afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { 
 
 test("intent classification is conservative and distinguishes ambiguity", () => {
 	assert.equal(classifyImplementationIntent("Implement the approved task"), "ambiguous");
+	assert.equal(classifyImplementationIntent("Implement Scope 6 from the approved list"), "implementation");
 	assert.equal(classifyImplementationIntent("Modify only `extensions/implementation-lifecycle/` to improve ambiguity handling. You may edit and test those files, but do not commit or push."), "implementation");
 	assert.equal(classifyImplementationIntent("Modify troubleshoot-tracking-attempt.ts and its PPR caller. Do not modify lease, manager, ingress, path, or attempt logic."), "implementation");
 	assert.equal(classifyImplementationIntent("Could we maybe refactor this?"), "ambiguous");
@@ -505,17 +506,18 @@ test("the real role launcher keeps authority out of argv and uses a private remo
 	await chmod(fakePi, 0o755);
 	const previous = { PATH: process.env.PATH, PI_PROVIDER: process.env.PI_PROVIDER, PI_MODEL: process.env.PI_MODEL, PI_REASONING_LEVEL: process.env.PI_REASONING_LEVEL };
 	process.env.PATH = `${bin}:${previous.PATH ?? ""}`;
-	process.env.PI_PROVIDER = "fake-provider";
-	process.env.PI_MODEL = "fake-model";
-	process.env.PI_REASONING_LEVEL = "low";
 	try {
 		const authority = "Implement secret-but-authorized fixture behavior";
-		const result = await runWriter(root, authority, undefined);
+		const result = await runWriter(root, authority, undefined, undefined, undefined, undefined, { provider: "fake-provider", model: "fake-model", reasoning: "low" });
 		assert.equal(result.code, 0);
 		const args = await readFile(join(root, ".fake-args"), "utf8");
 		assert.doesNotMatch(args, /secret-but-authorized/);
 		assert.match(await readFile(join(root, ".fake-packet"), "utf8"), /secret-but-authorized/);
 		assert.equal(await readFile(join(root, ".fake-mode"), "utf8"), String(0o600));
+		assert.deepEqual((JSON.parse(args) as string[]).slice(0, 6), ["--print", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files"]);
+		assert.ok((JSON.parse(args) as string[]).includes("fake-provider"));
+		assert.ok((JSON.parse(args) as string[]).includes("fake-model"));
+		assert.ok((JSON.parse(args) as string[]).includes("low"));
 		const packetArgument = (JSON.parse(args) as string[]).find((value) => value.startsWith("@"));
 		assert.ok(packetArgument);
 		await assert.rejects(readFile(packetArgument!.slice(1)));
@@ -567,10 +569,17 @@ test("the primary mutation barrier blocks edit calls and noninteractive implemen
 	} as any;
 	implementationLifecycle(pi);
 	let aborted = false;
-	const ctx = { cwd: root, mode: "rpc", hasUI: false, ui: { setStatus() {}, notify() {}, async confirm() { return false; } }, abort() { aborted = true; } };
-	const ambiguous = await handlers.get("input")?.({ text: "Implement the approved task", source: "interactive", streamingBehavior: undefined, images: [] }, { ...ctx, mode: "tui" });
+	let confirmations = 0;
+	let confirmationText = "";
+	const ctx = { cwd: root, mode: "rpc", sessionManager: { getBranch() { return [{ message: { role: "user", content: [{ type: "text", text: "Scope 6: modify engines/example/feature.ts and focused tests." }] } }]; } }, ui: { setStatus() {}, notify() {}, async confirm(_title: string, message: string) { confirmations += 1; confirmationText = message; return false; } }, abort() { aborted = true; } };
+	const ambiguous = await handlers.get("input")?.({ text: "Could we maybe refactor this?", source: "interactive", streamingBehavior: undefined, images: [] }, { ...ctx, mode: "tui" });
 	assert.equal(ambiguous.action, "continue");
 	assert.match(messages.at(-1) ?? "", /exact bounded software and change you authorize/);
+	const natural = await handlers.get("input")?.({ text: "Implement Scope 6 from the approved list", source: "interactive", streamingBehavior: undefined, images: [] }, { ...ctx, mode: "tui", hasUI: true });
+	assert.equal(natural.action, "handled");
+	assert.equal(confirmations, 1);
+	assert.match(confirmationText, /engines\/example\/feature\.ts/);
+	assert.match(messages.at(-1) ?? "", /Approval was declined/);
 	const input = await handlers.get("input")?.({ text: "Fix the bug", source: "rpc", streamingBehavior: undefined, images: [] }, ctx);
 	assert.equal(input.action, "handled");
 	assert.match(messages.at(-1) ?? "", /only an idle, direct interactive TUI request/);

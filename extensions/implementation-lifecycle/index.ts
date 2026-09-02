@@ -4,6 +4,7 @@ import { readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ImplementationController, classifyImplementationIntent, formatAmbiguousImplementationRequest, highRiskRequest } from "./controller.ts";
+import type { RuntimeSelection } from "./roles.ts";
 import { terminalState } from "./contracts.ts";
 import { DeliveryRunStore } from "./store.ts";
 import { resolveRepository } from "./workspace.ts";
@@ -41,6 +42,30 @@ function controllerOwnedTool(tool: ReturnType<ExtensionAPI["getAllTools"]>[numbe
 	return resolve(tool.sourceInfo.path) === CONTROLLER_EXTENSION_PATH;
 }
 
+type SessionMessageLike = { message?: { role?: string; content?: unknown } };
+function sessionUserText(entry: unknown): string {
+	const message = (entry as SessionMessageLike).message;
+	if (!message || message.role !== "user") return "";
+	if (typeof message.content === "string") return message.content;
+	if (!Array.isArray(message.content)) return "";
+	return message.content.map((block) => {
+		if (!block || typeof block !== "object") return "";
+		const text = (block as { type?: unknown; text?: unknown });
+		return text.type === "text" && typeof text.text === "string" ? text.text : "";
+	}).filter(Boolean).join("\n");
+}
+
+function expandApprovedScope(text: string, ctx: ExtensionContext): string {
+	const scope = /\bscope\s+\d+\b/i.exec(text)?.[0];
+	if (!scope) return text;
+	const source = [...ctx.sessionManager.getBranch()].reverse()
+		.map(sessionUserText)
+		.find((candidate) => candidate && new RegExp(scope.replace(/\s+/g, "\\s+"), "i").test(candidate)
+			&& /\b(?:modify|change|implement|parameterize)\b/i.test(candidate)
+			&& /(?:^|[\s`'\"])[\w.-]+\/[\w./-]*/i.test(candidate));
+	return source && source !== text ? `${source}\n\nCurrent instruction: ${text}` : text;
+}
+
 export default function implementationLifecycle(pi: ExtensionAPI) {
 	registerPrimaryReadOnlyTools(pi);
 	const controller = new ImplementationController();
@@ -55,12 +80,18 @@ export default function implementationLifecycle(pi: ExtensionAPI) {
 	let lastContext: ExtensionContext | undefined;
 
 	const startImplementation = async (text: string, ctx: ExtensionContext): Promise<string> => {
+		text = expandApprovedScope(text, ctx);
 		const intent = classifyImplementationIntent(text);
 		if (intent !== "implementation") return formatAmbiguousImplementationRequest(text);
 		if (controller.active()) return "An implementation delivery already owns this repository. Cancel it or wait for a terminal result.";
 		if (ctx.mode !== "tui" || !ctx.hasUI) return "Implementation approval requires an interactive TUI session. Continue with read-only analysis or reopen Pi in TUI mode.";
-		const approved = await ctx.ui.confirm("Approve isolated implementation?", `${text}\n\nThe writer will work in an isolated candidate. The primary project will not be modified.`);
+		const approved = await ctx.ui.confirm("Approve isolated implementation?", `${text}\n\nThe writer will use the active main-session model and reasoning level in an isolated candidate. The primary project will not be modified.`);
 		if (!approved) return "Implementation not started. Approval was declined; read-only analysis remains available.";
+		const model = ctx.model;
+		const runtimeSelection: RuntimeSelection | undefined = model
+			? { provider: model.provider, model: model.id, reasoning: pi.getThinkingLevel() }
+			: undefined;
+		if (!runtimeSelection) return "FAILED SAFELY: the active Pi provider, model, and reasoning level could not be resolved from this session.";
 		if (highRiskRequest(text)) return "DECISION REQUIRED: this request targets a protected or high-risk surface and cannot be autonomously implemented.";
 		let repository;
 		try { repository = await resolveRepository(ctx.cwd); } catch { return "FAILED SAFELY: trusted implementation requires a supported local Git repository."; }
@@ -75,7 +106,7 @@ export default function implementationLifecycle(pi: ExtensionAPI) {
 				announced = true;
 				publish(`Implementation ${run.runId} acquired the delivery lease for ${run.root}. The primary project remains unchanged.`);
 			}
-		}, { allowConfiguredFilters: true }).then((run) => {
+		}, { allowConfiguredFilters: true, runtimeSelection }).then((run) => {
 			status();
 			const evidence = run.base && run.candidate
 				? `\nCandidate workspace: ${run.candidateRoot}\nRepository: ${run.root}\nBase tree: ${run.base.treeOid}\nCandidate tree: ${run.candidate.candidateTreeOid}\nTask context: ${run.taskContext?.files.length ?? 0} files, graph ${run.taskContext?.graphFingerprint ?? "unavailable"}\nChanged paths: ${run.changedPaths?.join(", ") || "none recorded"}`
