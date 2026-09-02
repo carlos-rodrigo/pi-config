@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ImplementationController, classifyImplementationIntent, highRiskRequest } from "./controller.ts";
+import { ImplementationController, classifyImplementationIntent, formatAmbiguousImplementationRequest, highRiskRequest } from "./controller.ts";
 import { terminalState } from "./contracts.ts";
 import { DeliveryRunStore } from "./store.ts";
 import { resolveRepository } from "./workspace.ts";
@@ -139,10 +139,9 @@ export default function implementationLifecycle(pi: ExtensionAPI) {
 		const intent = classifyImplementationIntent(text);
 		if (intent === "read-only") return { action: "continue" as const };
 		if (intent === "ambiguous") {
-			publish(/\b(?:remove|delete|rename)\b/i.test(text)
-				? "DECISION REQUIRED: version one cannot safely perform delete or rename operations with its no-shell writer. Split or revise the change without those effects."
-				: "I did not start implementation because the request is ambiguous. State the exact bounded software change you authorize, or ask for read-only analysis.");
-			return { action: "handled" as const };
+			publish(formatAmbiguousImplementationRequest(text));
+			// Ambiguity blocks mutation authorization, not the user's ability to investigate.
+			return { action: "continue" as const };
 		}
 		if (event.source !== "interactive" || event.streamingBehavior !== undefined || ctx.mode !== "tui") {
 			publish("Implementation was blocked: only an idle, direct interactive TUI request can authorize mutation.");

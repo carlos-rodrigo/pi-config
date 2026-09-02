@@ -336,7 +336,7 @@ export function classifyImplementationIntent(text: string): "implementation" | "
 	const destructiveMutation = /\b(?:remove|delete|rename)\b/i.test(normalized);
 	const strongMutation = /\b(?:implement|fix|refactor|edit|write)\b/i.test(normalized) || /^code\b/i.test(normalized);
 	const weakMutation = /\b(?:create|add|update|change|build|modify)\b/i.test(normalized);
-	const softwareObject = /\b(?:bug|code|file|test|feature|function|class|component|module|service|endpoint|api|ui|page|docs?|readme|config(?:uration)?|dependency|schema|migration|script|logging|behavior|implementation|task)\b|(?:^|\s)[\w./-]+\.[a-z0-9]{1,8}\b/i.test(normalized);
+	const softwareObject = /\b(?:bug|code|file|test|feature|function|class|component|module|service|endpoint|api|ui|page|docs?|readme|config(?:uration)?|dependency|schema|migration|script|logging|behavior)\b|(?:^|\s)[\w./-]+\.[a-z0-9]{1,8}\b|(?:^|[\s`'\"(])[\w.-]+\/[\w./-]*/i.test(normalized);
 	const asksForMutation = strongMutation || weakMutation || destructiveMutation;
 	if (asksForMutation) {
 		if (destructiveMutation) return "ambiguous";
@@ -346,4 +346,14 @@ export function classifyImplementationIntent(text: string): "implementation" | "
 	if (/^(?:why|what|where|when|who|how)\b/i.test(normalized)
 		|| /\b(?:review|analy[sz]e|inspect|explain|summari[sz]e|find|search|read)\b/i.test(normalized)) return "read-only";
 	return "read-only";
+}
+
+export function formatAmbiguousImplementationRequest(text: string): string {
+	const normalized = text.trim();
+	const reason = !normalized
+		? "The request was empty."
+		: /\b(?:remove|delete|rename)\b/i.test(normalized)
+			? "Delete and rename operations require a separate human-controlled workflow."
+			: "The request does not identify one concrete software surface and authorized change."
+	return `${reason} I did not start implementation. State the exact bounded software and change you authorize (for example, \"Modify only extensions/implementation-lifecycle/controller.ts to improve request classification; edit and test that directory, but do not commit or push\"), or ask for read-only analysis.`;
 }

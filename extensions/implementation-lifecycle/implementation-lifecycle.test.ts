@@ -8,7 +8,7 @@ import { join } from "node:path";
 import implementationLifecycle from "./index.ts";
 import roleGuard from "./role-guard.ts";
 import { runWriter } from "./roles.ts";
-import { ImplementationController, classifyImplementationIntent } from "./controller.ts";
+import { ImplementationController, classifyImplementationIntent, formatAmbiguousImplementationRequest } from "./controller.ts";
 import type { VerificationPolicy } from "./contracts.ts";
 import { DeliveryRunStore, mergeReadyTupleDigest } from "./store.ts";
 import { CandidateWorkspace, resolveRepository } from "./workspace.ts";
@@ -31,7 +31,8 @@ async function repository(): Promise<string> {
 test.afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 test("intent classification is conservative and distinguishes ambiguity", () => {
-	assert.equal(classifyImplementationIntent("Implement the approved task"), "implementation");
+	assert.equal(classifyImplementationIntent("Implement the approved task"), "ambiguous");
+	assert.equal(classifyImplementationIntent("Modify only `extensions/implementation-lifecycle/` to improve ambiguity handling. You may edit and test those files, but do not commit or push."), "implementation");
 	assert.equal(classifyImplementationIntent("Could we maybe refactor this?"), "ambiguous");
 	assert.equal(classifyImplementationIntent("How should we implement this?"), "read-only");
 	assert.equal(classifyImplementationIntent("Review the implementation"), "read-only");
@@ -43,6 +44,14 @@ test("intent classification is conservative and distinguishes ambiguity", () => 
 	assert.equal(classifyImplementationIntent("Explain this code"), "read-only");
 	assert.equal(classifyImplementationIntent("Do not fix the bug"), "read-only");
 	assert.equal(classifyImplementationIntent("/skill:implement-task"), "read-only");
+});
+
+test("ambiguous implementation guidance states the missing boundary and preserves safe alternatives", () => {
+	const guidance = formatAmbiguousImplementationRequest("Implement the approved task");
+	assert.match(guidance, /does not identify one concrete software surface/);
+	assert.match(guidance, /exact bounded software and change you authorize/);
+	assert.match(guidance, /read-only analysis/);
+	assert.match(formatAmbiguousImplementationRequest("Delete the obsolete file"), /Delete and rename operations require/);
 });
 
 test("the process primitive records before release, honors pre-abort, and hashes overflow completely", async () => {
@@ -545,6 +554,9 @@ test("the primary mutation barrier blocks edit calls and noninteractive implemen
 	implementationLifecycle(pi);
 	let aborted = false;
 	const ctx = { cwd: root, mode: "rpc", hasUI: false, ui: { setStatus() {}, notify() {} }, abort() { aborted = true; } };
+	const ambiguous = await handlers.get("input")?.({ text: "Implement the approved task", source: "interactive", streamingBehavior: undefined, images: [] }, { ...ctx, mode: "tui" });
+	assert.equal(ambiguous.action, "continue");
+	assert.match(messages.at(-1) ?? "", /exact bounded software and change you authorize/);
 	const input = await handlers.get("input")?.({ text: "Fix the bug", source: "rpc", streamingBehavior: undefined, images: [] }, ctx);
 	assert.equal(input.action, "handled");
 	assert.match(messages.at(-1) ?? "", /only an idle, direct interactive TUI request/);
