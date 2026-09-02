@@ -23,17 +23,28 @@ async function git(root: string, args: string[], environment: NodeJS.ProcessEnv 
 	return (await gitRaw(root, args, environment)).trim();
 }
 
+export class SnapshotReviewRequiredError extends Error {
+	constructor() {
+		super("Configured Git content filters require a human-reviewed snapshot exception.");
+		this.name = "SnapshotReviewRequiredError";
+	}
+}
+
+export type SnapshotOptions = {
+	allowConfiguredFilters?: boolean;
+};
+
 export async function resolveRepository(cwd: string): Promise<{ root: string; commonRoot: string }> {
 	const root = resolve(await git(cwd, ["rev-parse", "--show-toplevel"]));
 	const common = await git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
 	return { root, commonRoot: resolve(root, common) };
 }
 
-export async function captureSnapshot(root: string, stateRoot: string, identity: string): Promise<SnapshotIdentity> {
+export async function captureSnapshot(root: string, stateRoot: string, identity: string, options: SnapshotOptions = {}): Promise<SnapshotIdentity> {
 	const sparse = await git(root, ["config", "--bool", "core.sparseCheckout"]).catch(() => "false");
 	if (sparse === "true") throw new Error("Sparse-checkout repositories are not supported by complete delivery snapshots.");
 	const filters = await git(root, ["config", "--get-regexp", "^filter\\."]).catch(() => "");
-	if (filters) throw new Error("Repositories with configured Git content filters require a human-reviewed snapshot exception.");
+	if (filters && !options.allowConfiguredFilters) throw new SnapshotReviewRequiredError();
 	if ((await git(root, ["ls-files", "--stage"])).split("\n").some((line) => line.startsWith("160000 "))) throw new Error("Submodule entries are not supported by complete delivery snapshots.");
 	const headSha = await git(root, ["rev-parse", "HEAD"]);
 	const status = await gitRaw(root, ["status", "--porcelain=v2", "-z", "--untracked-files=all"]);
@@ -60,14 +71,16 @@ export class CandidateWorkspace {
 	private readonly root: string;
 	private readonly stateRoot: string;
 	private readonly runId: string;
-	constructor(root: string, stateRoot: string, runId: string) {
+	private readonly allowConfiguredFilters: boolean;
+	constructor(root: string, stateRoot: string, runId: string, options: SnapshotOptions = {}) {
 		this.root = root;
 		this.stateRoot = stateRoot;
 		this.runId = runId;
+		this.allowConfiguredFilters = options.allowConfiguredFilters ?? false;
 	}
 
 	async prepare(): Promise<{ base: SnapshotIdentity; candidateRoot: string }> {
-		const base = await captureSnapshot(this.root, this.stateRoot, `base-${this.runId}`);
+		const base = await captureSnapshot(this.root, this.stateRoot, `base-${this.runId}`, { allowConfiguredFilters: this.allowConfiguredFilters });
 		const commit = await git(this.root, ["commit-tree", base.treeOid, "-p", base.headSha, "-m", `pi delivery base ${this.runId}`], {
 			GIT_AUTHOR_NAME: "Pi Delivery Controller", GIT_AUTHOR_EMAIL: "pi-delivery@invalid", GIT_COMMITTER_NAME: "Pi Delivery Controller", GIT_COMMITTER_EMAIL: "pi-delivery@invalid",
 		});

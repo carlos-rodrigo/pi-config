@@ -3,13 +3,14 @@ import { rm } from "node:fs/promises";
 import type { DeliveryRunV1, ReviewReceipt, TaskContextReceipt, VerificationReceipt } from "./contracts.ts";
 import { taskContextGraph, type TaskContextGraphReport } from "../code-intel/index.ts";
 import { DeliveryRunStore, mergeReadyTupleDigest } from "./store.ts";
-import { CandidateWorkspace, captureSnapshot } from "./workspace.ts";
+import { CandidateWorkspace, SnapshotReviewRequiredError, captureSnapshot } from "./workspace.ts";
 import { freezeVerificationPolicy, verifyCandidate } from "./verifier.ts";
 import { runReviewer, runWriter } from "./roles.ts";
 import { runProcess, scrubbedEnvironment } from "./process.ts";
 
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const PROTECTED_PATH = /(^|\/)(?:\.github\/workflows|infra|infrastructure|migrations?|schema|auth|payments?|privacy)(\/|$)|(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/i;
+const HUMAN_REVIEWED_SNAPSHOT_EXCEPTION = /\bhuman[- ]reviewed snapshot exception\b/i;
 
 export type ControllerUpdate = (run: DeliveryRunV1) => void;
 
@@ -84,7 +85,7 @@ export class ImplementationController {
 			acquired = true;
 			update(run);
 			if (this.abortController.signal.aborted) return await this.finish("failed-safely", "cancelled", update);
-			this.workspace = new CandidateWorkspace(root, this.store.deliveryStateRoot, run.runId);
+			this.workspace = new CandidateWorkspace(root, this.store.deliveryStateRoot, run.runId, { allowConfiguredFilters: HUMAN_REVIEWED_SNAPSHOT_EXCEPTION.test(request) });
 			const signatures = new Set<string>(run.failureSignatures);
 			const taskContext = await this.dependencies.taskContextGraph(root, { task: request, limit: 12, signal: this.abortController.signal });
 			run = await this.store.update({ taskContext: taskContextReceipt(taskContext) }); update(run);
@@ -229,6 +230,7 @@ export class ImplementationController {
 			return await this.finish("failed-safely", "repair-budget-exhausted", update);
 		} catch (error) {
 			if (!acquired) throw error;
+			if (error instanceof SnapshotReviewRequiredError) return await this.finish("decision-required", "snapshot-human-review-required", update);
 			const activeChild = this.store.current().child;
 			const pendingChild = this.store.current().pendingChild;
 			if (activeChild || pendingChild) {

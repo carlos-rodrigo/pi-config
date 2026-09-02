@@ -428,6 +428,19 @@ test("candidate preparation captures staged, unstaged, untracked, deletion, and 
 	await workspace.dispose();
 });
 
+test("configured Git content filters require and honor a human-reviewed snapshot exception", async () => {
+	const root = await repository();
+	git(root, "config", "filter.demo.clean", "cat");
+	const { commonRoot } = await resolveRepository(root);
+	const stateRoot = join(commonRoot, "pi-delivery-filter-state");
+	await mkdir(stateRoot, { recursive: true });
+	await assert.rejects(new CandidateWorkspace(root, stateRoot, "blocked").prepare(), /human-reviewed snapshot exception/);
+	const workspace = new CandidateWorkspace(root, stateRoot, "approved", { allowConfiguredFilters: true });
+	const prepared = await workspace.prepare();
+	assert.equal(await readFile(join(prepared.candidateRoot, "tracked.txt"), "utf8"), "base\n");
+	await workspace.dispose();
+});
+
 test("candidate preparation refuses credential-bearing project files", async () => {
 	const root = await repository();
 	await writeFile(join(root, ".env"), "TOKEN=secret\n");
