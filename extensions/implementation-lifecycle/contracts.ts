@@ -37,6 +37,7 @@ export type VerificationReceipt = {
 	durationMs: number;
 	outputSha256: string;
 	redactedFailureOutputTail?: string;
+	mutationPaths?: string[];
 	verifiedTreeOid?: string;
 };
 

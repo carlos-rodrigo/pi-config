@@ -109,8 +109,8 @@ export default function implementationLifecycle(pi: ExtensionAPI) {
 		}, { allowConfiguredFilters: true, runtimeSelection }).then((run) => {
 			status();
 			const evidence = run.base && run.candidate
-				? `\nCandidate workspace: ${run.candidateRoot}\nRepository: ${run.root}\nBase tree: ${run.base.treeOid}\nCandidate tree: ${run.candidate.candidateTreeOid}\nTask context: ${run.taskContext?.files.length ?? 0} files, graph ${run.taskContext?.graphFingerprint ?? "unavailable"}\nChanged paths: ${run.changedPaths?.join(", ") || "none recorded"}`
-				: "";
+				? `\nCandidate workspace: ${run.candidateRoot}\nRepository: ${run.root}\nBase tree: ${run.base.treeOid}\nCandidate tree: ${run.candidate.candidateTreeOid}\nTask context: ${run.taskContext?.files.length ?? 0} files, graph ${run.taskContext?.graphFingerprint ?? "unavailable"}\nChanged paths: ${run.changedPaths?.join(", ") || "none recorded"}${run.verification?.mutationPaths?.length ? `\nVerification mutations: ${run.verification.mutationPaths.join(", ")}` : ""}`
+				: run.verification?.mutationPaths?.length ? `\nVerification mutations: ${run.verification.mutationPaths.join(", ")}` : "";
 			publish(`${run.state === "merge-ready" ? "MERGE READY" : run.state === "decision-required" ? "DECISION REQUIRED" : "FAILED SAFELY"}: ${run.terminalReason ?? "unknown"}.${evidence}\nNo branch/ref integration, merge, push, deploy, or primary-tree mutation was performed.`);
 		}).catch((error) => {
 			status();

@@ -1,11 +1,44 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import type { CandidateIdentity, VerificationPolicy, VerificationReceipt } from "./contracts.ts";
 import { COMPLETE_EVIDENCE_OUTPUT_LIMIT_BYTES, runProcess, scrubbedEnvironment } from "./process.ts";
 
 function sha(value: string | Buffer): string { return createHash("sha256").update(value).digest("hex"); }
+type FilesystemEntry = { kind: "file" | "symlink" | "other"; mode: number; digest?: string; target?: string };
+
+async function filesystemManifest(root: string): Promise<Map<string, FilesystemEntry>> {
+	const manifest = new Map<string, FilesystemEntry>();
+	const visit = async (directory: string): Promise<void> => {
+		for (const entry of await readdir(directory, { withFileTypes: true })) {
+			const absolute = join(directory, entry.name);
+			if (entry.name === ".git") continue;
+			const relativePath = relative(root, absolute).split(sep).join("/");
+			const stat = await lstat(absolute);
+			if (stat.isDirectory()) await visit(absolute);
+			else if (stat.isSymbolicLink()) manifest.set(relativePath, { kind: "symlink", mode: stat.mode & 0o7777, target: await readlink(absolute) });
+			else if (stat.isFile()) manifest.set(relativePath, { kind: "file", mode: stat.mode & 0o7777, digest: sha(await readFile(absolute)) });
+			else manifest.set(relativePath, { kind: "other", mode: stat.mode & 0o7777 });
+		}
+	};
+	await visit(root);
+	return manifest;
+}
+
+async function manifestDifferences(before: Map<string, FilesystemEntry>, after: Map<string, FilesystemEntry>, root: string, environment: NodeJS.ProcessEnv): Promise<string[]> {
+	const differences: string[] = [];
+	for (const path of [...new Set([...before.keys(), ...after.keys()])]) {
+		if (JSON.stringify(before.get(path)) === JSON.stringify(after.get(path))) continue;
+		if (!before.has(path)) {
+			const ignored = await runProcess("git", ["-C", root, "check-ignore", "--no-index", "--", path], { cwd: root, env: scrubbedEnvironment(environment), timeoutMs: 60_000, maxOutputBytes: 16_384 });
+			if (ignored.code === 0) continue;
+		}
+		differences.push(path);
+	}
+	return differences.sort();
+}
+
 function redact(value: string): string {
 	return value
 		.replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, "[REDACTED PRIVATE KEY]")
@@ -86,14 +119,12 @@ export async function verifyCandidate(
 		await mkdir(isolatedHome, { mode: 0o700 });
 		const isolatedEnvironment = { HOME: isolatedHome, XDG_CONFIG_HOME: join(isolatedHome, ".config"), XDG_CACHE_HOME: join(isolatedHome, ".cache"), GIT_CONFIG_NOSYSTEM: "1" };
 		await git(verificationRoot, ["init", "-q"], isolatedEnvironment);
-		await git(verificationRoot, ["add", "-f", "-A", "--", "."], isolatedEnvironment);
-		const materializedTree = await git(verificationRoot, ["write-tree"], isolatedEnvironment);
-		if (materializedTree !== candidate.candidateTreeOid) throw new Error("The standalone verification snapshot does not match the candidate tree.");
+		const beforeVerification = await filesystemManifest(verificationRoot);
 		const result = await runProcess("bash", ["scripts/verify.sh"], { cwd: verificationRoot, env: scrubbedEnvironment(isolatedEnvironment), signal, timeoutMs: 10 * 60_000, maxOutputBytes: 1_000_000, detached: true, onBeforeSpawn, onSpawn });
-		await git(verificationRoot, ["add", "-A", "--", "."], isolatedEnvironment);
-		const verifiedTreeOid = await git(verificationRoot, ["write-tree"], isolatedEnvironment);
+		const afterVerification = await filesystemManifest(verificationRoot);
+		const mutationPaths = await manifestDifferences(beforeVerification, afterVerification, verificationRoot, isolatedEnvironment);
 		const output = `${result.stdout}\n${result.stderr}`;
-		const status = result.timedOut ? "timeout" : verifiedTreeOid !== candidate.candidateTreeOid ? "mutated" : result.code === 0 ? "passed" : "failed";
+		const status = result.timedOut ? "timeout" : mutationPaths.length > 0 ? "mutated" : result.code === 0 ? "passed" : "failed";
 		return {
 			candidateTreeOid: candidate.candidateTreeOid,
 			policyDigest: policy.digest,
@@ -102,7 +133,8 @@ export async function verifyCandidate(
 			durationMs: result.durationMs,
 			outputSha256: result.outputSha256,
 			...(status === "failed" ? { redactedFailureOutputTail: redact(output).slice(-20_000) } : {}),
-			verifiedTreeOid,
+			...(mutationPaths.length > 0 ? { mutationPaths } : {}),
+			...(status === "passed" ? { verifiedTreeOid: candidate.candidateTreeOid } : {}),
 		};
 	} finally {
 		await rm(temporaryRoot, { recursive: true, force: true });

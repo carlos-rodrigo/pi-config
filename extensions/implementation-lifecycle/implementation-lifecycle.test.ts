@@ -489,7 +489,9 @@ test("explicit verification passes the exact candidate and rejects verification-
 	await rm(join(prepared.candidateRoot, "fail.flag"));
 	await writeFile(join(prepared.candidateRoot, "mutate.flag"), "trigger\n");
 	candidate = await workspace.capture(prepared.base);
-	assert.equal((await verifyCandidate(root, candidate, policy)).status, "mutated");
+	const mutated = await verifyCandidate(root, candidate, policy);
+	assert.equal(mutated.status, "mutated");
+	assert.deepEqual(mutated.mutationPaths, ["source.js"]);
 	await rm(join(prepared.candidateRoot, "mutate.flag"));
 	await writeFile(join(prepared.candidateRoot, "scripts", "verify.sh"), "#!/bin/bash\nexit 0\n");
 	candidate = await workspace.capture(prepared.base);
