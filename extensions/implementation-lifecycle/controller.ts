@@ -333,7 +333,7 @@ export function highRiskRequest(text: string): boolean {
 export function classifyImplementationIntent(text: string): "implementation" | "ambiguous" | "read-only" {
 	const normalized = text.trim();
 	if (!normalized || normalized.startsWith("/") || /^(?:why|what|where|when|who|how)\b/i.test(normalized)
-		|| /\b(?:do not|don't|without)\s+(?:implement|fix|refactor|edit|write|code|create|add|update|change|build|modify|remove|delete|rename)\b/i.test(normalized)) return "read-only";
+		|| /^(?:do not|don't|without)\s+(?:implement|fix|refactor|edit|write|code|create|add|update|change|build|modify|remove|delete|rename)\b/i.test(normalized)) return "read-only";
 	const destructiveMutation = /\b(?:remove|delete|rename)\b/i.test(normalized);
 	const strongMutation = /\b(?:implement|fix|refactor|edit|write)\b/i.test(normalized) || /^code\b/i.test(normalized);
 	const weakMutation = /\b(?:create|add|update|change|build|modify)\b/i.test(normalized);

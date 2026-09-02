@@ -33,6 +33,7 @@ test.afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { 
 test("intent classification is conservative and distinguishes ambiguity", () => {
 	assert.equal(classifyImplementationIntent("Implement the approved task"), "ambiguous");
 	assert.equal(classifyImplementationIntent("Modify only `extensions/implementation-lifecycle/` to improve ambiguity handling. You may edit and test those files, but do not commit or push."), "implementation");
+	assert.equal(classifyImplementationIntent("Modify troubleshoot-tracking-attempt.ts and its PPR caller. Do not modify lease, manager, ingress, path, or attempt logic."), "implementation");
 	assert.equal(classifyImplementationIntent("Could we maybe refactor this?"), "ambiguous");
 	assert.equal(classifyImplementationIntent("How should we implement this?"), "read-only");
 	assert.equal(classifyImplementationIntent("Review the implementation"), "read-only");
