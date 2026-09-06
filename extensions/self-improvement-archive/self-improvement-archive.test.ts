@@ -114,6 +114,21 @@ function createCtx(cwd: string) {
 	};
 }
 
+test("routing decisions are recorded as notes correlated with the session", async (t) => {
+	const fixture = makeTempProject();
+	t.after(() => fixture.cleanup());
+	const harness = createHarness();
+	const { ctx } = createCtx(fixture.root);
+	await harness.emit("session_start", {}, ctx);
+	harness.emitEvent("workflow:routing-record", { cwd: fixture.root, sessionId: "session-a", note: "Astra medium; Applied: yes" });
+	harness.emitEvent("workflow:routing-record", { cwd: "/unrelated", sessionId: "session-a", note: "ignore" });
+	const records = readArchiveRecords(fixture.root).records;
+	assert.equal(records.length, 1);
+	assert.equal(records[0].kind, "note");
+	assert.equal(records[0].sessionId, "session-a");
+	assert.match(records[0].note ?? "", /Astra medium/);
+});
+
 test("append/read archive records and summarize common signals", (t) => {
 	const fixture = makeTempProject();
 	t.after(() => fixture.cleanup());

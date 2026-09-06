@@ -40,6 +40,7 @@ pi install ./extensions/session-query
 pi install ./extensions/verify
 pi install ./extensions/web-tools
 pi install ./extensions/workflow-modes
+pi install ./extensions/workflow-router
 pi install ./extensions/worktree-manager
 ```
 
@@ -51,7 +52,7 @@ pi install ./extensions/worktree-manager
 | [agent-benchmark](agent-benchmark/) | Cheap local benchmark suite for evidence-based Pi config improvement |
 | [agent-memory](agent-memory/) | Default-on local project/global memory with bounded recall, review controls, and verification feedback |
 | [auto-prompt](auto-prompt/) | Inline ghost text prompt suggestions (fish-style) |
-| [bordered-editor](bordered-editor/) | Bordered input editor with model/context/git info |
+| [bordered-editor](bordered-editor/) | Bordered input editor with context, activity, and git info |
 | [branch-switcher](branch-switcher/) | Interactive git branch switching with local + remote-only branch support |
 | [checkpoint-rollback](checkpoint-rollback/) | Human-controlled git checkpoints with previewed rollback and explicit confirmation |
 | [code-intel](code-intel/) | `code_find` orchestration plus symbol, dependency, git-history, and AST search tools |
@@ -68,7 +69,8 @@ pi install ./extensions/worktree-manager
 | [self-improvement-archive](self-improvement-archive/) | Quiet local archive of run, verification, benchmark, warning, and proposal evidence |
 | [session-query](session-query/) | Query previous Pi session files for context and decisions |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
-| [workflow-modes](workflow-modes/) | Fast/smart/deep/max GPT-5.6 Luna/Sol effort switching |
+| [workflow-modes](workflow-modes/) | Legacy fixed Luna/Sol/Astra presets |
+| [workflow-router](workflow-router/) | Luna-low task classification with Astra medium default/fallback, evidence-gated xhigh, previews, and explicit locking |
 | [verify](verify/) | Preflight `verification_plan`, back-pressure hook, and `scripts/verify.sh` scaffolding via `/setup-verify` |
 | [worktree-manager](worktree-manager/) | Git worktree management with complete local development-environment copying |
 

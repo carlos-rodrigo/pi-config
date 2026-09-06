@@ -1,14 +1,13 @@
 /**
- * Bordered Editor — input box with rounded borders, embedded status info,
- * agent mode label, and ghost text support for Auto Prompt suggestions.
+ * Bordered Editor — compact input box with operational status,
+ * project context, and ghost text support for Auto Prompt suggestions.
  *
- * ╭─ mode:smart ──────────────── claude-opus-4-6 · high ─╮
+ * ╭────────────────────────────────────────────────────────╮
  * │   ▌Implement the error handling changes                │  ← gray ghost text
  * ╰─ 42% of 200k · 1.2M burned · $1.14 ─ ~/project (main) ─╯
  *
- * Top left:     agent mode (medium blue → high mauve → xhigh pink → max gold)
- * Top right:    model · thinking-level (level uses the matching thinking color)
- * Bottom left:  context% of Nk · cumulative tokens burned · $cost - status
+ * Model, effort, and routing state live beside each response in the timeline.
+ * Bottom left:  context% of Nk · cumulative tokens burned · $cost - active status
  * Bottom right: cwd plus git state — branch (main checkout) or worktree info
  *
  * Ghost text: appears when editor is empty, right arrow accepts, any key dismisses.
@@ -26,10 +25,14 @@ const ANSI_RESET = "\x1b[0m";
 const PADDING_X = 2;
 
 function shouldShowPrimaryExtensionStatus(key: string, status: string): boolean {
+	const value = status.trim();
+	// Routing metadata belongs to the response legend; only transient classifier
+	// progress remains useful in the composer while the request is waiting.
+	if (key === "workflow-mode") return value.startsWith("route: classifying");
 	// Background semantic index rebuilds have a dedicated compact indicator on the
 	// right border. Suppress the mirrored extension status to avoid duplicate
 	// `idx: ...` labels while keeping foreground semantic-search statuses visible.
-	return !(key === "semantic-search" && status.trim().startsWith("idx:"));
+	return !(key === "semantic-search" && value.startsWith("idx:"));
 }
 
 export function pickPrimaryExtensionStatus(statuses: ReadonlyMap<string, string>): string | null {
@@ -43,62 +46,10 @@ export function pickPrimaryExtensionStatus(statuses: ReadonlyMap<string, string>
 	}
 
 	for (const [key, value] of statuses) {
-		if (key !== "workflow-mode" && key !== "agent-memory" && shouldShowPrimaryExtensionStatus(key, value)) return value;
+		if (key !== "agent-memory" && shouldShowPrimaryExtensionStatus(key, value)) return value;
 	}
 
-	return memoryStatus ?? statuses.get("workflow-mode") ?? statuses.values().next().value ?? null;
-}
-
-export type WorkflowModeColor = "thinkingMedium" | "thinkingHigh" | "thinkingXhigh" | "thinkingMax";
-export type ThinkingLevelColor =
-	| "thinkingOff"
-	| "thinkingMinimal"
-	| "thinkingLow"
-	| "thinkingMedium"
-	| "thinkingHigh"
-	| "thinkingXhigh"
-	| "thinkingMax"
-	| "muted";
-
-export function formatWorkflowModeLabel(rawMode: string | null | undefined): string | null {
-	const value = rawMode?.trim();
-	if (!value) return null;
-
-	const normalized = value.toLowerCase();
-	if (["fast", "f", "rush", "r"].includes(normalized)) return "Fast";
-	if (["smart", "s"].includes(normalized)) return "Smart";
-	if (["deep", "d"].includes(normalized)) return "Deep";
-	if (["max", "maximum"].includes(normalized)) return "Max";
-	return value;
-}
-
-export function getWorkflowModeColor(label: string | null | undefined): WorkflowModeColor {
-	const normalized = label?.toLowerCase() ?? "";
-	if (normalized === "max") return "thinkingMax";
-	if (normalized.startsWith("deep")) return "thinkingXhigh";
-	if (normalized === "smart") return "thinkingMedium";
-	return "thinkingMedium";
-}
-
-export function getThinkingLevelColor(level: string | null | undefined): ThinkingLevelColor {
-	switch (level?.toLowerCase()) {
-		case "off":
-			return "thinkingOff";
-		case "minimal":
-			return "thinkingMinimal";
-		case "low":
-			return "thinkingLow";
-		case "medium":
-			return "thinkingMedium";
-		case "high":
-			return "thinkingHigh";
-		case "xhigh":
-			return "thinkingXhigh";
-		case "max":
-			return "thinkingMax";
-		default:
-			return "muted";
-	}
+	return memoryStatus ?? null;
 }
 
 export function formatBackgroundJobIndicator(count: number): string | null {
@@ -263,15 +214,10 @@ class BorderedEditor extends CustomEditor {
 	private ctx?: ExtensionContext;
 	private getGitBranch: () => string | null = () => null;
 	private getWorktreeInfo: () => string | null = () => null;
-	private getThinkingLevel: () => string = () => "off";
 	private getExtensionStatus: () => string | null = () => null;
 	private backgroundJobCount = 0;
 	private loopJobCount = 0;
 	private indexRebuildIndicator: string | null = null;
-
-	// --- Mode label state ---
-	private modeLabel: string | null = null;
-	private modeColor: WorkflowModeColor = "thinkingMedium";
 
 	// --- Ghost text state ---
 	private ghostText: string | null = null;
@@ -282,24 +228,13 @@ class BorderedEditor extends CustomEditor {
 		ctx: ExtensionContext,
 		getGitBranch: () => string | null,
 		getWorktreeInfo: () => string | null,
-		getThinkingLevel: () => string,
 		getExtensionStatus: () => string | null,
 	) {
 		this.ctx = ctx;
 		this.getGitBranch = getGitBranch;
 		this.getWorktreeInfo = getWorktreeInfo;
-		this.getThinkingLevel = getThinkingLevel;
 		this.getExtensionStatus = getExtensionStatus;
-		// Apply initial border color from mode
-		this.borderColor = (s: string) => ctx.ui.theme.fg(this.modeColor, s);
-	}
-
-	setModeLabel(label: string | null): void {
-		this.modeLabel = formatWorkflowModeLabel(label);
-		if (this.modeLabel && this.ctx) {
-			this.modeColor = getWorkflowModeColor(this.modeLabel);
-			this.borderColor = (s: string) => this.ctx!.ui.theme.fg(this.modeColor, s);
-		}
+		this.borderColor = (s: string) => ctx.ui.theme.fg("border", s);
 	}
 
 	setBackgroundJobCount(count: number): void {
@@ -381,24 +316,6 @@ class BorderedEditor extends CustomEditor {
 			}
 		}
 
-		// --- Top left: agent mode ---
-		let topLeft = "";
-		if (this.modeLabel && theme) {
-			const mode = this.modeLabel.toLowerCase();
-			topLeft = theme.fg("dim", "mode:") + theme.fg(getWorkflowModeColor(this.modeLabel), theme.bold(mode));
-		}
-
-		// --- Top right: model · level ---
-		let topRight = "";
-		if (this.ctx?.model && theme) {
-			const name = this.ctx.model.name || this.ctx.model.id;
-			const level = this.getThinkingLevel();
-			topRight =
-				theme.fg("muted", name) +
-				theme.fg("dim", " · ") +
-				theme.fg(getThinkingLevelColor(level), theme.bold(level));
-		}
-
 		// --- Bottom-left: context · tokens burned · cost - primary extension status ---
 		let bottomLeft = "";
 		if (this.ctx && theme) {
@@ -432,7 +349,7 @@ class BorderedEditor extends CustomEditor {
 
 		return lines.map((line, i) => {
 			if (i === 0)
-				return this.buildBorder(width, "╭", "╮", bc, topLeft, topRight);
+				return this.buildBorder(width, "╭", "╮", bc, "", "");
 			if (i === bottomIdx)
 				return this.buildBorder(
 					width,
@@ -523,16 +440,6 @@ export default function (pi: ExtensionAPI) {
 	let loopJobCount = 0;
 	let indexRebuildIndicator: string | null = null;
 
-	// --- Agent mode events ---
-
-	pi.events.on("workflow:mode", (data) => {
-		const { mode, label } = data as { mode?: string; label?: string };
-		if (editorInstance) {
-			editorInstance.setModeLabel(label ?? mode ?? null);
-			requestRender?.();
-		}
-	});
-
 	// --- Background job count events ---
 
 	pi.events.on("agent-jobs:running-count", (data) => {
@@ -621,7 +528,6 @@ export default function (pi: ExtensionAPI) {
 				ctx,
 				() => gitBranch,
 				() => linkedWorktreeLabel,
-				() => pi.getThinkingLevel(),
 				getExtensionStatus,
 			);
 
@@ -634,9 +540,6 @@ export default function (pi: ExtensionAPI) {
 			};
 
 			editorInstance = editor;
-
-			// Request current agent mode (if workflow-modes extension is loaded)
-			pi.events.emit("workflow:request-mode", {});
 
 			return editor;
 		});

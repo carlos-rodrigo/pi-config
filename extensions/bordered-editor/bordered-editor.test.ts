@@ -1,16 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import {
+import borderedEditor, {
 	formatBackgroundJobIndicator,
 	formatBottomLeftUsage,
 	formatComposerActivityIndicator,
 	formatLoopJobIndicator,
 	formatTokenCount,
-	formatWorkflowModeLabel,
 	getAssistantUsageTotals,
-	getThinkingLevelColor,
-	getWorkflowModeColor,
 	pickPrimaryExtensionStatus,
 } from "./index.ts";
 
@@ -74,13 +73,13 @@ test("pickPrimaryExtensionStatus prefers review over prompt queue", () => {
 	assert.equal(pickPrimaryExtensionStatus(statuses), "reviewing");
 });
 
-test("pickPrimaryExtensionStatus suppresses semantic search rebuild status because it has a dedicated indicator", () => {
+test("pickPrimaryExtensionStatus suppresses routing and background index state from the composer", () => {
 	const statuses = new Map<string, string>([
-		["workflow-mode", "mode: Smart"],
+		["workflow-mode", "route: auto · gpt-6-astra · xhigh"],
 		["semantic-search", "idx: embedding 60% · ~11s"],
 	]);
 
-	assert.equal(pickPrimaryExtensionStatus(statuses), "mode: Smart");
+	assert.equal(pickPrimaryExtensionStatus(statuses), null);
 });
 
 test("pickPrimaryExtensionStatus still surfaces foreground semantic search status", () => {
@@ -92,8 +91,9 @@ test("pickPrimaryExtensionStatus still surfaces foreground semantic search statu
 	assert.equal(pickPrimaryExtensionStatus(statuses), "embedding…");
 });
 
-test("pickPrimaryExtensionStatus falls back to ambient workflow mode status", () => {
-	assert.equal(pickPrimaryExtensionStatus(new Map<string, string>([["workflow-mode", "mode: Smart"]])), "mode: Smart");
+test("pickPrimaryExtensionStatus keeps classifier progress but not routing metadata in the composer", () => {
+	assert.equal(pickPrimaryExtensionStatus(new Map<string, string>([["workflow-mode", "route: auto · gpt-6-astra · xhigh"]])), null);
+	assert.equal(pickPrimaryExtensionStatus(new Map<string, string>([["workflow-mode", "route: classifying · Luna low"]])), "route: classifying · Luna low");
 	assert.equal(pickPrimaryExtensionStatus(new Map()), null);
 });
 
@@ -107,32 +107,33 @@ test("pickPrimaryExtensionStatus prefers prompt queue over ambient mode status",
 	);
 });
 
-test("formatWorkflowModeLabel displays the simplified workflow modes", () => {
-	assert.equal(formatWorkflowModeLabel("fast"), "Fast");
-	assert.equal(formatWorkflowModeLabel("smart"), "Smart");
-	assert.equal(formatWorkflowModeLabel("deep"), "Deep");
-	assert.equal(formatWorkflowModeLabel("deep3"), "deep3");
-	assert.equal(formatWorkflowModeLabel("max"), "Max");
-	assert.equal(formatWorkflowModeLabel("deep2"), "deep2");
-	assert.equal(formatWorkflowModeLabel(null), null);
-});
-
-test("getWorkflowModeColor follows the reasoning-level palette", () => {
-	assert.equal(getWorkflowModeColor("Fast"), "thinkingMedium");
-	assert.equal(getWorkflowModeColor("Smart"), "thinkingMedium");
-	assert.equal(getWorkflowModeColor("Deep"), "thinkingXhigh");
-	assert.equal(getWorkflowModeColor("Max"), "thinkingMax");
-});
-
-test("getThinkingLevelColor maps composer effort labels to theme tokens", () => {
-	assert.equal(getThinkingLevelColor("off"), "thinkingOff");
-	assert.equal(getThinkingLevelColor("minimal"), "thinkingMinimal");
-	assert.equal(getThinkingLevelColor("low"), "thinkingLow");
-	assert.equal(getThinkingLevelColor("medium"), "thinkingMedium");
-	assert.equal(getThinkingLevelColor("high"), "thinkingHigh");
-	assert.equal(getThinkingLevelColor("xhigh"), "thinkingXhigh");
-	assert.equal(getThinkingLevelColor("max"), "thinkingMax");
-	assert.equal(getThinkingLevelColor("unknown"), "muted");
+test("composer omits workflow mode, model, and effort while preserving its operational chrome", async () => {
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+	const events = new EventEmitter();
+	let editorFactory: ((tui: unknown, theme: unknown, keybindings: unknown) => { render: (width: number) => string[] }) | undefined;
+	borderedEditor({
+		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => handlers.set(name, handler),
+		events,
+	} as never);
+	const theme = { borderColor: (text: string) => text, fg: (_color: string, text: string) => text };
+	const ctx = {
+		cwd: "/tmp/project",
+		model: { id: "gpt-6-astra", name: "GPT-6 Astra" },
+		getContextUsage: () => ({ percent: 25, tokens: 10, contextWindow: 200_000 }),
+		sessionManager: { getBranch: () => [] },
+		ui: {
+			theme,
+			setFooter: () => {},
+			setEditorComponent: (factory: typeof editorFactory) => { editorFactory = factory; },
+		},
+	} as unknown as ExtensionContext;
+	await handlers.get("session_start")!({}, ctx);
+	const editor = editorFactory!({ terminal: { rows: 40 }, requestRender() {} }, theme, { matches: () => false });
+	events.emit("workflow:mode", { mode: "deep", label: "Deep" });
+	const rendered = editor.render(100).join("\n");
+	assert.doesNotMatch(rendered, /mode:|GPT-6 Astra|xhigh/);
+	assert.match(rendered, /25% of 200k/);
+	assert.match(rendered, /\/tmp\/project/);
 });
 
 test("formatBackgroundJobIndicator only appears for running jobs", () => {

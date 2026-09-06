@@ -2,6 +2,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { recommendModeFromArchive } from "../self-improvement-archive/index.ts";
+import { MODEL_PROFILES, hasExplicitStartupOverrides } from "../lib/model-profiles.ts";
 
 type AgentMode = "fast" | "smart" | "deep" | "max";
 type ModelLike = { provider?: string; id?: string; model?: string } | undefined;
@@ -22,21 +23,12 @@ const MODE_STATUS_COLOR: Record<AgentMode, ModeStatusColor> = {
 	max: "thinkingMax",
 };
 
-type ModeModel = { provider: string; model: string };
-
-type ModeProfile = {
-	model: ModeModel;
-	thinking: ThinkingLevel;
-};
-
-const LUNA_MODEL: ModeModel = { provider: "openai-codex", model: "gpt-5.6-luna" };
-const SOL_MODEL: ModeModel = { provider: "openai-codex", model: "gpt-5.6-sol" };
-
-const MODE_PROFILE: Record<AgentMode, ModeProfile> = {
-	fast: { model: LUNA_MODEL, thinking: "medium" },
-	smart: { model: SOL_MODEL, thinking: "medium" },
-	deep: { model: SOL_MODEL, thinking: "xhigh" },
-	max: { model: SOL_MODEL, thinking: "max" },
+type ModeProfile = (typeof MODEL_PROFILES)[AgentMode];
+const MODE_PROFILE = {
+	fast: MODEL_PROFILES.fast,
+	smart: MODEL_PROFILES.smart,
+	deep: MODEL_PROFILES.deep,
+	max: MODEL_PROFILES.max,
 };
 
 const MODE_CYCLE: AgentMode[] = ["fast", "smart", "deep", "max"];
@@ -55,11 +47,6 @@ function getModeFlag(pi: ExtensionAPI): AgentMode | undefined {
 	return normalizeMode(
 		(pi.getFlag("workflow-mode") as string | undefined) ?? (pi.getFlag("mode") as string | undefined),
 	);
-}
-
-function hasExplicitStartupOverrides(argv: string[] = process.argv.slice(2)): boolean {
-	const hasFlag = (name: string) => argv.some((arg) => arg === name || arg.startsWith(`${name}=`));
-	return hasFlag("--model") || hasFlag("--models") || hasFlag("--thinking");
 }
 
 function getModelId(model: ModelLike): string | undefined {
@@ -81,6 +68,7 @@ function inferModeFromModel(model: ModelLike, thinking?: ThinkingLevel | "off"):
 export default function (pi: ExtensionAPI) {
 	let currentMode: AgentMode = "fast";
 	let currentCtx: ExtensionContext | undefined;
+	const routerLoaded = () => pi.getCommands?.().some(command => command.name === "route") ?? false;
 
 	function updateStatus(ctx: ExtensionContext): void {
 		const label = MODE_LABEL[currentMode];
@@ -93,7 +81,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	function syncModeState(ctx: ExtensionContext): void {
-		pi.setActiveTools(getActiveToolsForMode());
+		if (!routerLoaded()) pi.setActiveTools(getActiveToolsForMode());
 		updateStatus(ctx);
 		pi.events.emit("workflow:mode", { mode: currentMode, label: MODE_LABEL[currentMode] });
 	}
@@ -103,8 +91,6 @@ export default function (pi: ExtensionAPI) {
 		ctx: ExtensionContext,
 		options?: { persist?: boolean; notify?: boolean },
 	): Promise<void> {
-		currentMode = mode;
-
 		const profile = MODE_PROFILE[mode];
 		const targetModel = ctx.modelRegistry.find(profile.model.provider, profile.model.model);
 		const modelApplied = targetModel ? await pi.setModel(targetModel) : false;
@@ -121,11 +107,14 @@ export default function (pi: ExtensionAPI) {
 			);
 		}
 
+		if (routerLoaded() && !modelApplied) return;
+		currentMode = mode;
 		pi.setThinkingLevel(profile.thinking);
 		syncModeState(ctx);
 
 		if (options?.persist !== false) {
 			pi.appendEntry("workflow-mode", { mode });
+			pi.events.emit("workflow:manual-mode", { mode });
 		}
 
 		if (options?.notify !== false) {
@@ -141,7 +130,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	function restoreModeFromSession(ctx: ExtensionContext): AgentMode | undefined {
-		const entries = ctx.sessionManager.getEntries();
+		const entries = ctx.sessionManager.getBranch?.() ?? ctx.sessionManager.getEntries();
 		for (let i = entries.length - 1; i >= 0; i--) {
 			const entry = entries[i] as { type?: string; customType?: string; data?: { mode?: string } };
 			if (entry.type === "custom" && entry.customType === "workflow-mode") {
@@ -157,14 +146,14 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerShortcut("ctrl+shift+m", {
-		description: "Cycle agent mode (Fast/Smart/Deep/Max)",
+		description: "Cycle agent mode (Fast/Smart/Deep/Max; Deep/Max use Astra)",
 		handler: async (ctx: ExtensionContext) => {
 			await cycleMode(ctx);
 		},
 	});
 
 	pi.registerCommand("mode", {
-		description: "Switch agent mode: fast | smart | deep | max",
+		description: "Switch agent mode: fast | smart | deep | max (Deep/Max use Astra)",
 		handler: async (args, ctx) => {
 			const input = args.trim();
 			if (!input) {
@@ -233,6 +222,12 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
+		if (routerLoaded()) {
+			const restoredMode = restoreModeFromSession(ctx);
+			const flagMode = ["reload", "resume", "fork"].includes(_event.reason) ? undefined : getModeFlag(pi);
+			currentMode = flagMode ?? restoredMode ?? inferModeFromModel(ctx.model, pi.getThinkingLevel()) ?? "fast";
+			return;
+		}
 
 		const flagMode = getModeFlag(pi);
 		const restoredMode = restoreModeFromSession(ctx);
@@ -248,12 +243,18 @@ export default function (pi: ExtensionAPI) {
 		await applyMode(mode, ctx, { persist: false, notify: false });
 	});
 
+	pi.on("session_tree", (_event, ctx) => {
+		currentCtx = ctx;
+		currentMode = restoreModeFromSession(ctx) ?? inferModeFromModel(ctx.model, pi.getThinkingLevel()) ?? "fast";
+		if (!routerLoaded()) syncModeState(ctx);
+	});
+
 	pi.on("session_shutdown", async () => {
 		currentCtx = undefined;
 	});
 
 	pi.events.on("workflow:request-mode", () => {
-		if (!currentCtx) return;
+		if (!currentCtx || routerLoaded()) return;
 		pi.events.emit("workflow:mode", { mode: currentMode, label: MODE_LABEL[currentMode] });
 	});
 }

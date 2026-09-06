@@ -165,7 +165,7 @@ test("workflow-modes registers only ctrl+shift+m for cycling", () => {
 	const shortcut = shortcuts.get("ctrl+shift+m");
 
 	assert.ok(shortcut);
-	assert.equal(shortcut.description, "Cycle agent mode (Fast/Smart/Deep/Max)");
+	assert.equal(shortcut.description, "Cycle agent mode (Fast/Smart/Deep/Max; Deep/Max use Astra)");
 	assert.equal(shortcuts.has("f6"), false);
 	assert.equal(shortcuts.has("f7"), false);
 	assert.equal(shortcuts.has("f8"), false);
@@ -198,14 +198,14 @@ test("ctrl+shift+m cycles through every mode from the Fast default", async () =>
 	assert.equal(themeColors.at(-1), "thinkingMedium");
 
 	await shortcut.handler(ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-6-astra" });
 	assert.equal(getThinkingLevel(), "xhigh");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep/i);
 	assert.match(statuses.at(-1)?.value ?? "", /mode: Deep/i);
 	assert.equal(themeColors.at(-1), "thinkingXhigh");
 
 	await shortcut.handler(ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-6-astra" });
 	assert.equal(getThinkingLevel(), "max");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Max/i);
 	assert.match(statuses.at(-1)?.value ?? "", /mode: Max/i);
@@ -253,12 +253,12 @@ test("/fast /smart /deep /max commands switch their no-fallback models directly"
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Smart/i);
 
 	await deepCommand.handler("", ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-6-astra" });
 	assert.equal(getThinkingLevel(), "xhigh");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Deep/i);
 
 	await maxCommand.handler("", ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-6-astra" });
 	assert.equal(getThinkingLevel(), "max");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Max/i);
 });
@@ -380,20 +380,20 @@ test("session_start preserves explicit CLI model selection", async () => {
 	}
 });
 
-test("session_start infers Max status from an explicit Sol max selection", async () => {
+test("session_start infers Max status from an explicit Astra max selection", async () => {
 	const originalArgv = process.argv;
 	process.argv = [
 		originalArgv[0] ?? "node",
 		originalArgv[1] ?? "test",
 		"--model",
-		"openai-codex/gpt-5.6-sol",
+		"openai-codex/gpt-6-astra",
 		"--thinking",
 		"max",
 	];
 
 	try {
 		const { pi, eventHandlers, getSelectedModel, getThinkingLevel } = createPiHarness({ thinkingLevel: "max" });
-		const { ctx, statuses } = createContext({ currentModel: { provider: "openai-codex", id: "gpt-5.6-sol" } });
+		const { ctx, statuses } = createContext({ currentModel: { provider: "openai-codex", id: "gpt-6-astra" } });
 
 		workflowModesExtension(pi as any);
 

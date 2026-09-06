@@ -62,7 +62,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 
 - **[agent-jobs](extensions/agent-jobs/)** — Run researcher/oracle jobs as detached processes and resume via session-aware follow-up messages.
 - **[auto-prompt](extensions/auto-prompt/)** — Inline ghost-text prompt suggestions.
-- **[bordered-editor](extensions/bordered-editor/)** — Bordered composer with model, context, cost, and git status.
+- **[bordered-editor](extensions/bordered-editor/)** — Bordered composer with context, activity, cost, and git status.
 - **[branch-switcher](extensions/branch-switcher/)** — Interactive `/branch` command for local and remote branches.
 - **[code-intel](extensions/code-intel/)** — `code_find` orchestration plus symbol, dependency, git-history, and AST search tools.
 - **[document-reviewer](extensions/document-reviewer/)** — Browser-based document and PR review with inline comments.
@@ -75,7 +75,8 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[session-query](extensions/session-query/)** — Query previous Pi session files for context and decisions.
 - **[verify](extensions/verify/)** — Preflight `verification_plan`, back-pressure verification hook, and `/setup-verify` scaffolder.
 - **[web-tools](extensions/web-tools/)** — Web search and fetch tools.
-- **[workflow-modes](extensions/workflow-modes/)** — Fast/smart/deep/max GPT-5.6 Luna/Sol effort switching.
+- **[workflow-modes](extensions/workflow-modes/)** — Legacy fixed Luna/Sol/Astra presets.
+- **[workflow-router](extensions/workflow-router/)** — Luna-low task classification with Astra medium default/fallback and evidence-gated xhigh; `/classify` previews and `/route auto|lock` controls.
 - **[worktree-manager](extensions/worktree-manager/)** — Git worktree lifecycle manager.
 
 ### [Skills](skills/)
