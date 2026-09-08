@@ -3,9 +3,8 @@
  */
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
-import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -41,26 +40,28 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 		if (!entry.isFile() && !entry.isSymbolicLink()) continue;
 
 		const filePath = path.join(dir, entry.name);
-		let content: string;
+		let parsed: { frontmatter: Record<string, unknown>; body: string };
 		try {
-			content = fs.readFileSync(filePath, "utf-8");
+			parsed = parseFrontmatter<Record<string, unknown>>(fs.readFileSync(filePath, "utf-8"));
 		} catch {
+			// One unreadable or malformed definition must not hide the other agents.
 			continue;
 		}
 
-		const { frontmatter, body } = parseFrontmatter<Record<string, string>>(content);
-		if (!frontmatter.name || !frontmatter.description) continue;
+		const { frontmatter, body } = parsed;
+		if (typeof frontmatter.name !== "string" || !frontmatter.name.trim()
+			|| typeof frontmatter.description !== "string" || !frontmatter.description.trim()) continue;
 
-		const tools = frontmatter.tools
-			?.split(",")
-			.map((tool: string) => tool.trim())
-			.filter(Boolean);
+		const rawTools = Array.isArray(frontmatter.tools) ? frontmatter.tools
+			: typeof frontmatter.tools === "string" ? frontmatter.tools.split(",") : [];
+		const tools = rawTools.filter((tool): tool is string => typeof tool === "string")
+			.map((tool) => tool.trim()).filter(Boolean);
 
 		agents.push({
 			name: frontmatter.name,
 			description: frontmatter.description,
 			tools: tools && tools.length > 0 ? tools : undefined,
-			model: frontmatter.model,
+			model: typeof frontmatter.model === "string" && frontmatter.model.trim() ? frontmatter.model.trim() : undefined,
 			systemPrompt: body,
 			source,
 			filePath,
@@ -81,7 +82,7 @@ function isDirectory(p: string): boolean {
 function findNearestProjectAgentsDir(cwd: string): string | null {
 	let currentDir = cwd;
 	while (true) {
-		const candidate = path.join(currentDir, ".pi", "agents");
+		const candidate = path.join(currentDir, CONFIG_DIR_NAME, "agents");
 		if (isDirectory(candidate)) return candidate;
 
 		const parentDir = path.dirname(currentDir);
@@ -91,7 +92,7 @@ function findNearestProjectAgentsDir(cwd: string): string | null {
 }
 
 export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
-	const userDir = path.join(os.homedir(), ".pi", "agent", "agents");
+	const userDir = path.join(getAgentDir(), "agents");
 	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
 
 	const userAgents = scope === "project" ? [] : loadAgentsFromDir(userDir, "user");

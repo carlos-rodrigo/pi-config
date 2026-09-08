@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { Text } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, ProjectTrustStore, truncateHead, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 import { execChecked } from "../lib/process.ts";
@@ -332,17 +332,18 @@ export function parseAgentEvents(eventsJsonl: string): AgentEventParseResult {
 	return result;
 }
 
-function buildPiInvocationArgs(agent: AgentConfig, promptPath: string, systemPromptPath?: string): string[] {
+function buildPiInvocationArgs(agent: AgentConfig, promptPath: string, systemPromptPath?: string, thinkingLevel?: ExtensionContext["thinkingLevel"]): string[] {
 	const args = ["--mode", "json", "-p", "--no-session"];
 	if (agent.model) args.push("--model", agent.model);
+	if (thinkingLevel) args.push("--thinking", thinkingLevel);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 	if (systemPromptPath) args.push("--append-system-prompt", systemPromptPath);
 	args.push(`@${promptPath}`, "Execute the task described in the attached prompt file.");
 	return args;
 }
 
-function buildPiCommand(agent: AgentConfig, promptPath: string, systemPromptPath?: string): string {
-	const args = buildPiInvocationArgs(agent, promptPath, systemPromptPath);
+function buildPiCommand(agent: AgentConfig, promptPath: string, systemPromptPath?: string, thinkingLevel?: ExtensionContext["thinkingLevel"]): string {
+	const args = buildPiInvocationArgs(agent, promptPath, systemPromptPath, thinkingLevel);
 	return ["pi", ...args].map(shellQuote).join(" ");
 }
 
@@ -350,6 +351,7 @@ export function buildRunScript(params: {
 	cwd: string;
 	jobId: string;
 	agent: AgentConfig;
+	thinkingLevel?: ExtensionContext["thinkingLevel"];
 	promptPath: string;
 	systemPromptPath?: string;
 	eventLogPath: string;
@@ -358,7 +360,7 @@ export function buildRunScript(params: {
 	pidPath: string;
 	resultPath: string;
 }): string {
-	const piCommand = buildPiCommand(params.agent, params.promptPath, params.systemPromptPath);
+	const piCommand = buildPiCommand(params.agent, params.promptPath, params.systemPromptPath, params.thinkingLevel);
 	return `#!/usr/bin/env bash
 set -u
 cd ${shellQuote(params.cwd)}
@@ -591,8 +593,67 @@ function findMissingTools(pi: ExtensionAPI, agent: AgentConfig): string[] {
 	return agent.tools.filter((tool) => !available.has(tool));
 }
 
+async function assertArtifactPath(file: string, directory = false): Promise<void> {
+	const stat = await fs.promises.lstat(file).catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") return undefined;
+		throw error;
+	});
+	if (stat && (stat.isSymbolicLink() || !(directory ? stat.isDirectory() : stat.isFile()))) {
+		throw new Error(`Invalid job artifact (symlink or unexpected type): ${file}`);
+	}
+}
+
+async function trustedAgentRoot(ctx: { cwd: string; isProjectTrusted?(): boolean }, requested?: string): Promise<string> {
+	if (!ctx.isProjectTrusted?.()) throw new Error("Agent jobs require a trusted Pi session.");
+	const root = await fs.promises.realpath(path.resolve(ctx.cwd, requested ?? "."));
+	const sessionRoot = await fs.promises.realpath(ctx.cwd);
+	const trust = new ProjectTrustStore(getAgentDir());
+	if ((root !== sessionRoot && (trust.get(root) !== true || trust.get(jobsRoot(root)) !== true)) || trust.get(jobsRoot(root)) === false) {
+		throw new Error(`Agent job target is not trusted: ${root}`);
+	}
+	await assertArtifactPath(path.join(root, ".pi"), true);
+	await assertArtifactPath(jobsRoot(root), true);
+	return root;
+}
+
 async function readStatus(cwd: string, jobId: string): Promise<AgentJobStatus> {
-	return readJson<AgentJobStatus>(path.join(jobDirFor(cwd, jobId), "status.json"));
+	const root = await fs.promises.realpath(cwd);
+	const jobDir = jobDirFor(root, jobId);
+	for (const dir of [path.join(root, ".pi"), jobsRoot(root), jobDir]) await assertArtifactPath(dir, true);
+	await assertArtifactPath(path.join(jobDir, "status.json"));
+	const status = await readJson<AgentJobStatus>(path.join(jobDir, "status.json"));
+	if (!status || status.jobId !== jobId || typeof status.cwd !== "string" || typeof status.jobDir !== "string"
+		|| !["running", "completed", "failed", "cancelled"].includes(status.state)) throw new Error("Invalid agent job metadata.");
+	if (await fs.promises.realpath(status.cwd) !== root || await fs.promises.realpath(status.jobDir) !== jobDir) {
+		throw new Error("Invalid agent job cwd or jobDir: outside the selected job.");
+	}
+	const files = { runScriptPath: "run.sh", eventLogPath: "events.jsonl", stderrPath: "stderr.log", resultPath: "result.md",
+		exitPath: "exit.json", pidPath: "pid", promptPath: "prompt.md", systemPromptPath: "system-prompt.md", reviewContextPath: "review-context.md" } as const;
+	for (const [key, name] of Object.entries(files) as Array<[keyof typeof files, string]>) {
+		const expected = path.join(jobDir, name);
+		const supplied = status[key];
+		if (supplied !== undefined && (typeof supplied !== "string" || path.basename(supplied) !== name
+			|| await fs.promises.realpath(path.dirname(supplied)) !== jobDir)) throw new Error(`Invalid agent job ${key}: outside the selected job.`);
+		await assertArtifactPath(expected);
+		// Use canonical paths after validation, including defaults for older metadata.
+		status[key] = expected;
+	}
+	return { ...status, cwd: root, jobDir };
+}
+
+async function signalOwnedAgent(pi: ExtensionAPI, status: AgentJobStatus, signal: NodeJS.Signals, abortSignal?: AbortSignal): Promise<boolean> {
+	const pid = status.processId;
+	if (!Number.isInteger(pid) || !pid || pid <= 0) throw new Error("Cannot safely cancel this legacy job: no verifiable process identity.");
+	if (Number((await fs.promises.readFile(status.pidPath, "utf8")).trim()) !== pid) throw new Error("Agent process identity does not match its PID file.");
+	const result = await pi.exec("ps", ["-p", String(pid), "-o", "pid=,pgid=,args="], { cwd: status.cwd, timeout: 5000, signal: abortSignal });
+	if (result.code === 1 && !result.stdout.trim() && !result.stderr.trim()) return false;
+	const match = result.stdout.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+	if (result.code !== 0 || !match || Number(match[1]) !== pid || Number(match[2]) !== pid || !match[3]?.startsWith("bash ")) {
+		throw new Error("Agent process identity could not be verified; no signal sent.");
+	}
+	const script = await fs.promises.realpath(match[3].slice(5)).catch(() => undefined);
+	if (script !== status.runScriptPath) throw new Error("Agent process identity does not match the expected run script; no signal sent.");
+	return signalDetachedProcess(pid, signal);
 }
 
 async function writeStatus(status: AgentJobStatus): Promise<void> {
@@ -606,7 +667,7 @@ async function finalizeIfDone(pi: ExtensionAPI, cwd: string, jobId: string, send
 		const events = fileExists(status.eventLogPath) ? await fs.promises.readFile(status.eventLogPath, "utf8") : "";
 		const stderr = fileExists(status.stderrPath) ? await fs.promises.readFile(status.stderrPath, "utf8") : "";
 		const parsed = parseAgentEvents(events);
-		const hasModelError = parsed.stopReason === "error" || Boolean(parsed.errorMessage);
+		const hasModelError = parsed.stopReason === "error" || parsed.stopReason === "aborted" || Boolean(parsed.errorMessage);
 		const state: AgentJobState = status.cancelRequestedAt
 			? "cancelled"
 			: exit.exitCode === 0 && !hasModelError
@@ -747,14 +808,17 @@ async function listStatuses(cwd: string): Promise<AgentJobStatus[]> {
 
 type LaunchContext = {
 	cwd: string;
+	model?: Pick<NonNullable<ExtensionContext["model"]>, "provider" | "id">;
+	thinkingLevel?: ExtensionContext["thinkingLevel"];
 	signal?: AbortSignal;
 	hasUI?: boolean;
+	isProjectTrusted?(): boolean;
 	sessionManager?: {
 		getSessionId?(): string;
 		getSessionFile?(): string | undefined;
 	};
 	ui?: {
-		confirm(title: string, message: string): Promise<boolean>;
+		confirm(title: string, message: string, options?: { signal?: AbortSignal }): Promise<boolean>;
 	};
 };
 
@@ -770,23 +834,27 @@ async function launchAgentJob(
 		mode?: AgentJobMode;
 		followUp?: boolean;
 	},
+	monitor = true,
 ): Promise<AgentJobStatus> {
-	const cwd = params.cwd ? (path.isAbsolute(params.cwd) ? params.cwd : path.resolve(ctx.cwd, params.cwd)) : ctx.cwd;
+	const cwd = await trustedAgentRoot(ctx, params.cwd);
 	const stat = await fs.promises.stat(cwd).catch(() => undefined);
 	if (!stat?.isDirectory()) throw new Error(`Working directory not found: ${cwd}`);
 
 	const agentScope = params.agentScope ?? "user";
 	const discovery = discoverAgents(cwd, agentScope);
-	const agent = discovery.agents.find((candidate) => candidate.name === params.agent);
+	const definition = discovery.agents.find((candidate) => candidate.name === params.agent);
+	const agent = definition && { ...definition, model: definition.model ?? (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined) };
 	if (!agent) {
 		const available = discovery.agents.map((candidate) => `${candidate.name} (${candidate.source})`).join(", ") || "none";
 		throw new Error(`Unknown agent "${params.agent}". Available agents: ${available}`);
 	}
 
-	if (agent.source === "project" && (params.confirmProjectAgents ?? true) && ctx.hasUI && ctx.ui) {
+	if (agent.source === "project" && (params.confirmProjectAgents ?? true)) {
+		if (!ctx.hasUI || !ctx.ui) throw new Error("Project-agent confirmation requires an interactive approval. No agent launched.");
 		const ok = await ctx.ui.confirm(
 			"Run project-local agent?",
 			`Agent: ${agent.name}\nSource: ${agent.filePath}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
+			{ signal: ctx.signal },
 		);
 		if (!ok) throw new Error("Canceled: project-local agent not approved.");
 	}
@@ -796,6 +864,7 @@ async function launchAgentJob(
 		throw new Error(`Agent "${agent.name}" requires unavailable tools: ${missingTools.join(", ")}. Install/reload the needed extensions first.`);
 	}
 
+	ctx.signal?.throwIfAborted();
 	const mode = params.mode ?? "standard";
 	const jobId = createJobId(agent.name);
 	const jobDir = jobDirFor(cwd, jobId);
@@ -821,6 +890,7 @@ async function launchAgentJob(
 		cwd,
 		jobId,
 		agent,
+		thinkingLevel: definition?.model ? undefined : ctx.thinkingLevel,
 		promptPath,
 		systemPromptPath,
 		eventLogPath,
@@ -879,7 +949,7 @@ async function launchAgentJob(
 		await writeStatus(failed);
 		throw error;
 	}
-	watchJob(pi, cwd, jobId, originSession);
+	if (monitor) watchJob(pi, cwd, jobId, originSession);
 	return status;
 }
 
@@ -1584,10 +1654,175 @@ function formatLoopStatus(status: LoopJobStatus, resultPreview?: string): string
 	return lines.filter((line): line is string => line !== undefined).join("\n");
 }
 
+const ForegroundTaskSchema = Type.Object({
+	agent: Type.String({ minLength: 1 }),
+	task: Type.String({ minLength: 1 }),
+	cwd: Type.Optional(Type.String()),
+});
+
+interface ForegroundTask { agent: string; task: string; cwd?: string }
+interface ForegroundResult {
+	agent: string;
+	state: AgentJobState | "queued";
+	jobId?: string;
+	resultPath?: string;
+	output?: string;
+}
+
+// Foreground jobs have one owner: this waiter, not the background watcher.
+async function cancelForegroundJob(pi: ExtensionAPI, job: AgentJobStatus): Promise<void> {
+	let status = await finalizeIfDone(pi, job.cwd, job.jobId, false);
+	if (status.state !== "running") return;
+	const signalled = await signalOwnedAgent(pi, status, "SIGTERM");
+	status = { ...status, cancelRequestedAt: nowIso(), updatedAt: nowIso() };
+	await writeStatus(status);
+	if (signalled) {
+		const deadline = Date.now() + 1000;
+		while (!fileExists(status.exitPath) && Date.now() < deadline) {
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		if (!fileExists(status.exitPath)) await signalOwnedAgent(pi, status, "SIGKILL");
+	}
+	if (fileExists(status.exitPath)) {
+		await finalizeIfDone(pi, status.cwd, status.jobId, false);
+		return;
+	}
+	const completedAt = nowIso();
+	await fs.promises.writeFile(status.resultPath, "Foreground delegation cancelled. No exit marker was available.\n", "utf8");
+	await writeStatus({ ...status, state: "cancelled", completedAt, updatedAt: completedAt, summary: "Foreground delegation cancelled." });
+}
+
+async function runForegroundAgents(
+	pi: ExtensionAPI, ctx: LaunchContext, tasks: ForegroundTask[],
+	options: { agentScope?: AgentScope; confirmProjectAgents?: boolean },
+	signal: AbortSignal, update: (results: ForegroundResult[]) => void,
+): Promise<ForegroundResult[]> {
+	const results: ForegroundResult[] = tasks.map((task) => ({ agent: task.agent, state: "queued" }));
+	const active = new Map<number, AgentJobStatus>();
+	let next = 0;
+	try {
+		while (next < tasks.length || active.size > 0) {
+			signal.throwIfAborted();
+			// Launch serially so project-agent confirmation dialogs never overlap.
+			while (next < tasks.length && active.size < 4) {
+				signal.throwIfAborted();
+				const index = next++;
+				const task = tasks[index]!;
+				try {
+					const job = await launchAgentJob(pi, { ...ctx, signal }, { ...options, ...task, followUp: false }, false);
+					active.set(index, job);
+					results[index] = { agent: task.agent, state: "running", jobId: job.jobId, resultPath: job.resultPath };
+				} catch (error) {
+					results[index] = { agent: task.agent, state: "failed", output: clipForegroundOutput(error instanceof Error ? error.message : String(error)) };
+				}
+				update(results.map((result) => ({ ...result })));
+			}
+			signal.throwIfAborted();
+			for (const [index, job] of active) {
+				const status = await finalizeIfDone(pi, job.cwd, job.jobId, false);
+				if (status.state !== "running") {
+					results[index] = { ...results[index]!, state: status.state,
+						output: clipForegroundOutput([status.errorMessage, await readTextIfExists(status.resultPath)].filter(Boolean).join("\n\n")) };
+					active.delete(index);
+				} else {
+					// Read only a bounded tail for live progress; the durable log stays complete.
+					const file = await fs.promises.open(status.eventLogPath, "r").catch((error: NodeJS.ErrnoException) => {
+						if (error.code === "ENOENT") return undefined;
+						throw error;
+					});
+					if (file) {
+						try {
+							const size = (await file.stat()).size;
+							const start = Math.max(0, size - 64 * 1024);
+							const buffer = Buffer.alloc(Math.min(size, 64 * 1024));
+							const { bytesRead } = await file.read(buffer, 0, buffer.length, start);
+							const tail = buffer.toString("utf8", 0, bytesRead);
+							const parsed = parseAgentEvents(start ? tail.slice(tail.indexOf("\n") + 1) : tail);
+							results[index]!.output = parsed.finalOutput.slice(-1000) || `${parsed.toolCalls} tool calls in recent log`;
+						} finally { await file.close(); }
+					}
+				}
+			}
+			update(results.map((result) => ({ ...result })));
+			if (active.size) await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		return results;
+	} finally {
+		const cleanup = await Promise.allSettled([...active.values()].map((job) => cancelForegroundJob(pi, job)));
+		const failures = cleanup.flatMap((result, index) => result.status === "rejected"
+			? [`${[...active.values()][index]!.jobId}: ${String(result.reason)}`] : []);
+		if (failures.length) throw new Error(`Foreground cleanup failed; inspect durable jobs: ${failures.join("; ")}`);
+	}
+}
+
+function clipForegroundOutput(text: string): string {
+	const output = truncateHead(text, { maxBytes: 4800, maxLines: 198 });
+	return output.content + (output.truncated ? "\n[Truncated; inspect the durable result/event log.]" : "");
+}
+
+function foregroundText(results: ForegroundResult[]): string {
+	return results.map((result) =>
+		`### ${result.agent} — ${result.state}\n${result.jobId ? `Job: ${result.jobId}\nResult: ${result.resultPath}\n` : ""}\n${result.output ?? ""}`,
+	).join("\n\n");
+}
+
 export default function agentJobsExtension(pi: ExtensionAPI) {
-	pi.on("session_start", (_event, ctx) => {
+	const foregroundRuns = new Map<AbortController, Promise<ForegroundResult[]>>();
+	pi.on("session_shutdown", async () => {
+		for (const controller of foregroundRuns.keys()) controller.abort();
+		await Promise.allSettled(foregroundRuns.values());
+	});
+	pi.registerTool({
+		name: "subagent",
+		label: "Subagent",
+		description: "Delegate foreground work with isolated context: agent + task, or tasks for parallel execution (max 8 tasks, 4 concurrent per call). Waits and returns results directly; durable logs remain available. Output capped at 5 KB/200 lines per task.",
+		promptSnippet: "Delegate one task or parallel independent tasks and return their results directly",
+		promptGuidelines: [
+			"Use subagent when child results are needed in the current workflow; use agent_job_start for explicitly background work.",
+			"Give subagent bounded tasks, relevant paths, constraints and expected evidence. Keep simple work inline; parallel writers require separate worktrees.",
+		],
+		parameters: Type.Object({
+			agent: Type.Optional(Type.String({ minLength: 1 })),
+			task: Type.Optional(Type.String({ minLength: 1 })),
+			cwd: Type.Optional(Type.String()),
+			tasks: Type.Optional(Type.Array(ForegroundTaskSchema, { minItems: 1, maxItems: 8 })),
+			agentScope: Type.Optional(AgentScopeSchema),
+			confirmProjectAgents: Type.Optional(Type.Boolean({ default: true })),
+		}),
+		async execute(_id, params, signal, onUpdate, ctx) {
+			const single = params.agent !== undefined || params.task !== undefined;
+			if (single === (params.tasks !== undefined) || (params.tasks !== undefined && params.cwd !== undefined)) {
+				throw new Error("Provide exactly one mode: agent + task (+ cwd), or tasks with per-task cwd.");
+			}
+			const tasks = params.tasks ?? [{ agent: params.agent ?? "", task: params.task ?? "", cwd: params.cwd }];
+			if (!tasks.length || tasks.length > 8 || tasks.some((task) => !task.agent.trim() || !task.task.trim())) {
+				throw new Error("Provide 1–8 tasks with non-empty agent and task.");
+			}
+			const controller = new AbortController();
+			const abort = () => controller.abort();
+			if (signal?.aborted) abort();
+			signal?.addEventListener("abort", abort, { once: true });
+			const run = runForegroundAgents(pi, ctx, tasks, params, controller.signal, (results) => {
+				onUpdate?.({ content: [{ type: "text", text: foregroundText(results) }], details: { results } });
+			});
+			foregroundRuns.set(controller, run);
+			try {
+				const results = await run;
+				const text = foregroundText(results);
+				if (single && results[0]?.state !== "completed") throw new Error(text);
+				return { content: [{ type: "text" as const, text }], details: { results } };
+			} finally {
+				foregroundRuns.delete(controller);
+				signal?.removeEventListener("abort", abort);
+			}
+		},
+	});
+	pi.on("session_start", async (_event, ctx) => {
 		const session = sessionIdentityFromContext(ctx);
-		void resumeRunningJobs(pi, ctx.cwd, session);
+		try {
+			const root = await trustedAgentRoot(ctx);
+			await resumeRunningJobs(pi, root, session);
+		} catch { /* Untrusted or invalid agent job directories must not auto-resume. */ }
 		void resumeRunningLoopJobs(pi, ctx.cwd, session);
 	});
 
@@ -1654,16 +1889,21 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("agent-job-status", {
-		description: "Show background agent job status (usage: /agent-job-status [jobId])",
+		description: "Show background agent job status (usage: /agent-job-status [--project-root <path>] [jobId])",
 		handler: async (args, ctx) => {
-			const jobId = args.trim();
 			try {
+				const { jobId, cwd: requestedCwd, help } = parseLoopJobStatusCommandArgs(args.trim());
+				if (help) {
+					ctx.ui.notify("Usage: /agent-job-status [--project-root <path>] [jobId]", "info");
+					return;
+				}
+				const cwd = await trustedAgentRoot(ctx, requestedCwd);
 				if (jobId) {
-					const status = await finalizeIfDone(pi, ctx.cwd, jobId, false);
+					const status = await finalizeIfDone(pi, cwd, jobId, false);
 					ctx.ui.notify(`${status.jobId}: ${status.state}${status.summary ? ` — ${status.summary}` : ""}`, "info");
 					return;
 				}
-				const statuses = await listStatuses(ctx.cwd);
+				const statuses = await listStatuses(cwd);
 				if (statuses.length === 0) ctx.ui.notify("No background agent jobs found", "info");
 				else ctx.ui.notify(statuses.slice(0, 5).map((status) => `${status.jobId}: ${status.state}`).join("\n"), "info");
 			} catch (error) {
@@ -1734,7 +1974,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			followUp: Type.Optional(Type.Boolean({ description: "Send a follow-up user message when the job finishes. Default: true.", default: true })),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const status = await launchAgentJob(pi, { cwd: ctx.cwd, signal, sessionManager: ctx.sessionManager }, {
+			const status = await launchAgentJob(pi, { cwd: ctx.cwd, model: ctx.model, thinkingLevel: ctx.thinkingLevel, signal, sessionManager: ctx.sessionManager, hasUI: ctx.hasUI, ui: ctx.ui, isProjectTrusted: () => ctx.isProjectTrusted() }, {
 				agent: params.agent,
 				task: params.task,
 				cwd: params.cwd,
@@ -1762,17 +2002,19 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "agent_job_status",
 		label: "Agent Job Status",
-		description: "Check a background agent job, or list recent jobs when jobId is omitted.",
+		description: "Check a background agent job, or list recent jobs when jobId is omitted. Pass cwd when the job was started in another project.",
 		parameters: Type.Object({
 			jobId: Type.Optional(Type.String({ description: "Job id returned by agent_job_start." })),
+			cwd: Type.Optional(Type.String({ description: "Project root where the job was started. Defaults to current cwd." })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const cwd = await trustedAgentRoot(ctx, params.cwd);
 			if (params.jobId) {
-				const status = await finalizeIfDone(pi, ctx.cwd, params.jobId, false);
+				const status = await finalizeIfDone(pi, cwd, params.jobId, false);
 				const preview = fileExists(status.resultPath) ? truncateTail(await fs.promises.readFile(status.resultPath, "utf8"), 6000) : undefined;
 				return { content: [{ type: "text" as const, text: formatStatus(status, preview) }], details: status };
 			}
-			const statuses = await listStatuses(ctx.cwd);
+			const statuses = await listStatuses(cwd);
 			const text = statuses.length === 0
 				? "No background agent jobs found."
 				: statuses.slice(0, 10).map((status) => `${status.jobId}\t${status.agent}\t${status.state}\t${status.summary || ""}`).join("\n");
@@ -1904,30 +2146,26 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "agent_job_cancel",
 		label: "Agent Job Cancel",
-		description: "Cancel a running background agent process.",
+		description: "Cancel a running background agent process. Pass cwd when the job was started in another project.",
 		parameters: Type.Object({
 			jobId: Type.String({ description: "Job id returned by agent_job_start." }),
+			cwd: Type.Optional(Type.String({ description: "Project root where the job was started. Defaults to current cwd." })),
 			killWindow: Type.Optional(Type.Boolean({ description: "Force-kill the process after requesting cancellation. Retained for compatibility; default false.", default: false })),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const status = await finalizeIfDone(pi, ctx.cwd, params.jobId, false);
+			const cwd = await trustedAgentRoot(ctx, params.cwd);
+			const status = await finalizeIfDone(pi, cwd, params.jobId, false);
 			if (status.state !== "running") {
 				return { content: [{ type: "text" as const, text: `Job ${status.jobId} is already ${status.state}.` }], details: status };
 			}
 			if (status.cancelRequestedAt) {
 				return { content: [{ type: "text" as const, text: `Cancellation is already pending for job ${status.jobId}.` }], details: status };
 			}
-			let signalled = false;
-			if (status.processId) signalled = signalDetachedProcess(status.processId, "SIGTERM");
-			else if (status.tmuxWindow && process.env.TMUX) {
-				await execChecked(pi, "tmux", ["send-keys", "-t", status.tmuxWindow, "C-c"], { signal, timeout: 5000 });
-				signalled = true;
-			} else throw new Error(`Job ${status.jobId} has no cancellable process.`);
+			const signalled = await signalOwnedAgent(pi, status, "SIGTERM", signal);
 			const requestedAt = nowIso();
 			const pending = { ...status, cancelRequestedAt: requestedAt, updatedAt: requestedAt, summary: "Cancellation requested; waiting for the process to exit." };
 			if (params.killWindow && signalled) {
-				if (status.processId) signalDetachedProcess(status.processId, "SIGKILL");
-				else if (status.tmuxWindow) await execChecked(pi, "tmux", ["kill-window", "-t", status.tmuxWindow], { signal, timeout: 5000 });
+				await signalOwnedAgent(pi, status, "SIGKILL", signal);
 			}
 			const stopped = !signalled || params.killWindow;
 			const updated = stopped

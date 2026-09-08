@@ -1,9 +1,11 @@
 import test from "node:test";
+import { execFileSync } from "node:child_process";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 import agentJobsExtension, {
 	buildAgentTask,
@@ -57,7 +59,7 @@ function activateLifecycleHarness(sendUserMessage: (content: string, options?: u
 }
 
 async function emitLifecycle(handlers: Map<string, Array<(event: any, ctx: any) => unknown>>, event: string, payload: any, ctx: any): Promise<void> {
-	for (const handler of handlers.get(event) ?? []) await handler(payload, ctx);
+	for (const handler of handlers.get(event) ?? []) await handler(payload, { isProjectTrusted: () => true, ...ctx });
 }
 
 test("sanitizeJobPart and createJobId produce process-safe names", () => {
@@ -455,6 +457,7 @@ test("a completion follow-up rejected during shutdown is retried by the next ses
 });
 
 test("agent job cancellation stays pending until the process exits", async (t) => {
+	t.mock.method(ProjectTrustStore.prototype, "get", () => true);
 	const root = await mkdtemp(join(tmpdir(), "agent-job-cancel-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
 	const jobId = "fixture-job";
@@ -484,9 +487,10 @@ test("agent job cancellation stays pending until the process exits", async (t) =
 		registerTool(definition: any) {
 			tools.set(definition.name, definition);
 		},
+		exec: async (command: string, args: string[]) => ({ code: 0, stdout: execFileSync(command, args, { encoding: "utf8" }), stderr: "", killed: false }),
 	} as any);
 
-	const result = await tools.get("agent_job_cancel").execute("call-1", { jobId }, undefined, undefined, { cwd: root });
+	const result = await tools.get("agent_job_cancel").execute("call-1", { jobId, cwd: root }, undefined, undefined, { cwd: tmpdir(), isProjectTrusted: () => true });
 	assert.equal(result.details.state, "running");
 	assert.ok(result.details.cancelRequestedAt);
 	assert.match(result.content[0].text, /Cancellation requested/);
@@ -550,6 +554,35 @@ test("loop cancellation preserves an exit marker for later finalization", async 
 	assert.equal(finalized.details.state, "cancelled");
 });
 
+test("agent status and listing accept absolute or relative project roots", async (t) => {
+	t.mock.method(ProjectTrustStore.prototype, "get", () => true);
+	const parent = await mkdtemp(join(tmpdir(), "agent-status-cross-project-"));
+	t.after(() => rm(parent, { recursive: true, force: true }));
+	const root = join(parent, "target");
+	const jobId = "completed-fixture";
+	const jobDir = join(root, ".pi", "agent-jobs", jobId);
+	await mkdir(jobDir, { recursive: true });
+	const resultPath = join(jobDir, "result.md");
+	await writeFile(resultPath, "Review complete.");
+	await writeFile(join(jobDir, "status.json"), JSON.stringify({
+		jobId, cwd: root, jobDir, agent: "oracle", state: "completed", resultPath,
+		createdAt: new Date().toISOString(), followUp: false,
+	}));
+	const tools = new Map<string, ToolDefinition>();
+	agentJobsExtension({
+		on() {}, registerCommand() {},
+		registerTool(tool: ToolDefinition) { tools.set(tool.name, tool); },
+	} as unknown as ExtensionAPI);
+	const ctx = { cwd: parent, isProjectTrusted: () => true } as ExtensionContext;
+	for (const cwd of [root, "target"]) {
+		const status = await tools.get("agent_job_status")!.execute("status", { jobId, cwd }, undefined, undefined, ctx);
+		assert.match(JSON.stringify(status.content), /Review complete/);
+		const list = await tools.get("agent_job_status")!.execute("list", { cwd }, undefined, undefined, ctx);
+		assert.match(JSON.stringify(list.content), /completed-fixture/);
+	}
+	await assert.rejects(tools.get("agent_job_status")!.execute("missing", { jobId, cwd: "absent" }, undefined, undefined, ctx), /ENOENT/);
+});
+
 test("agentJobsExtension registers background job tools and commands", () => {
 	const tools = new Set<string>();
 	const commands = new Set<string>();
@@ -566,6 +599,6 @@ test("agentJobsExtension registers background job tools and commands", () => {
 
 	agentJobsExtension(api);
 
-	assert.deepEqual([...tools].sort(), ["agent_job_cancel", "agent_job_start", "agent_job_status", "loop_job_cancel", "loop_job_start", "loop_job_status"]);
+	assert.deepEqual([...tools].sort(), ["agent_job_cancel", "agent_job_start", "agent_job_status", "loop_job_cancel", "loop_job_start", "loop_job_status", "subagent"]);
 	assert.deepEqual([...commands].sort(), ["agent-job-status", "ask-oracle-bg", "deep-review-bg", "loop-bg", "loop-job-status", "research-bg"]);
 });
