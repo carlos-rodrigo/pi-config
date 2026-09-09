@@ -68,7 +68,6 @@ function inferModeFromModel(model: ModelLike, thinking?: ThinkingLevel | "off"):
 export default function (pi: ExtensionAPI) {
 	let currentMode: AgentMode = "fast";
 	let currentCtx: ExtensionContext | undefined;
-	const routerLoaded = () => pi.getCommands?.().some(command => command.name === "route") ?? false;
 
 	function updateStatus(ctx: ExtensionContext): void {
 		const label = MODE_LABEL[currentMode];
@@ -81,7 +80,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	function syncModeState(ctx: ExtensionContext): void {
-		if (!routerLoaded()) pi.setActiveTools(getActiveToolsForMode());
+		pi.setActiveTools(getActiveToolsForMode());
 		updateStatus(ctx);
 		pi.events.emit("workflow:mode", { mode: currentMode, label: MODE_LABEL[currentMode] });
 	}
@@ -107,14 +106,12 @@ export default function (pi: ExtensionAPI) {
 			);
 		}
 
-		if (routerLoaded() && !modelApplied) return;
 		currentMode = mode;
 		pi.setThinkingLevel(profile.thinking);
 		syncModeState(ctx);
 
 		if (options?.persist !== false) {
 			pi.appendEntry("workflow-mode", { mode });
-			pi.events.emit("workflow:manual-mode", { mode });
 		}
 
 		if (options?.notify !== false) {
@@ -222,13 +219,6 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
-		if (routerLoaded()) {
-			const restoredMode = restoreModeFromSession(ctx);
-			const flagMode = ["reload", "resume", "fork"].includes(_event.reason) ? undefined : getModeFlag(pi);
-			currentMode = flagMode ?? restoredMode ?? inferModeFromModel(ctx.model, pi.getThinkingLevel()) ?? "fast";
-			return;
-		}
-
 		const flagMode = getModeFlag(pi);
 		const restoredMode = restoreModeFromSession(ctx);
 		const inferredMode = inferModeFromModel(ctx.model as ModelLike, pi.getThinkingLevel());
@@ -246,7 +236,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_tree", (_event, ctx) => {
 		currentCtx = ctx;
 		currentMode = restoreModeFromSession(ctx) ?? inferModeFromModel(ctx.model, pi.getThinkingLevel()) ?? "fast";
-		if (!routerLoaded()) syncModeState(ctx);
+		syncModeState(ctx);
 	});
 
 	pi.on("session_shutdown", async () => {
@@ -254,7 +244,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.events.on("workflow:request-mode", () => {
-		if (!currentCtx || routerLoaded()) return;
+		if (!currentCtx) return;
 		pi.events.emit("workflow:mode", { mode: currentMode, label: MODE_LABEL[currentMode] });
 	});
 }

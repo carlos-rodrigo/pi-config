@@ -1,8 +1,6 @@
 # workflow-modes
 
-Legacy fixed presets (fast/smart/deep/max), available through commands or a keyboard shortcut.
-
-When [workflow-router](../workflow-router/) is installed, it owns startup and defaults to Astra medium with Luna-low task classification. Selecting a preset locks routing; `/route auto` resumes it. The behavior below describes standalone installation unless noted.
+Manual fixed presets (fast/smart/deep/max), available through commands or a keyboard shortcut. Requests do not trigger automatic model classification or switching.
 
 ## Install
 
@@ -24,7 +22,7 @@ pi install ./extensions/workflow-modes
 
 | Mode | Preferred model | Thinking | Use case |
 |------|-----------------|----------|----------|
-| **fast** | `openai-codex/gpt-5.6-luna` | medium | Standalone default — small tasks with rapid feedback |
+| **fast** | `openai-codex/gpt-5.6-luna` | medium | Default — small tasks with rapid feedback |
 | **smart** | `openai-codex/gpt-5.6-sol` | medium | Complex debugging, cross-module work, and meaningful trade-offs |
 | **deep** | `openai-codex/gpt-6-astra` | xhigh | Challenging long-running work, deep review, and high-risk implementation |
 | **max** | `openai-codex/gpt-6-astra` | max | Exceptional quality-first work requiring maximum exploration and verification |

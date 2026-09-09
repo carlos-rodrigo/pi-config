@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { stripVTControlCharacters } from "node:util";
 
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { initTheme } from "@earendil-works/pi-coding-agent";
+
+// Workbench highlighting uses Pi's global theme in addition to the UI test double.
+initTheme("dark", false);
 
 import registerReviewModeExtension, {
 	buildReviewModeDiffHash,
@@ -420,7 +425,8 @@ test("ReviewModeWorkbench gives added and removed lines soft diff backgrounds li
 		onClose() {},
 	});
 
-	const render = component.render(180).join("\n");
+	// Ignore syntax foreground colors, but retain and assert the diff backgrounds.
+	const render = component.render(180).join("\n").replace(/\u001b\[(?:38;[0-9;]+|39)m/g, "");
 	assert.match(render, /-\u001b\[48;5;52m old\u001b\[49m/);
 	assert.match(render, /\+\u001b\[48;5;22m new\u001b\[49m/);
 });
@@ -487,11 +493,11 @@ test("ReviewModeWorkbench keeps explicit code-pane scrolling instead of snapping
 	});
 
 	component.focusContent();
-	const initial = component.render(120).join("\n");
+	const initial = stripVTControlCharacters(component.render(120).join("\n"));
 	assert.match(initial, /value1 = 1/);
 
 	component.handleInput("\u0004");
-	const scrolled = component.render(120).join("\n");
+	const scrolled = stripVTControlCharacters(component.render(120).join("\n"));
 	assert.doesNotMatch(scrolled, /value1 = 1/);
 	assert.match(scrolled, /value(?:3[0-9]|4[0-9]) =/);
 });
@@ -666,7 +672,7 @@ test("ReviewModeWorkbench supports file, selection, and all-change review flows"
 		onClose() {},
 	});
 
-	const initialRender = component.render(180).join("\n");
+	const initialRender = stripVTControlCharacters(component.render(180).join("\n"));
 	assert.match(initialRender, /Changed Files \(2\)/);
 	assert.doesNotMatch(initialRender, /Changed Regions/);
 	assert.match(initialRender, /Code Changes · README\.md/);
@@ -715,7 +721,7 @@ test("ReviewModeWorkbench supports file, selection, and all-change review flows"
 
 	component.moveSelection(1);
 	component.focusContent();
-	assert.match(component.render(180).join("\n"), /console\.log\('x'\)/);
+	assert.match(stripVTControlCharacters(component.render(180).join("\n")), /console\.log\('x'\)/);
 
 	component.beginInputMode("note", { kind: "all" });
 	component.replaceDraft("Need one more review pass");

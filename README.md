@@ -75,8 +75,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[session-query](extensions/session-query/)** — Query previous Pi session files for context and decisions.
 - **[verify](extensions/verify/)** — Preflight `verification_plan`, back-pressure verification hook, and `/setup-verify` scaffolder.
 - **[web-tools](extensions/web-tools/)** — Web search and fetch tools.
-- **[workflow-modes](extensions/workflow-modes/)** — Legacy fixed Luna/Sol/Astra presets.
-- **[workflow-router](extensions/workflow-router/)** — Luna-low task classification with Astra medium default/fallback and evidence-gated xhigh; `/classify` previews and `/route auto|lock` controls.
+- **[workflow-modes](extensions/workflow-modes/)** — Manual Fast/Smart/Deep/Max Luna/Sol/Astra presets.
 - **[worktree-manager](extensions/worktree-manager/)** — Git worktree lifecycle manager.
 
 ### [Skills](skills/)

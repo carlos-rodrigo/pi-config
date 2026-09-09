@@ -824,15 +824,6 @@ export default function selfImprovementArchiveExtension(pi: ExtensionAPI) {
 		if (runState && typeof mode === "string") runState.workflowMode = mode;
 	});
 
-	pi.events?.on?.("workflow:routing-record", (payload: unknown) => {
-		const data = payload as { cwd?: string; sessionId?: string; note?: unknown } | undefined;
-		if (!currentCtx || data?.cwd !== currentCtx.cwd || data.sessionId !== getSessionId(currentCtx) || typeof data.note !== "string") return;
-		appendArchiveRecord(currentCtx.cwd, {
-			schemaVersion: SELF_IMPROVEMENT_SCHEMA_VERSION, kind: "note", timestamp: isoNow(),
-			cwd: currentCtx.cwd, sessionId: data.sessionId, note: redactReplayText(data.note),
-		});
-	});
-
 	pi.events?.on?.(VERIFICATION_EVENT, (payload: unknown) => {
 		const data = payload as VerificationArchivePayload;
 		const cwd = data.projectRoot || currentCtx?.cwd;

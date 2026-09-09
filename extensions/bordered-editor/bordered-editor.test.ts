@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import borderedEditor, {
@@ -73,9 +74,9 @@ test("pickPrimaryExtensionStatus prefers review over prompt queue", () => {
 	assert.equal(pickPrimaryExtensionStatus(statuses), "reviewing");
 });
 
-test("pickPrimaryExtensionStatus suppresses routing and background index state from the composer", () => {
+test("pickPrimaryExtensionStatus avoids duplicating mode and background index state", () => {
 	const statuses = new Map<string, string>([
-		["workflow-mode", "route: auto · gpt-6-astra · xhigh"],
+		["workflow-mode", "mode: Deep"],
 		["semantic-search", "idx: embedding 60% · ~11s"],
 	]);
 
@@ -91,9 +92,8 @@ test("pickPrimaryExtensionStatus still surfaces foreground semantic search statu
 	assert.equal(pickPrimaryExtensionStatus(statuses), "embedding…");
 });
 
-test("pickPrimaryExtensionStatus keeps classifier progress but not routing metadata in the composer", () => {
-	assert.equal(pickPrimaryExtensionStatus(new Map<string, string>([["workflow-mode", "route: auto · gpt-6-astra · xhigh"]])), null);
-	assert.equal(pickPrimaryExtensionStatus(new Map<string, string>([["workflow-mode", "route: classifying · Luna low"]])), "route: classifying · Luna low");
+test("pickPrimaryExtensionStatus omits mode metadata from the bottom border", () => {
+	assert.equal(pickPrimaryExtensionStatus(new Map<string, string>([["workflow-mode", "mode: Smart"]])), null);
 	assert.equal(pickPrimaryExtensionStatus(new Map()), null);
 });
 
@@ -107,15 +107,18 @@ test("pickPrimaryExtensionStatus prefers prompt queue over ambient mode status",
 	);
 });
 
-test("composer omits workflow mode, model, and effort while preserving its operational chrome", async () => {
+test("composer restores workflow mode, live model and effort while preserving operational chrome", async () => {
 	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
 	const events = new EventEmitter();
 	let editorFactory: ((tui: unknown, theme: unknown, keybindings: unknown) => { render: (width: number) => string[] }) | undefined;
+	let thinking = "xhigh";
+	events.on("workflow:request-mode", () => events.emit("workflow:mode", { mode: "deep", label: "Deep" }));
 	borderedEditor({
+		getThinkingLevel: () => thinking,
 		on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => handlers.set(name, handler),
 		events,
 	} as never);
-	const theme = { borderColor: (text: string) => text, fg: (_color: string, text: string) => text };
+	const theme = { borderColor: (text: string) => text, bold: (text: string) => text, fg: (_color: string, text: string) => text };
 	const ctx = {
 		cwd: "/tmp/project",
 		model: { id: "gpt-6-astra", name: "GPT-6 Astra" },
@@ -129,9 +132,15 @@ test("composer omits workflow mode, model, and effort while preserving its opera
 	} as unknown as ExtensionContext;
 	await handlers.get("session_start")!({}, ctx);
 	const editor = editorFactory!({ terminal: { rows: 40 }, requestRender() {} }, theme, { matches: () => false });
-	events.emit("workflow:mode", { mode: "deep", label: "Deep" });
 	const rendered = editor.render(100).join("\n");
-	assert.doesNotMatch(rendered, /mode:|GPT-6 Astra|xhigh/);
+	assert.match(rendered, /mode:deep/);
+	assert.match(rendered, /GPT-6 Astra · xhigh/);
+	thinking = "medium";
+	events.emit("workflow:mode", { mode: "smart", label: "Smart" });
+	assert.match(editor.render(100)[0], /mode:smart.*GPT-6 Astra · medium/);
+	for (const width of [10, 20, 40]) {
+		assert.ok(visibleWidth(editor.render(width)[0]) <= width);
+	}
 	assert.match(rendered, /25% of 200k/);
 	assert.match(rendered, /\/tmp\/project/);
 });

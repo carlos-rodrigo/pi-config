@@ -2,11 +2,11 @@
  * Bordered Editor — compact input box with operational status,
  * project context, and ghost text support for Auto Prompt suggestions.
  *
- * ╭────────────────────────────────────────────────────────╮
+ * ╭─ mode:smart ───────────── GPT-6 Astra · medium ─╮
  * │   ▌Implement the error handling changes                │  ← gray ghost text
  * ╰─ 42% of 200k · 1.2M burned · $1.14 ─ ~/project (main) ─╯
  *
- * Model, effort, and routing state live beside each response in the timeline.
+ * Top border: workflow mode and live model · thinking level.
  * Bottom left:  context% of Nk · cumulative tokens burned · $cost - active status
  * Bottom right: cwd plus git state — branch (main checkout) or worktree info
  *
@@ -26,9 +26,8 @@ const PADDING_X = 2;
 
 function shouldShowPrimaryExtensionStatus(key: string, status: string): boolean {
 	const value = status.trim();
-	// Routing metadata belongs to the response legend; only transient classifier
-	// progress remains useful in the composer while the request is waiting.
-	if (key === "workflow-mode") return value.startsWith("route: classifying");
+	// The mode already appears in the top border.
+	if (key === "workflow-mode") return false;
 	// Background semantic index rebuilds have a dedicated compact indicator on the
 	// right border. Suppress the mirrored extension status to avoid duplicate
 	// `idx: ...` labels while keeping foreground semantic-search statuses visible.
@@ -50,6 +49,22 @@ export function pickPrimaryExtensionStatus(statuses: ReadonlyMap<string, string>
 	}
 
 	return memoryStatus ?? null;
+}
+
+const THINKING_COLORS = {
+	off: "thinkingOff",
+	minimal: "thinkingMinimal",
+	low: "thinkingLow",
+	medium: "thinkingMedium",
+	high: "thinkingHigh",
+	xhigh: "thinkingXhigh",
+	max: "thinkingMax",
+} as const;
+
+function modeColor(mode: string | null) {
+	if (mode === "max") return "thinkingMax";
+	if (mode === "deep") return "thinkingXhigh";
+	return "thinkingMedium";
 }
 
 export function formatBackgroundJobIndicator(count: number): string | null {
@@ -212,6 +227,12 @@ function getLinkedWorktreeLabel(cwd: string, fallbackBranch: string | null): str
 
 class BorderedEditor extends CustomEditor {
 	private ctx?: ExtensionContext;
+	private modeLabel: string | null = null;
+	private getThinkingLevel: () => ReturnType<ExtensionAPI["getThinkingLevel"]> = () => "off";
+
+	setModeLabel(label: string | null): void {
+		this.modeLabel = label?.trim().toLowerCase() || null;
+	}
 	private getGitBranch: () => string | null = () => null;
 	private getWorktreeInfo: () => string | null = () => null;
 	private getExtensionStatus: () => string | null = () => null;
@@ -228,13 +249,15 @@ class BorderedEditor extends CustomEditor {
 		ctx: ExtensionContext,
 		getGitBranch: () => string | null,
 		getWorktreeInfo: () => string | null,
+		getThinkingLevel: () => ReturnType<ExtensionAPI["getThinkingLevel"]>,
 		getExtensionStatus: () => string | null,
 	) {
 		this.ctx = ctx;
 		this.getGitBranch = getGitBranch;
 		this.getWorktreeInfo = getWorktreeInfo;
+		this.getThinkingLevel = getThinkingLevel;
 		this.getExtensionStatus = getExtensionStatus;
-		this.borderColor = (s: string) => ctx.ui.theme.fg("border", s);
+		this.borderColor = (s: string) => ctx.ui.theme.fg(this.modeLabel ? modeColor(this.modeLabel) : "border", s);
 	}
 
 	setBackgroundJobCount(count: number): void {
@@ -316,6 +339,17 @@ class BorderedEditor extends CustomEditor {
 			}
 		}
 
+		let topLeft = "";
+		if (this.modeLabel && theme) {
+			topLeft = theme.fg("dim", "mode:") + theme.fg(modeColor(this.modeLabel), theme.bold(this.modeLabel));
+		}
+		let topRight = "";
+		if (this.ctx?.model && theme) {
+			const level = this.getThinkingLevel();
+			topRight = theme.fg("muted", this.ctx.model.name || this.ctx.model.id)
+				+ theme.fg("dim", " · ") + theme.fg(THINKING_COLORS[level], theme.bold(level));
+		}
+
 		// --- Bottom-left: context · tokens burned · cost - primary extension status ---
 		let bottomLeft = "";
 		if (this.ctx && theme) {
@@ -349,7 +383,7 @@ class BorderedEditor extends CustomEditor {
 
 		return lines.map((line, i) => {
 			if (i === 0)
-				return this.buildBorder(width, "╭", "╮", bc, "", "");
+				return this.buildBorder(width, "╭", "╮", bc, topLeft, topRight);
 			if (i === bottomIdx)
 				return this.buildBorder(
 					width,
@@ -440,6 +474,12 @@ export default function (pi: ExtensionAPI) {
 	let loopJobCount = 0;
 	let indexRebuildIndicator: string | null = null;
 
+	pi.events.on("workflow:mode", (data) => {
+		const { mode, label } = data as { mode?: string; label?: string };
+		editorInstance?.setModeLabel(label ?? mode ?? null);
+		requestRender?.();
+	});
+
 	// --- Background job count events ---
 
 	pi.events.on("agent-jobs:running-count", (data) => {
@@ -528,6 +568,7 @@ export default function (pi: ExtensionAPI) {
 				ctx,
 				() => gitBranch,
 				() => linkedWorktreeLabel,
+				() => pi.getThinkingLevel(),
 				getExtensionStatus,
 			);
 
@@ -540,6 +581,7 @@ export default function (pi: ExtensionAPI) {
 			};
 
 			editorInstance = editor;
+			pi.events.emit("workflow:request-mode", {});
 
 			return editor;
 		});
