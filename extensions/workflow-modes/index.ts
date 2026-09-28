@@ -143,14 +143,14 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerShortcut("ctrl+shift+m", {
-		description: "Cycle agent mode (Fast/Smart/Deep/Max; Deep/Max use Astra)",
+		description: "Cycle agent mode (Fast uses Luna, Smart uses Sol, Deep/Max use Astra)",
 		handler: async (ctx: ExtensionContext) => {
 			await cycleMode(ctx);
 		},
 	});
 
 	pi.registerCommand("mode", {
-		description: "Switch agent mode: fast | smart | deep | max (Deep/Max use Astra)",
+		description: "Switch agent mode: fast | smart | deep | max (Fast uses Luna, Smart uses Sol, Deep/Max use Astra)",
 		handler: async (args, ctx) => {
 			const input = args.trim();
 			if (!input) {

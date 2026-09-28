@@ -10,6 +10,8 @@ import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 import { execChecked } from "../lib/process.ts";
 
+type AgentThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
+
 export type AgentJobMode = "standard" | "review";
 export type AgentJobState = "running" | "completed" | "failed" | "cancelled";
 export type LoopTool = "amp" | "claude" | "opencode" | "pi";
@@ -332,7 +334,7 @@ export function parseAgentEvents(eventsJsonl: string): AgentEventParseResult {
 	return result;
 }
 
-function buildPiInvocationArgs(agent: AgentConfig, promptPath: string, systemPromptPath?: string, thinkingLevel?: ExtensionContext["thinkingLevel"]): string[] {
+function buildPiInvocationArgs(agent: AgentConfig, promptPath: string, systemPromptPath?: string, thinkingLevel?: AgentThinkingLevel): string[] {
 	const args = ["--mode", "json", "-p", "--no-session"];
 	if (agent.model) args.push("--model", agent.model);
 	if (thinkingLevel) args.push("--thinking", thinkingLevel);
@@ -342,7 +344,7 @@ function buildPiInvocationArgs(agent: AgentConfig, promptPath: string, systemPro
 	return args;
 }
 
-function buildPiCommand(agent: AgentConfig, promptPath: string, systemPromptPath?: string, thinkingLevel?: ExtensionContext["thinkingLevel"]): string {
+function buildPiCommand(agent: AgentConfig, promptPath: string, systemPromptPath?: string, thinkingLevel?: AgentThinkingLevel): string {
 	const args = buildPiInvocationArgs(agent, promptPath, systemPromptPath, thinkingLevel);
 	return ["pi", ...args].map(shellQuote).join(" ");
 }
@@ -351,7 +353,7 @@ export function buildRunScript(params: {
 	cwd: string;
 	jobId: string;
 	agent: AgentConfig;
-	thinkingLevel?: ExtensionContext["thinkingLevel"];
+	thinkingLevel?: AgentThinkingLevel;
 	promptPath: string;
 	systemPromptPath?: string;
 	eventLogPath: string;
@@ -809,7 +811,7 @@ async function listStatuses(cwd: string): Promise<AgentJobStatus[]> {
 type LaunchContext = {
 	cwd: string;
 	model?: Pick<NonNullable<ExtensionContext["model"]>, "provider" | "id">;
-	thinkingLevel?: ExtensionContext["thinkingLevel"];
+	thinkingLevel?: AgentThinkingLevel;
 	signal?: AbortSignal;
 	hasUI?: boolean;
 	isProjectTrusted?(): boolean;
@@ -1974,7 +1976,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			followUp: Type.Optional(Type.Boolean({ description: "Send a follow-up user message when the job finishes. Default: true.", default: true })),
 		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const status = await launchAgentJob(pi, { cwd: ctx.cwd, model: ctx.model, thinkingLevel: ctx.thinkingLevel, signal, sessionManager: ctx.sessionManager, hasUI: ctx.hasUI, ui: ctx.ui, isProjectTrusted: () => ctx.isProjectTrusted() }, {
+			const status = await launchAgentJob(pi, { cwd: ctx.cwd, model: ctx.model, thinkingLevel: pi.getThinkingLevel(), signal, sessionManager: ctx.sessionManager, hasUI: ctx.hasUI, ui: ctx.ui, isProjectTrusted: () => ctx.isProjectTrusted() }, {
 				agent: params.agent,
 				task: params.task,
 				cwd: params.cwd,

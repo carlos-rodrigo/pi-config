@@ -165,7 +165,7 @@ test("workflow-modes registers only ctrl+shift+m for cycling", () => {
 	const shortcut = shortcuts.get("ctrl+shift+m");
 
 	assert.ok(shortcut);
-	assert.equal(shortcut.description, "Cycle agent mode (Fast/Smart/Deep/Max; Deep/Max use Astra)");
+	assert.equal(shortcut.description, "Cycle agent mode (Fast uses Luna, Smart uses Sol, Deep/Max use Astra)");
 	assert.equal(shortcuts.has("f6"), false);
 	assert.equal(shortcuts.has("f7"), false);
 	assert.equal(shortcuts.has("f8"), false);
@@ -191,7 +191,7 @@ test("ctrl+shift+m cycles through every mode from the Fast default", async () =>
 	assert.ok(shortcut);
 
 	await shortcut.handler(ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-6-sol" });
 	assert.equal(getThinkingLevel(), "medium");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Smart/i);
 	assert.match(statuses.at(-1)?.value ?? "", /mode: Smart/i);
@@ -212,7 +212,7 @@ test("ctrl+shift+m cycles through every mode from the Fast default", async () =>
 	assert.equal(themeColors.at(-1), "thinkingMax");
 
 	await shortcut.handler(ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-luna" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-6-luna" });
 	assert.equal(getThinkingLevel(), "medium");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Fast/i);
 	assert.match(statuses.at(-1)?.value ?? "", /mode: Fast/i);
@@ -243,12 +243,12 @@ test("/fast /smart /deep /max commands switch their no-fallback models directly"
 	assert.match(maxCommand.description, /max reasoning/i);
 
 	await fastCommand.handler("", ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-luna" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-6-luna" });
 	assert.equal(getThinkingLevel(), "medium");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Fast/i);
 
 	await smartCommand.handler("", ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-sol" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-6-sol" });
 	assert.equal(getThinkingLevel(), "medium");
 	assert.match(notifications.at(-1)?.message ?? "", /Switched to Mode: Smart/i);
 
@@ -275,7 +275,7 @@ test("modes do not fall back when their configured model is unavailable", async 
 	await fastCommand.handler("", ctx as any);
 	assert.equal(getSelectedModel(), undefined);
 	assert.equal(getThinkingLevel(), "medium");
-	assert.ok(notifications.some(({ message }) => /gpt-5\.6-luna.*not found/i.test(message)));
+	assert.ok(notifications.some(({ message }) => /gpt-6-luna.*not found/i.test(message)));
 });
 
 test("/mode command accepts aliases and rejects unknown values", async () => {
@@ -288,7 +288,7 @@ test("/mode command accepts aliases and rejects unknown values", async () => {
 	assert.ok(modeCommand);
 
 	await modeCommand.handler("r", ctx as any);
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-luna" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-6-luna" });
 	assert.equal(getThinkingLevel(), "medium");
 
 	await modeCommand.handler("d", ctx as any);
@@ -335,7 +335,7 @@ test("session_start defaults to Fast with Luna medium", async () => {
 	assert.ok(sessionStart);
 	await sessionStart?.({}, ctx as any);
 
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-luna" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-6-luna" });
 	assert.equal(getThinkingLevel(), "medium");
 });
 
@@ -349,7 +349,7 @@ test("session_start applies workflow-mode flag and keeps edit/write tools active
 	assert.ok(sessionStart);
 	await sessionStart?.({}, ctx as any);
 
-	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-luna" });
+	assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-6-luna" });
 	assert.equal(getThinkingLevel(), "medium");
 	assert.ok(getActiveTools().includes("edit"));
 	assert.ok(getActiveTools().includes("write"));
@@ -423,7 +423,7 @@ test("session_start workflow-mode flag overrides explicit CLI model selection", 
 		assert.ok(sessionStart);
 		await sessionStart?.({}, ctx as any);
 
-		assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-5.6-luna" });
+		assert.deepEqual(getSelectedModel(), { provider: "openai-codex", model: "gpt-6-luna" });
 		assert.equal(getThinkingLevel(), "medium");
 	} finally {
 		process.argv = originalArgv;
