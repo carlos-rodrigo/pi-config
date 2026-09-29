@@ -1144,11 +1144,23 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 			paths: Type.Optional(Type.Array(Type.String(), { description: "Optional path prefixes/substrings to constrain search." })),
 			limit: Type.Optional(Type.Number({ description: `Maximum results (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}).`, minimum: 1, maximum: MAX_LIMIT })),
 		}),
+		outputSchema: Type.Object({
+			query: Type.String(),
+			results: Type.Array(Type.Object({
+				name: Type.String(),
+				kind: StringEnum(["function", "class", "interface", "type", "enum", "variable", "method", "command", "tool", "heading"] as const),
+				path: Type.String(),
+				line: Type.Integer({ minimum: 1 }),
+				signature: Type.String(),
+				score: Type.Optional(Type.Number()),
+			})),
+		}),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			await yieldToEventLoop(signal);
 			const results = await searchSymbolsAsync(ctx.cwd, params as SymbolSearchOptions, signal);
 			return {
 				content: [{ type: "text" as const, text: formatSymbolResults(params.query, results) }],
+				structuredContent: { query: params.query, results },
 				details: { query: params.query, results },
 			};
 		},

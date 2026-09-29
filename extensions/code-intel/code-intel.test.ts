@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readFile } from "node:fs/promises";
+import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 
 import codeIntelExtension, {
 	buildAstGrepArgs,
@@ -56,6 +59,56 @@ export type CheckoutStatus = "open" | "paid";
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
+});
+
+function symbolSearchTool(): ToolDefinition {
+	let tool: ToolDefinition | undefined;
+	codeIntelExtension({
+		registerTool(definition) {
+			if (definition.name === "symbol_search") tool = definition;
+		},
+	} as Pick<ExtensionAPI, "registerTool"> as ExtensionAPI);
+	assert.ok(tool);
+	return tool;
+}
+
+test("symbol_search exposes schema-valid structured results without changing text or details", async (t) => {
+	const dir = makeProject({
+		"src/checkout.ts": "export function checkout() { return true; }\n",
+		"src/session.ts": "export function readSession() { return true; }\n",
+	});
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	const tool = symbolSearchTool();
+	assert.ok(tool.outputSchema, "codemode needs an output schema to receive structured data");
+	assert.equal(tool.exposure ?? "direct", "direct");
+
+	const outputs = await Promise.all(["checkout", "readSession", "missingSymbol"].map(async (query) => {
+		const result = await tool.execute("call-" + query, { query, limit: 1 }, undefined, undefined, { cwd: dir } as ExtensionToolContext);
+		const expected = { query, results: searchSymbols(dir, { query, limit: 1 }) };
+		assert.deepEqual(result.structuredContent, expected);
+		assert.deepEqual(result.details, expected);
+		assert.equal(Value.Check(tool.outputSchema!, result.structuredContent), true);
+		assert.deepEqual(result.content, [{ type: "text", text: formatSymbolResults(query, expected.results) }]);
+		return result.structuredContent as typeof expected;
+	}));
+	assert.equal(outputs[2].results.length, 0);
+	assert.equal(Value.Check(tool.outputSchema, { query: "checkout", results: [{ name: "checkout" }] }), false);
+	assert.equal(Value.Check(tool.outputSchema, { query: "checkout", results: [{ ...outputs[0].results[0], kind: "invalid" }] }), false);
+	assert.equal(Value.Check(tool.outputSchema, { query: "checkout", results: [{ ...outputs[0].results[0], line: 0 }] }), false);
+
+	// Consumers can use reported paths and lines without parsing the display text.
+	const result = outputs[0].results[0];
+	const source = await readFile(join(dir, result.path), "utf8");
+	assert.equal(source.split("\n")[result.line - 1], result.signature);
+});
+
+test("symbol_search structured output preserves cancellation", async () => {
+	const controller = new AbortController();
+	controller.abort();
+	await assert.rejects(
+		symbolSearchTool().execute("cancelled", { query: "checkout" }, controller.signal, undefined, { cwd: process.cwd() } as ExtensionToolContext),
+		(error: unknown) => error instanceof Error && error.name === "AbortError",
+	);
 });
 
 test("dependency_map resolves local imports and reverse dependents", () => {
