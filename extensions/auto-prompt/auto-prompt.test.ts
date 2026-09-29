@@ -11,6 +11,7 @@ import {
 	normalizeComparablePromptText,
 	hasMeaningfulPromptChange,
 	normalizeConfiguredModel,
+	buildCompletionOptions,
 	extractAutoPromptErrorMessage,
 	shouldRetryAutoPromptWithFallback,
 	detectPhase,
@@ -274,9 +275,18 @@ test("hasMeaningfulPromptChange ignores whitespace-only rewrites", () => {
 
 test("normalizeConfiguredModel migrates legacy unsupported codex mini model", () => {
 	assert.deepEqual(normalizeConfiguredModel({ provider: "openai-codex", id: "gpt-5.1-codex-mini" }), {
-		provider: "openai-codex",
-		id: "gpt-5.6-terra",
+		provider: "openai",
+		id: "gpt-6.1-sol",
 	});
+});
+
+test("buildCompletionOptions uses minimal effort only when the OpenAI model supports it", () => {
+	const signal = new AbortController().signal;
+	const withMinimal = { api: "openai-responses", thinkingLevelMap: { minimal: "minimal" } } as any;
+	const withoutMinimal = { api: "openai-responses", thinkingLevelMap: { minimal: null, low: "low" } } as any;
+	assert.equal(buildCompletionOptions(withMinimal, "k", signal).reasoningEffort, "minimal");
+	assert.equal(buildCompletionOptions(withoutMinimal, "k", signal).reasoningEffort, "low");
+	assert.equal(buildCompletionOptions({ api: "anthropic-messages" } as any, "k", signal).reasoningEffort, undefined);
 });
 
 test("normalizeConfiguredModel preserves supported models", () => {

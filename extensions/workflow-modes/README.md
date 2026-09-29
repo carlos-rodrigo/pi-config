@@ -22,13 +22,13 @@ pi install ./extensions/workflow-modes
 
 | Mode | Preferred model | Thinking | Use case |
 |------|-----------------|----------|----------|
-| **fast** | `openai-codex/gpt-6-luna` | medium | Small tasks with rapid feedback |
-| **smart** | `openai-codex/gpt-6-sol` | medium | Complex debugging, cross-module work, and meaningful trade-offs |
-| **deep** | `openai-codex/gpt-6-astra` | xhigh | Challenging long-running work, deep review, and high-risk implementation |
-| **max** | `openai-codex/gpt-6-astra` | max | Exceptional quality-first work requiring maximum exploration and verification |
+| **fast** | `openai/gpt-6.1-sol` | medium | Small tasks with rapid feedback |
+| **smart** | `claude-bridge/claude-opus-5-5` | medium | Complex debugging, cross-module work, and meaningful trade-offs |
+| **deep** | `openai/gpt-6-astra` | xhigh | Challenging long-running work, deep review, and high-risk implementation |
+| **max** | `openai/gpt-6-astra` | max | Exceptional quality-first work requiring maximum exploration and verification |
 
-Fast uses GPT-6 Luna, Smart uses GPT-6 Sol, and Deep/Max use GPT-6 Astra with progressively higher thinking levels. Modes do not fall back when their configured model is unavailable. Mode status colors follow the same reasoning palette as the composer: Fast and Smart medium are blue, Deep xhigh is pink, and Max is gold. Workflow modes prefer outcome-focused prompts: state the target, what good means, constraints, and how to verify. Max remains the explicit maximum-effort mode.
+Fast uses GPT-6.1 Sol, Smart uses Claude Opus 5.5 through the `claude-bridge` provider from the `pi-claude-bridge` package, and Deep/Max use GPT-6 Astra with progressively higher thinking levels. Modes do not fall back when their configured model is unavailable. Mode status colors follow the same reasoning palette as the composer: Fast and Smart medium are blue, Deep xhigh is pink, and Max is gold. Workflow modes prefer outcome-focused prompts: state the target, what good means, constraints, and how to verify. Max remains the explicit maximum-effort mode.
 
-Default note: Smart (GPT-6 Sol, medium) is the recommended general software-engineering starting point. Fast is for clearly trivial work; Deep and Max are for tasks where extra reasoning is worth the cost.
+Default note: Smart (Claude Opus 5.5, medium) is the recommended general software-engineering starting point. Fast is for clearly trivial work; Deep and Max are for tasks where extra reasoning is worth the cost.
 
 Startup note: if you launch Pi with an explicit model/thinking selection (`--model`, `--models`, or `--thinking`), workflow-modes now preserves that choice unless you also pass `--workflow-mode`.

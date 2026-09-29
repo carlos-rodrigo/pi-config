@@ -68,7 +68,7 @@ pi install ./extensions/worktree-manager
 | [self-improvement-archive](self-improvement-archive/) | Quiet local archive of run, verification, benchmark, warning, and proposal evidence |
 | [session-query](session-query/) | Query previous Pi session files for context and decisions |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
-| [workflow-modes](workflow-modes/) | Manual Fast/Smart/Deep/Max GPT-6 Luna/Sol presets |
+| [workflow-modes](workflow-modes/) | Manual Fast (GPT-6.1 Sol) / Smart (Claude Opus 5.5 via claude-bridge) / Deep+Max (GPT-6 Astra) presets |
 | [verify](verify/) | Preflight `verification_plan`, back-pressure hook, and `scripts/verify.sh` scaffolding via `/setup-verify` |
 | [worktree-manager](worktree-manager/) | Git worktree management with complete local development-environment copying |
 

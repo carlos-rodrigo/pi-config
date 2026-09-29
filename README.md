@@ -75,7 +75,7 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[session-query](extensions/session-query/)** — Query previous Pi session files for context and decisions.
 - **[verify](extensions/verify/)** — Preflight `verification_plan`, back-pressure verification hook, and `/setup-verify` scaffolder.
 - **[web-tools](extensions/web-tools/)** — Web search and fetch tools.
-- **[workflow-modes](extensions/workflow-modes/)** — Manual Fast/Smart/Deep/Max GPT-6 Luna/Sol presets.
+- **[workflow-modes](extensions/workflow-modes/)** — Manual Fast (GPT-6.1 Sol) / Smart (Claude Opus 5.5 via claude-bridge) / Deep+Max (GPT-6 Astra) presets.
 - **[worktree-manager](extensions/worktree-manager/)** — Git worktree lifecycle manager.
 
 ### [Skills](skills/)
@@ -86,9 +86,9 @@ To update, just `git pull` — symlinks pick up changes automatically.
 
 Agent definitions used by the agent-jobs extension:
 
-- **oracle** — Deep reasoning second opinion (gpt-5.6-sol, xhigh). For complex debugging, architecture decisions, and read-only code reviews that always run the Are You Proud validation.
-- **researcher** — Concise research specialist (gpt-5.6-terra). Investigates technologies, reads docs/source, compares approaches, and returns evidence-first briefs with bounded tool/output budgets. Uses `websearch`/`webfetch` instead of shelling out.
-- **librarian** — Remote GitHub code research specialist (gpt-5.6-terra). Uses only `bash` with the authenticated `gh` CLI for public/private GitHub source search and upstream library inspection. Read-only.
+- **oracle** — Deep reasoning second opinion (GPT-6 Astra, xhigh). For complex debugging, architecture decisions, and read-only code reviews that always run the Are You Proud validation.
+- **researcher** — Concise research specialist (Claude Sonnet 5.5 via claude-bridge). Investigates technologies, reads docs/source, compares approaches, and returns evidence-first briefs with bounded tool/output budgets. Uses `websearch`/`webfetch` instead of shelling out.
+- **librarian** — Remote GitHub code research specialist (Claude Sonnet 5.5 via claude-bridge). Uses only `bash` with the authenticated `gh` CLI for public/private GitHub source search and upstream library inspection. Read-only.
 
 ### Feature packets
 

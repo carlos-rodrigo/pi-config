@@ -13,7 +13,7 @@ const researchPrompt = readFileSync(new URL("../prompts/research.md", import.met
 const researchAndPlanPrompt = readFileSync(new URL("../prompts/research-and-plan.md", import.meta.url), "utf8");
 
 test("oracle agent emphasizes concise, evidence-first, high-signal feedback", () => {
-	assert.match(oracleAgent, /model: openai-codex\/gpt-5\.6-sol:xhigh/);
+	assert.match(oracleAgent, /model: openai\/gpt-6-astra:xhigh/);
 	assert.match(oracleAgent, /tools: read, grep, find, ls, agent_job_start, agent_job_status/);
 	assert.match(oracleAgent, /Feedback style:/);
 	assert.match(oracleAgent, /Lead with the conclusion/);
@@ -57,7 +57,7 @@ test("oracle prompt templates require repo-specific evidence and interactive-flo
 });
 
 test("researcher agent follows oracle-style model, tool, and context-budget discipline", () => {
-	assert.match(researcherAgent, /model: openai-codex\/gpt-5\.6-terra/);
+	assert.match(researcherAgent, /model: claude-bridge\/claude-sonnet-5-5/);
 	assert.match(researcherAgent, /tools: read, grep, find, ls, websearch, webfetch/);
 	assert.doesNotMatch(researcherAgent, /tools:.*bash/);
 	assert.match(researcherAgent, /Lead with the conclusion/);
@@ -69,7 +69,7 @@ test("researcher agent follows oracle-style model, tool, and context-budget disc
 });
 
 test("librarian agent uses only bash and constrains gh CLI research", () => {
-	assert.match(librarianAgent, /model: openai-codex\/gpt-5\.6-terra/);
+	assert.match(librarianAgent, /model: claude-bridge\/claude-sonnet-5-5/);
 	assert.match(librarianAgent, /tools: bash/);
 	assert.match(librarianAgent, /GitHub CLI \(`gh`\)/);
 	assert.match(librarianAgent, /Use only the `bash` tool/);
