@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
+import { assertStructuredContent } from "../lib/assert-structured-content.ts";
+
 import agentJobsExtension, {
 	buildAgentTask,
 	buildLoopCommandArgs,
@@ -602,3 +604,158 @@ test("agentJobsExtension registers background job tools and commands", () => {
 	assert.deepEqual([...tools].sort(), ["agent_job_cancel", "agent_job_start", "agent_job_status", "loop_job_cancel", "loop_job_start", "loop_job_status", "subagent"]);
 	assert.deepEqual([...commands].sort(), ["agent-job-status", "ask-oracle-bg", "deep-review-bg", "loop-bg", "loop-job-status", "research-bg"]);
 });
+
+const PRIVATE_JOB_FIELDS = /processId|tmuxWindow|originSession|runScriptPath|pidPath|promptPath|eventLogPath|stderrPath/;
+
+function registeredJobTools(): Map<string, ToolDefinition> {
+	const tools = new Map<string, ToolDefinition>();
+	agentJobsExtension({
+		on() {}, registerCommand() {},
+		registerTool(tool: ToolDefinition) { tools.set(tool.name, tool); },
+	} as unknown as ExtensionAPI);
+	return tools;
+}
+
+test("agent_job_status returns structured job state without internal runtime fields", async (t) => {
+	t.mock.method(ProjectTrustStore.prototype, "get", () => true);
+	const root = await mkdtemp(join(tmpdir(), "agent-status-structured-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const tools = registeredJobTools();
+	const tool = tools.get("agent_job_status")!;
+	const ctx = { cwd: root, isProjectTrusted: () => true } as ExtensionContext;
+
+	const empty = await tool.execute("empty", {}, undefined, undefined, ctx);
+	assert.deepEqual(assertStructuredContent(tool, empty), { jobs: [] });
+
+	const jobDir = join(root, ".pi", "agent-jobs", "oracle-done");
+	await mkdir(jobDir, { recursive: true });
+	const resultPath = join(jobDir, "result.md");
+	await writeFile(resultPath, "Review complete.");
+	await writeFile(join(jobDir, "status.json"), JSON.stringify({
+		jobId: "oracle-done", agent: "oracle", agentSource: "user", mode: "review", task: "Review the diff", cwd: root,
+		createdAt: "2026-10-01T10:00:00.000Z", updatedAt: "2026-10-01T10:05:00.000Z", completedAt: "2026-10-01T10:05:00.000Z",
+		state: "completed", exitCode: 0, summary: "Review complete.", model: "openai/gpt", followUp: false, followUpSent: false,
+		processId: 4242, tmuxWindow: "pi:1", originSessionId: "session-1", originSessionFile: "/private/session.jsonl",
+		jobDir, runScriptPath: join(jobDir, "run.sh"), pidPath: join(jobDir, "pid"), promptPath: join(jobDir, "prompt.md"),
+		eventLogPath: join(jobDir, "events.jsonl"), stderrPath: join(jobDir, "stderr.log"), exitPath: join(jobDir, "exit.json"), resultPath,
+	}));
+	const legacyDir = join(root, ".pi", "agent-jobs", "legacy");
+	await mkdir(legacyDir, { recursive: true });
+	await writeFile(join(legacyDir, "status.json"), JSON.stringify({ jobId: "legacy", cwd: root, jobDir: legacyDir, agent: "researcher", state: "failed", createdAt: "2026-09-30T10:00:00.000Z" }));
+
+	const explicit = await tool.execute("status", { jobId: "oracle-done" }, undefined, undefined, ctx);
+	assert.match(JSON.stringify(explicit.content), /Review complete/);
+	const data = assertStructuredContent(tool, explicit);
+	assert.equal(data.job.jobId, "oracle-done");
+	assert.equal(data.job.state, "completed");
+	assert.equal(data.job.mode, "review");
+	assert.ok(data.job.resultPath.endsWith("/.pi/agent-jobs/oracle-done/result.md"));
+	assert.equal(data.resultPreview, "Review complete.");
+	assert.equal(data.jobs, undefined);
+	assert.doesNotMatch(JSON.stringify(data), PRIVATE_JOB_FIELDS);
+
+	const listed = assertStructuredContent(tool, await tool.execute("list", {}, undefined, undefined, ctx));
+	assert.deepEqual(listed.jobs.map((job: any) => [job.jobId, job.state]).sort(), [["legacy", "failed"], ["oracle-done", "completed"]]);
+	assert.doesNotMatch(JSON.stringify(listed), PRIVATE_JOB_FIELDS);
+});
+
+test("agent_job_status structured summaries drop malformed fields and bound text and list size", async (t) => {
+	t.mock.method(ProjectTrustStore.prototype, "get", () => true);
+	const root = await mkdtemp(join(tmpdir(), "agent-status-bounds-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const tool = registeredJobTools().get("agent_job_status")!;
+	const ctx = { cwd: root, isProjectTrusted: () => true } as ExtensionContext;
+	for (let index = 0; index < 11; index++) {
+		const jobId = `job-${String(index).padStart(2, "0")}`;
+		const jobDir = join(root, ".pi", "agent-jobs", jobId);
+		await mkdir(jobDir, { recursive: true });
+		await writeFile(join(jobDir, "status.json"), JSON.stringify({
+			jobId, cwd: root, jobDir, agent: "oracle", state: "completed", createdAt: `2026-10-01T10:${String(index).padStart(2, "0")}:00.000Z`,
+			task: "x".repeat(5000), mode: null, followUp: null, exitCode: "0",
+		}));
+	}
+
+	const longResult = `${"head ".repeat(400)}${"y".repeat(6500)}TAIL`;
+	await writeFile(join(root, ".pi", "agent-jobs", "job-00", "result.md"), longResult);
+	const explicit = assertStructuredContent(tool, await tool.execute("status", { jobId: "job-00" }, undefined, undefined, ctx));
+	assert.equal(explicit.resultPreview, `…[truncated ${longResult.length - 6000} chars]…\n${longResult.slice(-6000)}`);
+	assert.equal(explicit.job.task.length, 1001);
+	assert.equal(explicit.job.mode, undefined);
+	assert.equal(explicit.job.followUp, undefined);
+	assert.equal(explicit.job.exitCode, undefined);
+
+	const listed = await tool.execute("list", {}, undefined, undefined, ctx);
+	assert.equal(assertStructuredContent(tool, listed).jobs.length, 10);
+	assert.equal((listed.content[0] as { text: string }).text.split("\n").length, 10);
+});
+
+test("loop_job_status returns structured loop state without internal runtime fields", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "loop-status-structured-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const tool = registeredJobTools().get("loop_job_status")!;
+	const ctx = { cwd: root } as ExtensionContext;
+
+	const empty = await tool.execute("empty", {}, undefined, undefined, ctx);
+	assert.deepEqual(assertStructuredContent(tool, empty), { jobs: [] });
+
+	const jobDir = join(root, ".pi", "loop-jobs", "loop-done");
+	await mkdir(jobDir, { recursive: true });
+	const resultPath = join(jobDir, "result.md");
+	await writeFile(resultPath, "Loop finished: TASK-001 done.");
+	await writeFile(join(jobDir, "status.json"), JSON.stringify({
+		jobId: "loop-done", feature: "codemode", task: "TASK-001", cwd: root,
+		createdAt: "2026-10-01T10:00:00.000Z", updatedAt: "2026-10-01T11:00:00.000Z", completedAt: "2026-10-01T11:00:00.000Z",
+		state: "completed", exitCode: 0, summary: "1 task done", maxIterations: 10, tool: "pi", sleepSeconds: 2, pollSeconds: 3,
+		processId: 4343, tmuxWindow: "pi:2", originSessionFile: "/private/session.jsonl", command: ["bash", "loop.sh"],
+		jobDir, runScriptPath: join(jobDir, "run.sh"), pidPath: join(jobDir, "pid"), stdoutPath: join(jobDir, "stdout.log"), stderrPath: join(jobDir, "stderr.log"),
+		exitPath: join(jobDir, "exit.json"), resultPath, loopLogPath: join(jobDir, "loop.log"), loopSummaryPath: join(jobDir, "latest-iteration.md"),
+		loopProgressPath: join(jobDir, "progress.md"), loopScriptPath: join(root, "loop.sh"), followUp: false, followUpSent: false,
+	}));
+
+	const explicit = await tool.execute("status", { jobId: "loop-done" }, undefined, undefined, ctx);
+	const data = assertStructuredContent(tool, explicit);
+	assert.equal(data.job.jobId, "loop-done");
+	assert.equal(data.job.feature, "codemode");
+	assert.equal(data.job.state, "completed");
+	assert.equal(data.job.maxIterations, 10);
+	assert.equal(data.resultPreview, "Loop finished: TASK-001 done.");
+	assert.doesNotMatch(JSON.stringify(data), PRIVATE_JOB_FIELDS);
+	assert.doesNotMatch(JSON.stringify(data), /"command"/);
+
+	const partialDir = join(root, ".pi", "loop-jobs", "loop-partial");
+	await mkdir(partialDir, { recursive: true });
+	await writeFile(join(partialDir, "status.json"), JSON.stringify({ jobId: "loop-partial", cwd: root, createdAt: "2026-09-30T10:00:00.000Z", maxIterations: null, tool: "unknown-tool" }));
+
+	const listed = assertStructuredContent(tool, await tool.execute("list", {}, undefined, undefined, ctx));
+	assert.deepEqual(listed.jobs.map((job: any) => [job.jobId, job.state ?? null]), [["loop-done", "completed"], ["loop-partial", null]]);
+	const partial = listed.jobs.find((job: any) => job.jobId === "loop-partial");
+	assert.equal(partial.maxIterations, undefined);
+	assert.equal(partial.tool, undefined);
+	await assert.rejects(tool.execute("missing", { jobId: "absent" }, undefined, undefined, ctx), /ENOENT/);
+});
+
+test("loop_job_status structured list keeps the ten most recent jobs and a bounded result tail", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "loop-status-limit-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	for (let index = 0; index < 11; index++) {
+		const jobId = `loop-${String(index).padStart(2, "0")}`;
+		const jobDir = join(root, ".pi", "loop-jobs", jobId);
+		await mkdir(jobDir, { recursive: true });
+		await writeFile(join(jobDir, "status.json"), JSON.stringify({
+			jobId, cwd: root, jobDir, feature: "codemode", state: "completed", resultPath: join(jobDir, "result.md"),
+			createdAt: `2026-10-01T10:${String(index).padStart(2, "0")}:00.000Z`,
+		}));
+	}
+	const longResult = `${"head ".repeat(400)}${"y".repeat(6500)}TAIL`;
+	await writeFile(join(root, ".pi", "loop-jobs", "loop-00", "result.md"), longResult);
+	const tool = registeredJobTools().get("loop_job_status")!;
+	const explicit = assertStructuredContent(tool, await tool.execute("status", { jobId: "loop-00" }, undefined, undefined, { cwd: root } as ExtensionContext));
+	assert.equal(explicit.resultPreview, `…[truncated ${longResult.length - 6000} chars]…\n${longResult.slice(-6000)}`);
+
+	const listed = await tool.execute("list", {}, undefined, undefined, { cwd: root } as ExtensionContext);
+	const jobs = assertStructuredContent(tool, listed).jobs;
+	assert.equal(jobs.length, 10);
+	assert.equal((listed.content[0] as { text: string }).text.split("\n").length, 10);
+	assert.deepEqual(jobs.map((job: any) => job.jobId), (listed.details as { jobs: Array<{ jobId: string }> }).jobs.map((job) => job.jobId));
+});
+

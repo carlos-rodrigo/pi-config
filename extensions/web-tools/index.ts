@@ -8,8 +8,11 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { Readable } from "node:stream";
 
-type WebfetchFormat = "text" | "markdown" | "html";
-type WebsearchProvider = "exa" | "tavily";
+const WEBFETCH_FORMATS = ["text", "markdown", "html"] as const;
+const WEBSEARCH_PROVIDERS = ["exa", "tavily"] as const;
+
+type WebfetchFormat = (typeof WEBFETCH_FORMATS)[number];
+type WebsearchProvider = (typeof WEBSEARCH_PROVIDERS)[number];
 
 type FetchedPage = {
 	url: string;
@@ -29,6 +32,32 @@ type WebsearchResult = {
 	publishedDate?: string;
 	score?: number;
 };
+
+const WebfetchOutputSchema = Type.Object({
+	url: Type.String({ description: "Requested URL after http→https normalization." }),
+	finalUrl: Type.String({ description: "URL after redirects." }),
+	status: Type.Number(),
+	statusText: Type.String(),
+	contentType: Type.String(),
+	format: StringEnum(WEBFETCH_FORMATS),
+	cached: Type.Boolean(),
+	bodyTruncated: Type.Boolean({ description: "True when the response body hit the download byte limit." }),
+	truncated: Type.Boolean({ description: "True when content was cut to maxChars." }),
+	content: Type.String({ description: "Rendered page content, at most maxChars characters." }),
+});
+
+const WebsearchOutputSchema = Type.Object({
+	query: Type.String(),
+	provider: StringEnum(WEBSEARCH_PROVIDERS),
+	count: Type.Number(),
+	results: Type.Array(Type.Object({
+		title: Type.String(),
+		url: Type.String(),
+		snippet: Type.Optional(Type.String()),
+		publishedDate: Type.Optional(Type.String()),
+		score: Type.Optional(Type.Number()),
+	})),
+});
 
 const FETCH_TIMEOUT_MS = 20_000;
 const WEBFETCH_CACHE_MS = 5 * 60 * 1000;
@@ -561,6 +590,23 @@ async function searchTavily(
 		}));
 }
 
+export function buildWebsearchToolResult(query: string, provider: WebsearchProvider, results: WebsearchResult[]) {
+	const details = { query, provider, count: results.length, results };
+	// Providers may send null for optional fields; scripts get them omitted instead.
+	const structuredResults = results.map((result) => ({
+		title: result.title,
+		url: result.url,
+		snippet: typeof result.snippet === "string" ? result.snippet : undefined,
+		publishedDate: typeof result.publishedDate === "string" ? result.publishedDate : undefined,
+		score: typeof result.score === "number" ? result.score : undefined,
+	}));
+	return {
+		content: [{ type: "text" as const, text: formatWebsearchResults(query, provider, results) }],
+		details,
+		structuredContent: { ...details, results: structuredResults },
+	};
+}
+
 export function formatWebsearchResults(query: string, provider: WebsearchProvider, results: WebsearchResult[]): string {
 	if (results.length === 0) {
 		return `No web results found for \"${query}\" using ${provider}.`;
@@ -589,7 +635,7 @@ export default function (pi: ExtensionAPI) {
 		parameters: Type.Object({
 			url: Type.String({ description: "The URL to fetch. http URLs are automatically upgraded to https." }),
 			format: Type.Optional(
-				StringEnum(["text", "markdown", "html"] as const, {
+				StringEnum(WEBFETCH_FORMATS, {
 					description: "Output format. Prefer markdown unless raw HTML or plain text is required.",
 				}),
 			),
@@ -601,6 +647,7 @@ export default function (pi: ExtensionAPI) {
 				}),
 			),
 		}),
+		outputSchema: WebfetchOutputSchema,
 		async execute(_toolCallId, params, signal) {
 			try {
 				const normalizedUrl = normalizeWebUrl(params.url);
@@ -622,19 +669,21 @@ export default function (pi: ExtensionAPI) {
 					truncated.text,
 				].join("\n");
 
+				const details = {
+					url: normalizedUrl,
+					finalUrl: page.finalUrl,
+					status: page.status,
+					statusText: page.statusText,
+					contentType: page.contentType,
+					format,
+					cached: page.cached,
+					bodyTruncated: page.bodyTruncated,
+					truncated: truncated.truncated,
+				};
 				return {
 					content: [{ type: "text", text: summary }],
-					details: {
-						url: normalizedUrl,
-						finalUrl: page.finalUrl,
-						status: page.status,
-						statusText: page.statusText,
-						contentType: page.contentType,
-						format,
-						cached: page.cached,
-						bodyTruncated: page.bodyTruncated,
-						truncated: truncated.truncated,
-					},
+					details,
+					structuredContent: { ...details, content: truncated.text },
 				};
 			} catch (error) {
 				throw error instanceof Error ? error : new Error(String(error));
@@ -649,7 +698,7 @@ export default function (pi: ExtensionAPI) {
 		parameters: Type.Object({
 			query: Type.String({ description: "The search query to run." }),
 			provider: Type.Optional(
-				StringEnum(["exa", "tavily"] as const, {
+				StringEnum(WEBSEARCH_PROVIDERS, {
 					description: "Search provider. Defaults to exa to mirror Opencode.",
 				}),
 			),
@@ -671,6 +720,7 @@ export default function (pi: ExtensionAPI) {
 				}),
 			),
 		}),
+		outputSchema: WebsearchOutputSchema,
 		async execute(_toolCallId, params, signal) {
 			try {
 				const provider = resolveWebsearchProvider(params.provider as WebsearchProvider | undefined);
@@ -684,15 +734,7 @@ export default function (pi: ExtensionAPI) {
 						: await searchTavily(process.env.TAVILY_API_KEY!, params.query, limit, allowedDomains, blockedDomains, signal);
 
 				const filtered = filterWebsearchResults(results, allowedDomains, blockedDomains).slice(0, limit);
-				return {
-					content: [{ type: "text", text: formatWebsearchResults(params.query, provider, filtered) }],
-					details: {
-						query: params.query,
-						provider,
-						count: filtered.length,
-						results: filtered,
-					},
-				};
+				return buildWebsearchToolResult(params.query, provider, filtered);
 			} catch (error) {
 				throw error instanceof Error ? error : new Error(String(error));
 			}

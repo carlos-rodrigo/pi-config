@@ -12,9 +12,13 @@ import { execChecked } from "../lib/process.ts";
 
 type AgentThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
 
-export type AgentJobMode = "standard" | "review";
-export type AgentJobState = "running" | "completed" | "failed" | "cancelled";
-export type LoopTool = "amp" | "claude" | "opencode" | "pi";
+const AGENT_JOB_MODES = ["standard", "review"] as const;
+const AGENT_JOB_STATES = ["running", "completed", "failed", "cancelled"] as const;
+const LOOP_TOOLS = ["amp", "claude", "opencode", "pi"] as const;
+
+export type AgentJobMode = (typeof AGENT_JOB_MODES)[number];
+export type AgentJobState = (typeof AGENT_JOB_STATES)[number];
+export type LoopTool = (typeof LOOP_TOOLS)[number];
 
 interface UsageStats {
 	input: number;
@@ -197,14 +201,120 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 	default: "user",
 });
 
-const AgentJobModeSchema = StringEnum(["standard", "review"] as const, {
+const AgentJobModeSchema = StringEnum(AGENT_JOB_MODES, {
 	description: 'Job prompt mode. Use "review" for oracle reviews so the launcher snapshots git diff context first.',
 	default: "standard",
 });
 
-const LoopToolSchema = StringEnum(["amp", "claude", "opencode", "pi"] as const, {
+const LoopToolSchema = StringEnum(LOOP_TOOLS, {
 	description: "Tool used by loop.sh for each implementation iteration. Defaults to loop.sh auto-detection.",
 });
+
+const MAX_JOB_SUMMARY_TEXT_CHARS = 1_000;
+
+const JobLifecycleFields = {
+	task: Type.Optional(Type.String({ description: `First ${MAX_JOB_SUMMARY_TEXT_CHARS} characters of the task.` })),
+	cwd: Type.Optional(Type.String()),
+	createdAt: Type.Optional(Type.String()),
+	updatedAt: Type.Optional(Type.String()),
+	completedAt: Type.Optional(Type.String()),
+	cancelRequestedAt: Type.Optional(Type.String()),
+	exitCode: Type.Optional(Type.Number()),
+	summary: Type.Optional(Type.String()),
+	errorMessage: Type.Optional(Type.String()),
+	resultPath: Type.Optional(Type.String()),
+};
+
+const AgentJobSummarySchema = Type.Object({
+	jobId: Type.String(),
+	state: StringEnum(AGENT_JOB_STATES),
+	...JobLifecycleFields,
+	agent: Type.Optional(Type.String()),
+	mode: Type.Optional(StringEnum(AGENT_JOB_MODES)),
+	model: Type.Optional(Type.String()),
+	followUp: Type.Optional(Type.Boolean()),
+});
+
+const LoopJobSummarySchema = Type.Object({
+	jobId: Type.Optional(Type.String()),
+	state: Type.Optional(StringEnum(AGENT_JOB_STATES)),
+	...JobLifecycleFields,
+	feature: Type.Optional(Type.String()),
+	maxIterations: Type.Optional(Type.Number()),
+	tool: Type.Optional(StringEnum(LOOP_TOOLS)),
+	agent: Type.Optional(Type.String()),
+	loopSummaryPath: Type.Optional(Type.String()),
+	loopProgressPath: Type.Optional(Type.String()),
+}, { description: "Loop status files are not validated on read, so every field is optional." });
+
+function jobStatusOutputSchema(summarySchema: typeof AgentJobSummarySchema | typeof LoopJobSummarySchema) {
+	return Type.Object({
+		job: Type.Optional(summarySchema),
+		resultPreview: Type.Optional(Type.String({ description: "Tail of the job result file, when it exists." })),
+		jobs: Type.Optional(Type.Array(summarySchema, { description: "Most recent jobs; present when jobId is omitted." })),
+	});
+}
+
+// Persisted status files may hold legacy or hand-edited values; script summaries keep only well-typed, bounded fields.
+function summaryText(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	return value.length > MAX_JOB_SUMMARY_TEXT_CHARS ? `${value.slice(0, MAX_JOB_SUMMARY_TEXT_CHARS)}…` : value;
+}
+
+function summaryPath(value: unknown): string | undefined {
+	return typeof value === "string" ? value : undefined;
+}
+
+function summaryNumber(value: unknown): number | undefined {
+	return typeof value === "number" ? value : undefined;
+}
+
+function summaryEnum<T extends string>(values: readonly T[], value: unknown): T | undefined {
+	return values.find((candidate) => candidate === value);
+}
+
+function lifecycleSummary(status: AgentJobStatus | LoopJobStatus) {
+	return {
+		task: summaryText(status.task),
+		cwd: summaryPath(status.cwd),
+		createdAt: summaryText(status.createdAt),
+		updatedAt: summaryText(status.updatedAt),
+		completedAt: summaryText(status.completedAt),
+		cancelRequestedAt: summaryText(status.cancelRequestedAt),
+		exitCode: summaryNumber(status.exitCode),
+		summary: summaryText(status.summary),
+		errorMessage: summaryText(status.errorMessage),
+		resultPath: summaryPath(status.resultPath),
+	};
+}
+
+/** Job fields for Code Mode scripts; process ids, tmux windows, origin sessions, and launcher files stay internal. */
+function agentJobSummary(status: AgentJobStatus) {
+	return {
+		jobId: status.jobId,
+		state: status.state,
+		...lifecycleSummary(status),
+		agent: summaryText(status.agent),
+		mode: summaryEnum(AGENT_JOB_MODES, status.mode),
+		model: summaryText(status.model),
+		followUp: typeof status.followUp === "boolean" ? status.followUp : undefined,
+	};
+}
+
+/** Loop fields for Code Mode scripts; process ids, tmux windows, origin sessions, commands, and launcher files stay internal. */
+function loopJobSummary(status: LoopJobStatus) {
+	return {
+		jobId: summaryText(status.jobId),
+		state: summaryEnum(AGENT_JOB_STATES, status.state),
+		...lifecycleSummary(status),
+		feature: summaryText(status.feature),
+		agent: summaryText(status.agent),
+		tool: summaryEnum(LOOP_TOOLS, status.tool),
+		maxIterations: summaryNumber(status.maxIterations),
+		loopSummaryPath: summaryPath(status.loopSummaryPath),
+		loopProgressPath: summaryPath(status.loopProgressPath),
+	};
+}
 
 function nowIso(): string {
 	return new Date().toISOString();
@@ -2009,18 +2119,23 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			jobId: Type.Optional(Type.String({ description: "Job id returned by agent_job_start." })),
 			cwd: Type.Optional(Type.String({ description: "Project root where the job was started. Defaults to current cwd." })),
 		}),
+		outputSchema: jobStatusOutputSchema(AgentJobSummarySchema),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const cwd = await trustedAgentRoot(ctx, params.cwd);
 			if (params.jobId) {
 				const status = await finalizeIfDone(pi, cwd, params.jobId, false);
 				const preview = fileExists(status.resultPath) ? truncateTail(await fs.promises.readFile(status.resultPath, "utf8"), 6000) : undefined;
-				return { content: [{ type: "text" as const, text: formatStatus(status, preview) }], details: status };
+				return {
+					content: [{ type: "text" as const, text: formatStatus(status, preview) }],
+					details: status,
+					structuredContent: { job: agentJobSummary(status), resultPreview: preview },
+				};
 			}
-			const statuses = await listStatuses(cwd);
+			const statuses = (await listStatuses(cwd)).slice(0, 10);
 			const text = statuses.length === 0
 				? "No background agent jobs found."
-				: statuses.slice(0, 10).map((status) => `${status.jobId}\t${status.agent}\t${status.state}\t${status.summary || ""}`).join("\n");
-			return { content: [{ type: "text" as const, text }], details: { jobs: statuses.slice(0, 10) } };
+				: statuses.map((status) => `${status.jobId}\t${status.agent}\t${status.state}\t${status.summary || ""}`).join("\n");
+			return { content: [{ type: "text" as const, text }], details: { jobs: statuses }, structuredContent: { jobs: statuses.map(agentJobSummary) } };
 		},
 	});
 
@@ -2090,18 +2205,23 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			jobId: Type.Optional(Type.String({ description: "Job id returned by loop_job_start." })),
 			cwd: Type.Optional(Type.String({ description: "Project root where the loop job was started. Defaults to current cwd." })),
 		}),
+		outputSchema: jobStatusOutputSchema(LoopJobSummarySchema),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const cwd = params.cwd ? (path.isAbsolute(params.cwd) ? params.cwd : path.resolve(ctx.cwd, params.cwd)) : ctx.cwd;
 			if (params.jobId) {
 				const status = await finalizeLoopIfDone(pi, cwd, params.jobId, false);
 				const preview = fileExists(status.resultPath) ? truncateTail(await fs.promises.readFile(status.resultPath, "utf8"), 6000) : undefined;
-				return { content: [{ type: "text" as const, text: formatLoopStatus(status, preview) }], details: status };
+				return {
+					content: [{ type: "text" as const, text: formatLoopStatus(status, preview) }],
+					details: status,
+					structuredContent: { job: loopJobSummary(status), resultPreview: preview },
+				};
 			}
-			const statuses = await listLoopStatuses(cwd);
+			const statuses = (await listLoopStatuses(cwd)).slice(0, 10);
 			const text = statuses.length === 0
 				? "No background loop jobs found."
-				: statuses.slice(0, 10).map((status) => `${status.jobId}\t${status.feature}\t${status.state}\t${status.summary || ""}`).join("\n");
-			return { content: [{ type: "text" as const, text }], details: { jobs: statuses.slice(0, 10) } };
+				: statuses.map((status) => `${status.jobId}\t${status.feature}\t${status.state}\t${status.summary || ""}`).join("\n");
+			return { content: [{ type: "text" as const, text }], details: { jobs: statuses }, structuredContent: { jobs: statuses.map(loopJobSummary) } };
 		},
 	});
 

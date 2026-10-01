@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { assertStructuredContent } from "../lib/assert-structured-content.ts";
 import webToolsExtension, {
+	buildWebsearchToolResult,
 	fetchPage,
 	filterWebsearchResults,
 	formatWebsearchResults,
@@ -176,3 +178,42 @@ test("formatWebsearchResults produces markdown-link summaries", () => {
 	assert.match(text, /\[Pi Docs\]\(https:\/\/example.com\/pi-docs\)/);
 	assert.match(text, /Snippet: Useful docs for web tools\./);
 });
+
+test("webfetch returns structured page content and metadata", async () => {
+	const url = "https://structured-fetch.example/page";
+	await fetchPage(url, undefined, {
+		resolveAddresses: async () => [{ address: "93.184.216.34", family: 4 as const }],
+		request: async () => new Response("<h1>Title</h1><p>" + "x".repeat(800) + "</p>", { status: 200, statusText: "OK", headers: { "content-type": "text/html" } }),
+	});
+	const tool = registeredTools().get("webfetch");
+	const result = await tool.execute("call-5", { url: "http://structured-fetch.example/page", maxChars: 500 }, undefined, undefined, {});
+	const data = assertStructuredContent(tool, result);
+	assert.match(result.content[0].text, /Fetched https:\/\/structured-fetch\.example\/page/);
+	assert.equal(data.url, url);
+	assert.equal(data.status, 200);
+	assert.equal(data.format, "markdown");
+	assert.equal(data.cached, true);
+	assert.equal(data.truncated, true);
+	assert.match(data.content, /^# Title/);
+	assert.ok(data.content.length <= 500);
+});
+
+test("websearch tool results expose filtered results as structured data", () => {
+	const tool = registeredTools().get("websearch");
+	const results = [{ title: "Pi Docs", url: "https://example.com/pi-docs", snippet: "Docs", publishedDate: "2026-03-16", score: 0.91 }];
+	const result = buildWebsearchToolResult("pi docs", "exa", results);
+	assert.match(result.content[0].text, /\[Pi Docs\]\(https:\/\/example.com\/pi-docs\)/);
+	assert.deepEqual(assertStructuredContent(tool, result), { query: "pi docs", provider: "exa", count: 1, results });
+
+	const empty = buildWebsearchToolResult("nothing", "tavily", []);
+	assert.deepEqual(assertStructuredContent(tool, empty), { query: "nothing", provider: "tavily", count: 0, results: [] });
+});
+
+test("websearch structured results omit null optional provider fields", () => {
+	const tool = registeredTools().get("websearch");
+	const providerResult = { title: "Undated", url: "https://example.com/undated", snippet: "Text", publishedDate: null, score: null } as any;
+	const result = buildWebsearchToolResult("undated", "exa", [providerResult]);
+	assert.deepEqual(assertStructuredContent(tool, result).results, [{ title: "Undated", url: "https://example.com/undated", snippet: "Text" }]);
+	assert.equal(result.details.results[0], providerResult);
+});
+

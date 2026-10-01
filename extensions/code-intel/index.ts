@@ -84,7 +84,13 @@ const SOURCE_EXTENSIONS = new Set([
 
 const IMPORT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".json"];
 
-export type SymbolKind = "function" | "class" | "interface" | "type" | "enum" | "variable" | "method" | "command" | "tool" | "heading";
+const SYMBOL_KINDS = ["function", "class", "interface", "type", "enum", "variable", "method", "command", "tool", "heading"] as const;
+const CODE_FIND_INTENTS = ["auto", "exact", "symbol", "semantic", "impact", "history", "structure"] as const;
+const CODE_FIND_STRATEGIES = ["exact", "symbol", "semantic", "impact", "history", "structure"] as const;
+const MAX_AST_MATCH_TEXT_CHARS = 2_000;
+const MAX_CONTEXT_FILE_SYMBOLS = 20;
+
+export type SymbolKind = (typeof SYMBOL_KINDS)[number];
 
 export type CodeSymbol = {
 	name: string;
@@ -135,8 +141,32 @@ export type AstSearchOptions = {
 	limit?: number;
 };
 
-export type CodeFindIntent = "auto" | "exact" | "symbol" | "semantic" | "impact" | "history" | "structure";
-export type CodeFindStrategy = "exact" | "symbol" | "semantic" | "impact" | "history" | "structure";
+export type AstMatch = {
+	path: string;
+	line: number;
+	column: number;
+	endLine: number;
+	endColumn: number;
+	text: string;
+};
+
+export type AstSearchOutput = {
+	text: string;
+	available: boolean;
+	/** Undefined when ast-grep printed something other than a JSON match array. */
+	matches?: AstMatch[];
+	truncated: boolean;
+};
+
+export type DependencyMapSummary = {
+	sourceFiles: number;
+	requestedPath?: string;
+	file?: { path: string; imports: string[]; importedBy: string[]; external: string[] };
+	topFiles?: Array<{ path: string; importCount: number; importedByCount: number }>;
+};
+
+export type CodeFindIntent = (typeof CODE_FIND_INTENTS)[number];
+export type CodeFindStrategy = (typeof CODE_FIND_STRATEGIES)[number];
 
 export type CodeFindOptions = {
 	query: string;
@@ -158,6 +188,11 @@ export type CodeFindResult = {
 	reason: string;
 	preview?: string;
 	score: number;
+	/** Located ast-grep matches behind a structure result. */
+	matches?: AstMatch[];
+	matchesTruncated?: boolean;
+	/** Import relationships behind an impact result. */
+	dependencies?: DependencyMapSummary;
 };
 
 export type CodeFindReport = {
@@ -196,6 +231,106 @@ export type TaskContextGraphReport = {
 	notes: string[];
 	suggestedVerification: string[];
 };
+
+const CodeSymbolSchema = Type.Object({
+	name: Type.String(),
+	kind: StringEnum(SYMBOL_KINDS),
+	path: Type.String(),
+	line: Type.Number(),
+	signature: Type.String(),
+	score: Type.Optional(Type.Number()),
+});
+
+const AstMatchSchema = Type.Object({
+	path: Type.String(),
+	line: Type.Number({ description: "1-based start line." }),
+	column: Type.Number({ description: "1-based start column." }),
+	endLine: Type.Number(),
+	endColumn: Type.Number(),
+	text: Type.String(),
+});
+
+const DependencyMapOutputSchema = Type.Object({
+	sourceFiles: Type.Number(),
+	requestedPath: Type.Optional(Type.String({ description: "Path argument as requested; falls back to topFiles when it does not resolve to a source file." })),
+	file: Type.Optional(Type.Object({
+		path: Type.String(),
+		imports: Type.Array(Type.String()),
+		importedBy: Type.Array(Type.String()),
+		external: Type.Array(Type.String()),
+	}, { description: "Present when path resolves to a source file." })),
+	topFiles: Type.Optional(Type.Array(Type.Object({
+		path: Type.String(),
+		importCount: Type.Number(),
+		importedByCount: Type.Number(),
+	}), { description: "Highest-degree files; present when no path resolves." })),
+});
+
+const CodeFindResultSchema = Type.Object({
+	strategies: Type.Array(StringEnum(CODE_FIND_STRATEGIES)),
+	path: Type.Optional(Type.String()),
+	line: Type.Optional(Type.Number()),
+	endLine: Type.Optional(Type.Number()),
+	title: Type.String(),
+	reason: Type.String(),
+	preview: Type.Optional(Type.String()),
+	score: Type.Number(),
+	matches: Type.Optional(Type.Array(AstMatchSchema, { description: "Located matches behind a structure result." })),
+	matchesTruncated: Type.Optional(Type.Boolean({ description: "True when ast-grep found more matches than limit." })),
+	dependencies: Type.Optional(DependencyMapOutputSchema),
+});
+
+const CodeFindOutputSchema = Type.Object({
+	query: Type.String(),
+	intent: StringEnum(CODE_FIND_INTENTS),
+	strategies: Type.Array(StringEnum(CODE_FIND_STRATEGIES)),
+	results: Type.Array(CodeFindResultSchema),
+	notes: Type.Array(Type.String()),
+});
+
+const TaskContextGraphOutputSchema = Type.Object({
+	task: Type.String(),
+	files: Type.Array(Type.Object({
+		path: Type.String(),
+		score: Type.Number(),
+		reasons: Type.Array(Type.String()),
+		symbols: Type.Array(CodeSymbolSchema, { description: `First ${MAX_CONTEXT_FILE_SYMBOLS} symbols in the file.` }),
+		symbolCount: Type.Number(),
+		imports: Type.Array(Type.String()),
+		importedBy: Type.Array(Type.String()),
+		tests: Type.Array(Type.String()),
+		risks: Type.Array(Type.String()),
+	})),
+	documentation: Type.Array(CodeFindResultSchema),
+	graph: Type.Object({ files: Type.Number(), testFiles: Type.Number(), fingerprint: Type.String(), fresh: Type.Boolean() }),
+	notes: Type.Array(Type.String()),
+	suggestedVerification: Type.Array(Type.String()),
+});
+
+const SymbolSearchOutputSchema = Type.Object({
+	query: Type.String(),
+	results: Type.Array(CodeSymbolSchema),
+});
+
+const GitPickaxeOutputSchema = Type.Object({
+	query: Type.String(),
+	mode: StringEnum(["string", "regex"] as const),
+	results: Type.Array(Type.Object({
+		hash: Type.String(),
+		shortHash: Type.String(),
+		date: Type.String(),
+		author: Type.String(),
+		subject: Type.String(),
+	})),
+});
+
+const AstSearchOutputSchema = Type.Object({
+	pattern: Type.String(),
+	lang: Type.Optional(Type.String()),
+	available: Type.Boolean({ description: "False when the ast-grep CLI is not installed." }),
+	matches: Type.Array(AstMatchSchema),
+	truncated: Type.Boolean({ description: "True when more matches exist than limit." }),
+});
 
 function abortError(): Error {
 	const error = new Error("Code search cancelled.");
@@ -572,30 +707,46 @@ function resolveGraphTarget(graph: DependencyGraph, target: string | undefined):
 	return Object.keys(graph.nodes).find((path) => path === normalized || path.endsWith(`/${normalized}`) || path.includes(normalized));
 }
 
-export function formatDependencyMap(graph: DependencyGraph, target?: string): string {
+export function summarizeDependencyMap(graph: DependencyGraph, target?: string): DependencyMapSummary {
 	const resolved = resolveGraphTarget(graph, target);
 	if (!resolved) {
-		const ranked = Object.entries(graph.nodes)
-			.map(([path, node]) => ({ path, degree: node.imports.length + node.importedBy.length, imports: node.imports.length, importedBy: node.importedBy.length }))
-			.sort((a, b) => b.degree - a.degree || a.path.localeCompare(b.path))
+		const topFiles = Object.entries(graph.nodes)
+			.map(([path, node]) => ({ path, importCount: node.imports.length, importedByCount: node.importedBy.length }))
+			.sort((a, b) => b.importCount + b.importedByCount - (a.importCount + a.importedByCount) || a.path.localeCompare(b.path))
 			.slice(0, DEFAULT_LIMIT);
+		return { sourceFiles: graph.files.length, requestedPath: target, topFiles };
+	}
+	const node = graph.nodes[resolved];
+	return {
+		sourceFiles: graph.files.length,
+		requestedPath: target,
+		file: { path: resolved, imports: node.imports, importedBy: node.importedBy, external: node.external },
+	};
+}
+
+function formatDependencyMapSummary(summary: DependencyMapSummary): string {
+	const { file } = summary;
+	if (!file) {
 		return [
-			`Dependency map (${graph.files.length} source files):`,
+			`Dependency map (${summary.sourceFiles} source files):`,
 			"",
-			...ranked.map((file, index) => `${index + 1}. ${file.path} — imports ${file.imports}, imported by ${file.importedBy}`),
+			...(summary.topFiles ?? []).map((ranked, index) => `${index + 1}. ${ranked.path} — imports ${ranked.importCount}, imported by ${ranked.importedByCount}`),
 		].join("\n");
 	}
 
-	const node = graph.nodes[resolved];
-	const lines = [`Dependency map for ${resolved}:`, ""];
+	const lines = [`Dependency map for ${file.path}:`, ""];
 	lines.push("Imports:");
-	if (node.imports.length === 0 && node.external.length === 0) lines.push("- none");
-	for (const file of node.imports) lines.push(`- ${file}`);
-	if (node.external.length > 0) lines.push(`- External: ${node.external.join(", ")}`);
+	if (file.imports.length === 0 && file.external.length === 0) lines.push("- none");
+	for (const dependency of file.imports) lines.push(`- ${dependency}`);
+	if (file.external.length > 0) lines.push(`- External: ${file.external.join(", ")}`);
 	lines.push("", "Imported by:");
-	if (node.importedBy.length === 0) lines.push("- none");
-	for (const file of node.importedBy) lines.push(`- ${file}`);
+	if (file.importedBy.length === 0) lines.push("- none");
+	for (const dependent of file.importedBy) lines.push(`- ${dependent}`);
 	return lines.join("\n");
+}
+
+export function formatDependencyMap(graph: DependencyGraph, target?: string): string {
+	return formatDependencyMapSummary(summarizeDependencyMap(graph, target));
 }
 
 export function parseGitPickaxeLog(output: string): GitPickaxeResult[] {
@@ -705,11 +856,41 @@ async function resolveAstGrepBinaryAsync(signal?: AbortSignal): Promise<string |
 	return undefined;
 }
 
-async function runAstSearchAsync(cwd: string, options: AstSearchOptions, signal?: AbortSignal): Promise<string> {
+type AstGrepJsonMatch = {
+	file: string;
+	text: string;
+	range: { start: { line: number; column: number }; end: { line: number; column: number } };
+};
+
+function parseAstGrepMatches(stdout: string): AstMatch[] | undefined {
+	if (!stdout.trim()) return [];
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(stdout);
+	} catch {
+		return undefined;
+	}
+	if (!Array.isArray(parsed)) return undefined;
+	return (parsed as AstGrepJsonMatch[]).map((match) => ({
+		path: normalizeRelativePath(match.file),
+		line: match.range.start.line + 1,
+		column: match.range.start.column + 1,
+		endLine: match.range.end.line + 1,
+		endColumn: match.range.end.column + 1,
+		text: truncateText(match.text, MAX_AST_MATCH_TEXT_CHARS).text,
+	}));
+}
+
+async function runAstSearchAsync(cwd: string, options: AstSearchOptions, signal?: AbortSignal): Promise<AstSearchOutput> {
 	throwIfAborted(signal);
 	const binary = await resolveAstGrepBinaryAsync(signal);
 	if (!binary) {
-		return "ast_search requires ast-grep CLI. Install it with `brew install ast-grep` or see https://ast-grep.github.io/.";
+		return {
+			text: "ast_search requires ast-grep CLI. Install it with `brew install ast-grep` or see https://ast-grep.github.io/.",
+			available: false,
+			matches: [],
+			truncated: false,
+		};
 	}
 	const { stdout } = await execFileAsync(binary, buildAstGrepArgs(options), {
 		cwd,
@@ -717,8 +898,15 @@ async function runAstSearchAsync(cwd: string, options: AstSearchOptions, signal?
 		signal,
 		maxBuffer: MAX_OUTPUT_CHARS * 4,
 	});
+	const allMatches = parseAstGrepMatches(stdout);
+	const limit = clampLimit(options.limit);
 	const truncated = truncateText(stdout || "No ast-grep matches.");
-	return truncated.truncated ? `${truncated.text}\nOutput truncated.` : truncated.text;
+	return {
+		text: truncated.truncated ? `${truncated.text}\nOutput truncated.` : truncated.text,
+		available: true,
+		matches: allMatches?.slice(0, limit),
+		truncated: (allMatches?.length ?? 0) > limit,
+	};
 }
 
 function queryLooksLikeIdentifier(query: string): boolean {
@@ -880,14 +1068,15 @@ async function symbolFind(cwd: string, options: CodeFindOptions): Promise<CodeFi
 
 async function impactFind(cwd: string, options: CodeFindOptions): Promise<CodeFindResult[]> {
 	const graph = await buildDependencyGraphAsync(cwd, options.signal);
-	const text = formatDependencyMap(graph, options.path);
+	const dependencies = summarizeDependencyMap(graph, options.path);
 	return [{
 		strategies: ["impact"],
 		path: options.path ? normalizeRelativePath(options.path) : undefined,
 		title: options.path ? `dependency impact for ${normalizeRelativePath(options.path)}` : "dependency graph overview",
 		reason: "import graph impact analysis",
-		preview: text,
+		preview: formatDependencyMapSummary(dependencies),
 		score: 80,
+		dependencies,
 	}];
 }
 
@@ -908,9 +1097,9 @@ async function historyFind(cwd: string, options: CodeFindOptions, notes: string[
 }
 
 async function structureFind(cwd: string, options: CodeFindOptions, notes: string[]): Promise<CodeFindResult[]> {
-	const text = await runAstSearchAsync(cwd, { pattern: options.query, paths: options.paths, limit: options.limit }, options.signal);
+	const { text, matches, truncated } = await runAstSearchAsync(cwd, { pattern: options.query, paths: options.paths, limit: options.limit }, options.signal);
 	if (/requires ast-grep CLI|No ast-grep matches/i.test(text)) notes.push(text);
-	return [{ strategies: ["structure"], title: "ast-grep structural search", reason: "structural code pattern", preview: text, score: 60 }];
+	return [{ strategies: ["structure"], title: "ast-grep structural search", reason: "structural code pattern", preview: text, score: 60, matches, matchesTruncated: matches && truncated }];
 }
 
 function addCodeFindResult(map: Map<string, CodeFindResult>, result: CodeFindResult): void {
@@ -1019,6 +1208,14 @@ export async function taskContextGraph(cwd: string, options: TaskContextGraphOpt
 	};
 }
 
+/** Script-facing task context; caps per-file symbols the way the text report shows only the first few. */
+function structuredTaskContextGraph(report: TaskContextGraphReport) {
+	return {
+		...report,
+		files: report.files.map((file) => ({ ...file, symbols: file.symbols.slice(0, MAX_CONTEXT_FILE_SYMBOLS), symbolCount: file.symbols.length })),
+	};
+}
+
 export function formatTaskContextGraph(report: TaskContextGraphReport): string {
 	const lines = [
 		`Task context for "${report.task}":`,
@@ -1084,13 +1281,14 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 		],
 		parameters: Type.Object({
 			query: Type.String({ description: "What to find: exact text, symbol, feature concept, history question, dependency impact, or AST pattern." }),
-			intent: Type.Optional(StringEnum(["auto", "exact", "symbol", "semantic", "impact", "history", "structure"] as const, { description: "Optional strategy hint. Defaults to auto." })),
+			intent: Type.Optional(StringEnum(CODE_FIND_INTENTS, { description: "Optional strategy hint. Defaults to auto." })),
 			path: Type.Optional(Type.String({ description: "Optional target path for impact/history searches." })),
 			paths: Type.Optional(Type.Array(Type.String(), { description: "Optional path prefixes/substrings to constrain search." })),
 			limit: Type.Optional(Type.Number({ description: `Maximum results (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}).`, minimum: 1, maximum: MAX_LIMIT })),
 			useSemantic: Type.Optional(Type.Boolean({ description: "Allow semantic index candidates in auto mode. Defaults to true." })),
 			useEmbeddings: Type.Optional(Type.Boolean({ description: "Use Ollama embeddings for semantic candidates. Defaults to false for speed." })),
 		}),
+		outputSchema: CodeFindOutputSchema,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			onUpdate?.({ content: [{ type: "text", text: `Finding code for: ${params.query}` }], details: {} });
 			throwIfAborted(signal);
@@ -1098,6 +1296,7 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 			return {
 				content: [{ type: "text" as const, text: formatCodeFindResults(report) }],
 				details: report,
+				structuredContent: report,
 			};
 		},
 	});
@@ -1118,6 +1317,7 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 			useSemantic: Type.Optional(Type.Boolean({ description: "Allow semantic index candidates. Defaults to true." })),
 			useEmbeddings: Type.Optional(Type.Boolean({ description: "Use Ollama embeddings when the semantic index supports them." })),
 		}),
+		outputSchema: TaskContextGraphOutputSchema,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			onUpdate?.({ content: [{ type: "text", text: `Mapping task context: ${params.task}` }], details: {} });
 			throwIfAborted(signal);
@@ -1125,6 +1325,7 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 			return {
 				content: [{ type: "text" as const, text: formatTaskContextGraph(report) }],
 				details: report,
+				structuredContent: structuredTaskContextGraph(report),
 			};
 		},
 	});
@@ -1140,16 +1341,19 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 		],
 		parameters: Type.Object({
 			query: Type.String({ description: "Symbol name or partial name to search for." }),
-			kind: Type.Optional(StringEnum(["function", "class", "interface", "type", "enum", "variable", "method", "command", "tool", "heading"] as const, { description: "Optional symbol kind filter." })),
+			kind: Type.Optional(StringEnum(SYMBOL_KINDS, { description: "Optional symbol kind filter." })),
 			paths: Type.Optional(Type.Array(Type.String(), { description: "Optional path prefixes/substrings to constrain search." })),
 			limit: Type.Optional(Type.Number({ description: `Maximum results (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}).`, minimum: 1, maximum: MAX_LIMIT })),
 		}),
+		outputSchema: SymbolSearchOutputSchema,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			await yieldToEventLoop(signal);
 			const results = await searchSymbolsAsync(ctx.cwd, params as SymbolSearchOptions, signal);
+			const details = { query: params.query, results };
 			return {
 				content: [{ type: "text" as const, text: formatSymbolResults(params.query, results) }],
-				details: { query: params.query, results },
+				details,
+				structuredContent: details,
 			};
 		},
 	});
@@ -1165,12 +1369,15 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({
 			path: Type.Optional(Type.String({ description: "Optional target file path. If omitted, shows high-degree files in the graph." })),
 		}),
+		outputSchema: DependencyMapOutputSchema,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			await yieldToEventLoop(signal);
 			const graph = await buildDependencyGraphAsync(ctx.cwd, signal);
+			const summary = summarizeDependencyMap(graph, params.path);
 			return {
-				content: [{ type: "text" as const, text: formatDependencyMap(graph, params.path) }],
+				content: [{ type: "text" as const, text: formatDependencyMapSummary(summary) }],
 				details: { path: params.path, files: graph.files.length },
+				structuredContent: summary,
 			};
 		},
 	});
@@ -1190,13 +1397,16 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 			limit: Type.Optional(Type.Number({ description: `Maximum commits (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}).`, minimum: 1, maximum: MAX_LIMIT })),
 			allRefs: Type.Optional(Type.Boolean({ description: "Search all refs with --all. Defaults to false." })),
 		}),
+		outputSchema: GitPickaxeOutputSchema,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			try {
 				const mode = (params.mode ?? "string") as GitPickaxeMode;
 				const results = await runGitPickaxeAsync(ctx.cwd, params.query, mode, params.limit, params.path, params.allRefs ?? false, signal);
+				const details = { query: params.query, mode, results };
 				return {
 					content: [{ type: "text" as const, text: formatGitPickaxeResults(params.query, mode, results) }],
-					details: { query: params.query, mode, results },
+					details,
+					structuredContent: details,
 				};
 			} catch (error) {
 				if (signal?.aborted) throw abortError();
@@ -1217,12 +1427,18 @@ export default function codeIntelExtension(pi: ExtensionAPI) {
 			pattern: Type.String({ description: "ast-grep pattern, e.g. console.log($A) or pi.registerTool($$$)." }),
 			lang: Type.Optional(Type.String({ description: "ast-grep language, e.g. ts, tsx, js, python, rust." })),
 			paths: Type.Optional(Type.Array(Type.String(), { description: "Optional paths to search." })),
-			limit: Type.Optional(Type.Number({ description: "Reserved for future output limiting. Current output is truncated by size.", minimum: 1, maximum: MAX_LIMIT })),
+			limit: Type.Optional(Type.Number({ description: `Maximum structured matches (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}). Text output is truncated by size.`, minimum: 1, maximum: MAX_LIMIT })),
 		}),
+		outputSchema: AstSearchOutputSchema,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			try {
-				const text = await runAstSearchAsync(ctx.cwd, params as AstSearchOptions, signal);
-				return { content: [{ type: "text" as const, text }], details: { pattern: params.pattern, lang: params.lang } };
+				const { text, available, matches, truncated } = await runAstSearchAsync(ctx.cwd, params as AstSearchOptions, signal);
+				if (!matches) throw new Error(`ast-grep did not return a JSON match array:\n${text}`);
+				return {
+					content: [{ type: "text" as const, text }],
+					details: { pattern: params.pattern, lang: params.lang },
+					structuredContent: { pattern: params.pattern, lang: params.lang, available, matches, truncated },
+				};
 			} catch (error) {
 				if (signal?.aborted) throw abortError();
 				throw error instanceof Error ? error : new Error(String(error));

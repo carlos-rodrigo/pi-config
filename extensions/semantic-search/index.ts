@@ -24,6 +24,7 @@ import {
 	sep,
 } from "node:path";
 
+import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -461,7 +462,8 @@ export type IndexedChunk = {
 	embedding?: number[];
 };
 
-export type SemanticCardKind = "file" | "class" | "module" | "function" | "method" | "heading" | "definition";
+const SEMANTIC_CARD_KINDS = ["file", "class", "module", "function", "method", "heading", "definition"] as const;
+export type SemanticCardKind = (typeof SEMANTIC_CARD_KINDS)[number];
 
 export type IndexedCard = {
 	id: string;
@@ -566,7 +568,9 @@ type IndexStatus = {
 	summary?: SummaryMetadata;
 };
 
-type RebuildProgressPhase = "starting" | "indexing" | "summarizing" | "embedding" | "finished" | "unknown";
+const REBUILD_PROGRESS_PHASES = ["starting", "indexing", "summarizing", "embedding", "finished", "unknown"] as const;
+type RebuildProgressPhase = (typeof REBUILD_PROGRESS_PHASES)[number];
+const BACKGROUND_REBUILD_STATES = ["running", "succeeded", "failed", "unknown"] as const;
 
 export type RebuildProgress = {
 	phase: RebuildProgressPhase;
@@ -581,7 +585,7 @@ export type RebuildProgress = {
 };
 
 type BackgroundRebuildStatus = {
-	status: "running" | "succeeded" | "failed" | "unknown";
+	status: (typeof BACKGROUND_REBUILD_STATES)[number];
 	cwd: string;
 	logPath: string;
 	pid?: number;
@@ -2435,6 +2439,167 @@ function formatOllamaRequirementFailure(
 	].join("\n");
 }
 
+const IndexStateSchema = Type.Object({
+	indexPath: Type.String(),
+	exists: Type.Boolean(),
+	stale: Type.Boolean(),
+	reason: Type.String(),
+	files: Type.Number(),
+	chunks: Type.Number(),
+	cards: Type.Number(),
+	updatedAt: Type.Optional(Type.String()),
+	embedding: Type.Optional(Type.Object({
+		model: Type.String(),
+		embeddedChunks: Type.Optional(Type.Number()),
+		embeddedCards: Type.Optional(Type.Number({ description: "Missing in indexes built before semantic cards." })),
+	})),
+	summary: Type.Optional(Type.Object({
+		model: Type.String(),
+		summarizedCards: Type.Optional(Type.Number()),
+		cachedCards: Type.Optional(Type.Number()),
+		failedCards: Type.Optional(Type.Number()),
+	})),
+});
+
+const SemanticSearchOutputSchema = Type.Object({
+	query: Type.String(),
+	rebuilt: Type.Boolean(),
+	embeddingUsed: Type.Boolean(),
+	index: IndexStateSchema,
+	results: Type.Array(Type.Object({
+		path: Type.String(),
+		startLine: Type.Number(),
+		endLine: Type.Number(),
+		source: StringEnum(["chunk", "card"] as const),
+		cardKind: Type.Optional(StringEnum(SEMANTIC_CARD_KINDS)),
+		cardName: Type.Optional(Type.String()),
+		cardSummary: Type.Optional(Type.String()),
+		score: Type.Number(),
+		embeddingScore: Type.Optional(Type.Number()),
+		reason: Type.Array(Type.String()),
+		symbols: Type.Array(Type.String()),
+		preview: Type.String(),
+	})),
+});
+
+const RepoMapOutputSchema = Type.Object({
+	rebuilt: Type.Boolean(),
+	index: IndexStateSchema,
+	clusters: Type.Array(Type.Object({
+		name: Type.String(),
+		score: Type.Number(),
+		files: Type.Array(Type.Object({ path: Type.String(), score: Type.Number(), symbols: Type.Array(Type.String()) })),
+		terms: Type.Array(Type.String()),
+	})),
+	topDirectories: Type.Array(Type.Object({ path: Type.String(), files: Type.Number() })),
+});
+
+const IndexRebuildStatusOutputSchema = Type.Object({
+	index: IndexStateSchema,
+	rebuild: Type.Optional(Type.Object({
+		status: StringEnum(BACKGROUND_REBUILD_STATES),
+		processActive: Type.Boolean(),
+		logPath: Type.String(),
+		startedAt: Type.Optional(Type.String()),
+		finishedAt: Type.Optional(Type.String()),
+		embeddingModel: Type.Optional(Type.String()),
+		summaryModel: Type.Optional(Type.String()),
+		summariesDisabled: Type.Optional(Type.Boolean()),
+		progress: Type.Optional(Type.Object({
+			phase: StringEnum(REBUILD_PROGRESS_PHASES),
+			message: Type.Optional(Type.String()),
+			current: Type.Optional(Type.Number()),
+			total: Type.Optional(Type.Number()),
+			percent: Type.Optional(Type.Number()),
+			phaseStartedAt: Type.Optional(Type.String()),
+			updatedAt: Type.Optional(Type.String()),
+			elapsedMs: Type.Optional(Type.Number()),
+			estimatedRemainingMs: Type.Optional(Type.Number()),
+		})),
+		message: Type.Optional(Type.String()),
+		error: Type.Optional(Type.String({ description: "First line of the error with URLs redacted; see logPath for details." })),
+	}, { description: "Absent when no background rebuild has been recorded." })),
+});
+
+// Index metadata and rebuild status are read from disk without schema validation; script projections keep only well-typed fields.
+function optionalNumber(value: unknown): number | undefined {
+	return typeof value === "number" ? value : undefined;
+}
+
+function optionalText(value: unknown): string | undefined {
+	return typeof value === "string" ? value : undefined;
+}
+
+/** First line with endpoint URLs redacted, since rebuild errors embed the Ollama URL and stack. */
+function redactedFirstLine(value: unknown): string | undefined {
+	return typeof value === "string" ? value.split("\n")[0].replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "<url>") : undefined;
+}
+
+function oneOf<T extends string>(values: readonly T[], value: unknown): T | undefined {
+	return values.find((candidate) => candidate === value);
+}
+
+/** Index state for Code Mode scripts; omits Ollama endpoint URLs. */
+function structuredIndexState(status: IndexStatus) {
+	const { embedding, summary } = status;
+	return {
+		indexPath: status.indexPath,
+		exists: status.exists,
+		stale: status.stale,
+		reason: status.reason,
+		files: status.files,
+		chunks: status.chunks,
+		cards: status.cards,
+		updatedAt: optionalText(status.updatedAt),
+		embedding: typeof embedding?.model === "string"
+			? { model: embedding.model, embeddedChunks: optionalNumber(embedding.embeddedChunks), embeddedCards: optionalNumber(embedding.embeddedCards) }
+			: undefined,
+		summary: typeof summary?.model === "string"
+			? {
+				model: summary.model,
+				summarizedCards: optionalNumber(summary.summarizedCards),
+				cachedCards: optionalNumber(summary.cachedCards),
+				failedCards: optionalNumber(summary.failedCards),
+			}
+			: undefined,
+	};
+}
+
+function structuredRebuildProgress(progress: unknown) {
+	if (!progress || typeof progress !== "object") return undefined;
+	const value = progress as Partial<Record<keyof RebuildProgress, unknown>>;
+	return {
+		phase: oneOf(REBUILD_PROGRESS_PHASES, value.phase) ?? "unknown",
+		message: redactedFirstLine(value.message),
+		current: optionalNumber(value.current),
+		total: optionalNumber(value.total),
+		percent: optionalNumber(value.percent),
+		phaseStartedAt: optionalText(value.phaseStartedAt),
+		updatedAt: optionalText(value.updatedAt),
+		elapsedMs: optionalNumber(value.elapsedMs),
+		estimatedRemainingMs: optionalNumber(value.estimatedRemainingMs),
+	};
+}
+
+/** Background rebuild state for Code Mode scripts; reports liveness instead of the process id and redacts message text. */
+function structuredRebuildState(cwd: string, status: BackgroundRebuildStatus | undefined) {
+	if (!status) return undefined;
+	const state = oneOf(BACKGROUND_REBUILD_STATES, status.status) ?? "unknown";
+	return {
+		status: state,
+		processActive: state === "running" && isProcessRunning(optionalNumber(status.pid)),
+		logPath: optionalText(status.logPath) ?? getIndexRebuildLogPath(resolve(cwd)),
+		startedAt: optionalText(status.startedAt),
+		finishedAt: optionalText(status.finishedAt),
+		embeddingModel: optionalText(status.embeddingModel),
+		summaryModel: optionalText(status.summaryModel),
+		summariesDisabled: typeof status.summariesDisabled === "boolean" ? status.summariesDisabled : undefined,
+		progress: structuredRebuildProgress(status.progress),
+		message: redactedFirstLine(status.message),
+		error: redactedFirstLine(status.error),
+	};
+}
+
 function compactResultDetails(results: SearchResult[]) {
 	return results.map((result) => ({
 		path: result.path,
@@ -3453,6 +3618,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 			embeddingMaxChars: Type.Optional(Type.Number({ description: `Maximum characters sent to Ollama per embedding input before adaptive retries (default ${DEFAULT_OLLAMA_EMBED_INPUT_MAX_CHARS}).`, minimum: MIN_OLLAMA_EMBED_INPUT_CHARS, maximum: MAX_OLLAMA_EMBED_INPUT_MAX_CHARS })),
 			ollamaUrl: Type.Optional(Type.String({ description: `Ollama base URL. Defaults to OLLAMA_BASE_URL/OLLAMA_HOST or ${DEFAULT_OLLAMA_BASE_URL}.` })),
 		}),
+		outputSchema: SemanticSearchOutputSchema,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			onUpdate?.({ content: [{ type: "text", text: `Searching index for: ${params.query}` }], details: {} });
 			let index: SearchIndex;
@@ -3495,6 +3661,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 
 			let text = formatSearchResults(params.query, results, index);
 			if (status.stale) text += `\n\nNote: index may be stale (${status.reason}). Run /index rebuild or call semantic_search with refresh=true.`;
+			const compactResults = compactResultDetails(results);
 			return {
 				content: [{ type: "text" as const, text }],
 				details: {
@@ -3502,8 +3669,9 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 					rebuilt,
 					embeddingUsed,
 					index: { files: index.files.length, chunks: index.chunks.length, cards: index.cards.length, updatedAt: index.updatedAt, stale: status.stale, reason: status.reason, embedding: index.embedding, summary: index.summary },
-					results: compactResultDetails(results),
+					results: compactResults,
 				},
+				structuredContent: { query: params.query, rebuilt, embeddingUsed, index: structuredIndexState(status), results: compactResults },
 			};
 		},
 	});
@@ -3520,6 +3688,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 			maxClusters: Type.Optional(Type.Number({ description: "Maximum concept clusters to show (default 8, max 20).", minimum: 1, maximum: 20 })),
 			refresh: Type.Optional(Type.Boolean({ description: "Refresh a missing/stale index before building the repo map. Defaults to true." })),
 		}),
+		outputSchema: RepoMapOutputSchema,
 		async execute(_toolCallId, params, _signal, onUpdate, ctx) {
 			onUpdate?.({ content: [{ type: "text", text: "Building repo map from semantic-search index" }], details: {} });
 			const { index, status, rebuilt } = ensureIndex(ctx.cwd, params.refresh ?? true);
@@ -3529,6 +3698,7 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 			return {
 				content: [{ type: "text" as const, text }],
 				details: { rebuilt, index: { files: index.files.length, chunks: index.chunks.length, cards: index.cards.length, stale: status.stale, reason: status.reason }, clusters: map.clusters },
+				structuredContent: { rebuilt, index: structuredIndexState(status), clusters: map.clusters, topDirectories: map.topDirectories },
 			};
 		},
 	});
@@ -3539,11 +3709,13 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 		description: "Show whether the local semantic-search index exists, is fresh/stale, and where it is stored.",
 		promptSnippet: "Check local semantic-search index freshness",
 		parameters: Type.Object({}),
+		outputSchema: IndexStateSchema,
 		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
 			const status = getIndexStatus(ctx.cwd);
 			return {
 				content: [{ type: "text" as const, text: formatStatus(status) }],
 				details: status,
+				structuredContent: structuredIndexState(status),
 			};
 		},
 	});
@@ -3554,12 +3726,14 @@ export default function semanticSearchExtension(pi: ExtensionAPI, options: Seman
 		description: "Monitor the last /index rebuild --background job, including running/finished/failed state, log path, and current index freshness.",
 		promptSnippet: "Check semantic-search background rebuild status",
 		parameters: Type.Object({}),
+		outputSchema: IndexRebuildStatusOutputSchema,
 		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
 			const status = getIndexStatus(ctx.cwd);
 			const rebuild = currentBackgroundRebuildStatus(ctx.cwd);
 			return {
 				content: [{ type: "text" as const, text: formatBackgroundRebuildStatus(ctx.cwd, status) }],
 				details: { index: status, rebuild },
+				structuredContent: { index: structuredIndexState(status), rebuild: structuredRebuildState(ctx.cwd, rebuild) },
 			};
 		},
 	});

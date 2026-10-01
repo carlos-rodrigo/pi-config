@@ -72,6 +72,27 @@ pi install ./extensions/worktree-manager
 | [verify](verify/) | Preflight `verification_plan`, back-pressure hook, and `scripts/verify.sh` scaffolding via `/setup-verify` |
 | [worktree-manager](worktree-manager/) | Git worktree management with complete local development-environment copying |
 
+## Code Mode structured results
+
+These tools declare `outputSchema`, so `codemode` scripts receive objects instead of formatted text; direct calls still return the same human-readable text. Each tool's description states what a script call resolves to; scripts read the full TypeScript declaration with `describeTool(name)`.
+
+| Extension | Tools |
+|-----------|-------|
+| code-intel | `code_find`, `task_context_graph`, `symbol_search`, `dependency_map`, `git_pickaxe`, `ast_search` |
+| web-tools | `websearch`, `webfetch` |
+| semantic-search | `semantic_search`, `repo_map`, `index_status`, `index_rebuild_status` |
+| agent-jobs | `agent_job_status`, `loop_job_status` (`{ job, resultPreview }` with `jobId`, otherwise `{ jobs }`) |
+
+```js
+const [symbols, hits] = await Promise.all([
+  tools.symbol_search({ query: "createCheckout" }),
+  tools.semantic_search({ query: "checkout flow", topK: 5 }),
+]);
+return [...new Set([...symbols.results, ...hits.results].map((hit) => hit.path))];
+```
+
+Structured results omit internals such as process ids, tmux windows, origin session files, launcher paths, and Ollama endpoint URLs. Do not run several index-refreshing calls (`semantic_search`, `repo_map`) concurrently; they share one on-disk index.
+
 ## Notes
 
 - **auto-prompt** + **bordered-editor** work together via `pi.events` — auto-prompt generates suggestions, bordered-editor renders the ghost text.

@@ -5,6 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { assertStructuredContent } from "../lib/assert-structured-content.ts";
 import semanticSearchExtension, {
 	buildRebuildProgressSnapshot,
 	buildSearchIndex,
@@ -1523,3 +1524,166 @@ test("semantic_search reports required Ollama setup instead of falling back to l
 		rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+function registeredSemanticTools(): Map<string, any> {
+	const tools = new Map<string, any>();
+	semanticSearchExtension({
+		registerTool(definition: any) {
+			tools.set(definition.name, definition);
+		},
+		registerCommand() {},
+	} as any);
+	return tools;
+}
+
+async function runSemanticTool(tools: Map<string, any>, name: string, params: Record<string, unknown>, cwd: string) {
+	const tool = tools.get(name);
+	const result = await tool.execute("tool-call-1", params, undefined, undefined, { cwd } as any);
+	return { result, data: assertStructuredContent(tool, result) };
+}
+
+test("semantic_search returns structured ranked matches without endpoint details", async () => {
+	const tools = registeredSemanticTools();
+	const dir = makeProject({
+		"src/search/index.ts": "export function semanticSearch(query: string) { return vectorIndex.search(query); }\n",
+	});
+	try {
+		await withMockOllamaFetch(async () => {
+			const { result, data } = await runSemanticTool(tools, "semantic_search", { query: "vector search", topK: 1, refresh: true }, dir);
+			assert.match(result.content[0].text, /src\/search\/index\.ts/);
+			assert.equal(data.query, "vector search");
+			assert.equal(data.embeddingUsed, true);
+			assert.equal(data.index.stale, false);
+			assert.equal(data.index.embedding.model, "mxbai-embed-large");
+			assert.equal(data.index.summary.model, "qwen2.5-coder:14b");
+			assert.equal(data.results.length, 1);
+			assert.equal(data.results[0].path, "src/search/index.ts");
+			assert.ok(data.results[0].startLine >= 1 && data.results[0].endLine >= data.results[0].startLine);
+			assert.doesNotMatch(JSON.stringify(data), /baseUrl|11434/);
+
+			const empty = await runSemanticTool(tools, "semantic_search", { query: "vector search", paths: ["no/such/dir"] }, dir);
+			assert.deepEqual(empty.data.results, []);
+		});
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("repo_map and index_status return structured index state", async () => {
+	const tools = registeredSemanticTools();
+	const files = {
+		"src/billing/invoice.ts": "export function reconcileInvoice() { return ledger.balance(); }\n",
+		"src/ui/canvas.ts": "export function paintCanvas() { return palette.primary; }\n",
+	};
+	const dir = makeProject(files);
+	const copy = makeProject(files);
+	const malformed = makeProject(files);
+	try {
+		const missing = await runSemanticTool(tools, "index_status", {}, dir);
+		assert.equal(missing.data.exists, false);
+		assert.equal(missing.data.stale, true);
+		assert.equal(missing.data.files, 0);
+
+		const map = await runSemanticTool(tools, "repo_map", { maxClusters: 2 }, dir);
+		assert.match(map.result.content[0].text, /src/);
+		assert.equal(map.data.rebuilt, true);
+		assert.equal(map.data.index.files, 2);
+		assert.ok(map.data.clusters.length >= 1);
+		assert.ok(map.data.clusters.flatMap((cluster: any) => cluster.files.map((file: any) => file.path)).includes("src/billing/invoice.ts"));
+		assert.ok(Array.isArray(map.data.topDirectories));
+
+		const built = await runSemanticTool(tools, "index_status", {}, dir);
+		assert.equal(built.data.exists, true);
+		assert.equal(built.data.stale, false);
+		assert.equal(built.data.files, 2);
+		assert.match(built.data.indexPath, /\.pi\/semantic-search\//);
+
+		// A worktree copy loads the index from disk, including metadata written before semantic cards existed.
+		const stored = JSON.parse(readFileSync(join(dir, ".pi", "semantic-search", "index.json"), "utf8"));
+		stored.embedding = { provider: "ollama", model: "legacy-embed", baseUrl: "http://10.0.0.5:11434", dimensions: 3, embeddedChunks: 2, createdAt: "2026-01-01T00:00:00.000Z" };
+		mkdirSync(join(copy, ".pi", "semantic-search"), { recursive: true });
+		writeFileSync(join(copy, ".pi", "semantic-search", "index.json"), JSON.stringify(stored), "utf8");
+		const legacy = await runSemanticTool(tools, "index_status", {}, copy);
+		assert.equal(legacy.data.stale, false);
+		assert.deepEqual(legacy.data.embedding, { model: "legacy-embed", embeddedChunks: 2 });
+		assert.doesNotMatch(JSON.stringify(legacy.data), /10\.0\.0\.5/);
+
+		stored.embedding = null;
+		stored.summary = { provider: "ollama", summarizedCards: 1 };
+		mkdirSync(join(malformed, ".pi", "semantic-search"), { recursive: true });
+		writeFileSync(join(malformed, ".pi", "semantic-search", "index.json"), JSON.stringify(stored), "utf8");
+		const unusable = await runSemanticTool(tools, "index_status", {}, malformed);
+		assert.equal(unusable.data.embedding, undefined);
+		assert.equal(unusable.data.summary, undefined);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+		rmSync(copy, { recursive: true, force: true });
+		rmSync(malformed, { recursive: true, force: true });
+	}
+});
+
+test("repo_map returns a valid empty map for a project without indexable files", async () => {
+	const dir = makeProject({});
+	try {
+		const { data } = await runSemanticTool(registeredSemanticTools(), "repo_map", {}, dir);
+		assert.equal(data.index.files, 0);
+		assert.deepEqual(data.clusters, []);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("index_rebuild_status returns structured rebuild state without process ids", async () => {
+	const tools = registeredSemanticTools();
+	const dir = makeProject({ "src/index.ts": "export const value = 1;\n" });
+	try {
+		const none = await runSemanticTool(tools, "index_rebuild_status", {}, dir);
+		assert.match(none.result.content[0].text, /State: none recorded/);
+		assert.equal(none.data.rebuild, undefined);
+		assert.equal(none.data.index.exists, false);
+
+		const indexDir = join(dir, ".pi", "semantic-search");
+		mkdirSync(indexDir, { recursive: true });
+		writeFileSync(join(indexDir, "rebuild-status.json"), JSON.stringify({
+			status: "failed",
+			cwd: dir,
+			logPath: join(indexDir, "rebuild.log"),
+			pid: 999999,
+			startedAt: "2026-10-01T10:00:00.000Z",
+			finishedAt: "2026-10-01T10:01:00.000Z",
+			embeddingModel: "mxbai-embed-large",
+			message: "Rebuild failed against http://10.0.0.5:11434",
+			error: "Error: Ollama embedding request to https://user:token@ollama.internal:11434/api/embed failed: model not found\n    at embed (/private/semantic-search/index.ts:1000:9)",
+			progress: { phase: "embedding", message: "Embedding chunks", current: 3, total: 10, percent: 30, updatedAt: "2026-10-01T10:00:30.000Z" },
+		}), "utf8");
+		const failed = await runSemanticTool(tools, "index_rebuild_status", {}, dir);
+		assert.match(failed.result.content[0].text, /State: failed/);
+		assert.equal(failed.data.rebuild.status, "failed");
+		assert.match(failed.result.content[0].text, /ollama\.internal/);
+		assert.equal(failed.data.rebuild.error, "Error: Ollama embedding request to <url> failed: model not found");
+		assert.equal(failed.data.rebuild.message, "Rebuild failed against <url>");
+		assert.doesNotMatch(JSON.stringify(failed.data), /token|ollama\.internal|10\.0\.0\.5|\/private\/semantic-search/);
+		assert.equal(failed.data.rebuild.processActive, false);
+		assert.equal(failed.data.rebuild.progress.percent, 30);
+		assert.equal(failed.data.rebuild.pid, undefined);
+
+		writeFileSync(join(indexDir, "rebuild-status.json"), JSON.stringify({
+			status: "running",
+			cwd: dir,
+			logPath: join(indexDir, "rebuild.log"),
+			error: 123,
+			summariesDisabled: null,
+			progress: { phase: "embedding", message: "Calling https://user:token@ollama.internal:11434/api/embed", percent: "30", internal: "secret" },
+		}), "utf8");
+		const malformed = await runSemanticTool(tools, "index_rebuild_status", {}, dir);
+		assert.match(malformed.result.content[0].text, /Error: 123/);
+		assert.equal(malformed.data.rebuild.error, undefined);
+		assert.equal(malformed.data.rebuild.summariesDisabled, undefined);
+		assert.equal(malformed.data.rebuild.processActive, false);
+		assert.deepEqual(malformed.data.rebuild.progress, { phase: "embedding", message: "Calling <url>" });
+		assert.doesNotMatch(JSON.stringify(malformed.data), /token|ollama\.internal|secret/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+

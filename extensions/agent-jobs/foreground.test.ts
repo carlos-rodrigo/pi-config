@@ -33,6 +33,7 @@ setTimeout(() => {
 		on(name: string, callback: () => unknown) { if (name === "session_shutdown") shutdown.push(callback); },
 		registerCommand() {}, registerTool(tool: ToolDefinition) { tools.set(tool.name, tool); },
 		getAllTools: () => [{ name: "read" }, { name: "grep" }],
+		getThinkingLevel: () => "high",
 		sendUserMessage: (text: string) => followUps.push(text),
 		events: { emit() {} },
 		exec: async (command: string, args: string[]) => ({ code: 0, stdout: execFileSync(command, args, { encoding: "utf8" }), stderr: "", killed: false }),
