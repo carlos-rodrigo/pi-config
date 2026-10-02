@@ -1,10 +1,10 @@
 ---
 description: Research a technology, codebase, or library via the researcher agent
 ---
-Use the agent_job_start tool to start the "researcher" agent in a detached background job with this task: $@
+Use agent_job_start to start the "researcher" agent in a detached background job with mode="standard" and followUp=true. Do not use the synchronous subagent tool.
 
-Set mode="standard" and followUp=true. Do not use the synchronous subagent tool for this prompt.
+Task: $@
 
-Ask the researcher for a concise, evidence-first brief: lead with the decision, inspect local repo files first when relevant, use targeted tool calls only, cap normal output at 900 words, cite at most 8 sources, and avoid pasted code blocks unless essential.
+Use the agent's defaults for evidence, tool budgets, and output.
 
-After starting the job, stop. The main workflow should continue when the background completion follow-up arrives.
+After starting the job, stop. Resume the main workflow when the completion follow-up arrives.

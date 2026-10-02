@@ -1,43 +1,17 @@
 ---
-description: Concise Oracle review of current work
+description: Review current changes with the Oracle's five-topic quality validation
 ---
+Use agent_job_start to start the "oracle" agent in a detached background job with mode="review" and followUp=true. Do not use the synchronous subagent tool.
 
-Use the agent_job_start tool to start the "oracle" agent in a detached background job.
+Task: Review the current work relevant to: $@
 
-Set mode="review" and followUp=true. Do not use the synchronous subagent tool for this prompt.
-The agent-jobs launcher will snapshot git status/diffs into review-context.md before oracle starts; require oracle to read that file first.
-Every Oracle review must run the Are You Proud validation and synthesize its five focused quality checks.
+Read the launcher-generated review-context.md first. Use the agent's review defaults, including the five focused child reviews and the Are You Proud output contract.
 
-Task:
-
-Review the current work relevant to: $@
-
-Inspect the relevant local repo files before answering.
-Look for bugs, edge cases, architecture issues, and improvements.
-Keep the feedback evidence-first, repo-specific, action-oriented, and concise by default. Separate confirmed findings from hypotheses and prefer the smallest repo-consistent recommendation.
-If the area includes an interactive/TUI/editor flow, explicitly review the interaction model, focus transitions, selection visibility, perceived latency, and terminal key reliability/fallbacks.
-
-Scope:
+Scope and output overrides:
 - Review only changed files / diff and directly related code needed to validate correctness.
-- Do not summarize the implementation.
-- Do not list positives.
-- Do not provide broad architecture commentary unless it is a concrete blocker.
-- Prefer must-fix issues over optional improvements.
-- Return at most 5 findings.
-- If there are more than 5 issues, return only the highest-risk ones.
-- If no must-fix issues exist, say so directly.
+- Do not summarize the implementation or list generic positives; retain the verdict and quality checks required by the review contract.
+- Include broader architecture findings only when they are concrete blockers.
+- Return at most 5 findings, highest-risk first. If no must-fix issues exist, say so directly.
+- Maximum 800 words. No pasted code blocks unless essential.
 
-Require this output contract:
-1. Decision
-2. Analysis
-3. Top 3 Risks / Edge Cases
-4. Recommended Changes (label each item Must-fix or Optional; include prior-art files; include file paths / line ranges when possible)
-5. Verification Plan
-6. Documentation Destination (architecture / operations / engineering standards / domain / none)
-
-Hard limits:
-- Maximum 800 words.
-- No long explanations.
-- No pasted code blocks unless essential.
-
-After starting the job, stop. The main workflow should continue when the background completion follow-up arrives.
+After starting the job, stop. Resume the main workflow when the completion follow-up arrives.

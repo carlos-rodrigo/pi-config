@@ -1,14 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 const oracleAgent = readFileSync(new URL("./oracle.md", import.meta.url), "utf8");
 const researcherAgent = readFileSync(new URL("./researcher.md", import.meta.url), "utf8");
 const librarianAgent = readFileSync(new URL("./librarian.md", import.meta.url), "utf8");
-const askOraclePrompt = readFileSync(new URL("../prompts/ask-oracle.md", import.meta.url), "utf8");
 const oraclePrompt = readFileSync(new URL("../prompts/oracle.md", import.meta.url), "utf8");
 const deepReviewPrompt = readFileSync(new URL("../prompts/deep-review.md", import.meta.url), "utf8");
-const oracleCheckpointPrompt = readFileSync(new URL("../prompts/oracle-checkpoint.md", import.meta.url), "utf8");
 const researchPrompt = readFileSync(new URL("../prompts/research.md", import.meta.url), "utf8");
 const researchAndPlanPrompt = readFileSync(new URL("../prompts/research-and-plan.md", import.meta.url), "utf8");
 
@@ -44,16 +42,20 @@ test("oracle runs Are You Proud validation for every review with five focused ch
 	assert.match(oracleAgent, /Proud[\s\S]*Mostly proud[\s\S]*Not proud yet[\s\S]*Would not ship/);
 });
 
-test("oracle prompt templates require repo-specific evidence and interactive-flow feedback", () => {
-	assert.match(deepReviewPrompt, /Are You Proud/i);
-	for (const prompt of [askOraclePrompt, oraclePrompt, deepReviewPrompt, oracleCheckpointPrompt]) {
-		assert.match(prompt, /repo-specific/i);
-		assert.match(prompt, /concise by default/i);
-		assert.match(prompt, /selection visibility/i);
-		assert.match(prompt, /perceived latency/i);
-		assert.match(prompt, /terminal key reliability/i);
-		assert.match(prompt, /Documentation Destination \(architecture \/ operations \/ engineering standards \/ domain \/ none\)/);
-	}
+test("prompt inventory exposes four distinct workflows", () => {
+	assert.deepEqual(readdirSync(new URL("../prompts/", import.meta.url)).filter(name => name.endsWith(".md")).sort(), [
+		"deep-review.md", "oracle.md", "research-and-plan.md", "research.md",
+	]);
+});
+
+test("deep review uses the agent review contract with focused scope and limits", () => {
+	assert.match(deepReviewPrompt, /review-context\.md first/);
+	assert.match(deepReviewPrompt, /Are You Proud output contract/);
+	assert.match(deepReviewPrompt, /changed files.*diff.*directly related code/);
+	assert.match(deepReviewPrompt, /at most 5 findings/i);
+	assert.match(deepReviewPrompt, /Maximum 800 words/);
+	assert.match(deepReviewPrompt, /no must-fix issues/i);
+	assert.doesNotMatch(deepReviewPrompt, /Documentation Destination|1\. Decision/);
 });
 
 test("researcher agent follows oracle-style model, tool, and context-budget discipline", () => {
@@ -80,20 +82,32 @@ test("librarian agent uses only bash and constrains gh CLI research", () => {
 	assert.match(librarianAgent, /Maximum 900 words/);
 });
 
-test("research prompt templates keep researcher output bounded", () => {
-	for (const prompt of [researchPrompt, researchAndPlanPrompt, oracleCheckpointPrompt]) {
-		assert.match(prompt, /evidence-first/i);
-		assert.match(prompt, /at most 8 sources/i);
-		assert.match(prompt, /maximum of 900 words|cap normal output at 900 words/i);
-		assert.match(prompt, /no long code blocks|avoid pasted code blocks/i);
+test("research-and-plan sequences the evidence handoff before the recommendation", () => {
+	assert.match(researchAndPlanPrompt, /Step 1[\s\S]*"researcher"[\s\S]*After starting[\s\S]*stop/);
+	assert.match(researchAndPlanPrompt, /When the researcher completion follow-up arrives[\s\S]*"oracle"/);
+	assert.match(researchAndPlanPrompt, /Pass the researcher output/);
+	assert.match(researchAndPlanPrompt, /implementation recommendation/);
+});
+
+test("prompts inherit shared policy from agent definitions", () => {
+	for (const prompt of [oraclePrompt, deepReviewPrompt, researchPrompt, researchAndPlanPrompt]) {
+		assert.match(prompt, /agent.*defaults/i);
+		assert.match(prompt, /\$@/);
+		assert.doesNotMatch(prompt, /selection visibility|Maximum 900 words|at most 8 sources/);
 	}
+	assert.match(researcherAgent, /Maximum 8 sources/);
 });
 
 test("oracle and researcher prompt templates use non-blocking agent jobs", () => {
-	for (const prompt of [askOraclePrompt, oraclePrompt, deepReviewPrompt, oracleCheckpointPrompt, researchPrompt, researchAndPlanPrompt]) {
+	for (const prompt of [oraclePrompt, deepReviewPrompt, researchPrompt, researchAndPlanPrompt]) {
 		assert.match(prompt, /agent_job_start/);
 		assert.match(prompt, /background|detached tmux/i);
+		assert.match(prompt, /followUp=true/);
+		assert.match(prompt, /stop/i);
 		assert.doesNotMatch(prompt, /Use the subagent tool/i);
 	}
 	assert.match(deepReviewPrompt, /mode="review"/);
+	for (const prompt of [oraclePrompt, researchPrompt, researchAndPlanPrompt]) {
+		assert.match(prompt, /mode="standard"/);
+	}
 });

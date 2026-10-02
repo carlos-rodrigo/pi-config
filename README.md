@@ -98,11 +98,14 @@ See [docs/features/README.md](docs/features/README.md) for the durable feature p
 
 Workflow prompt templates:
 
-- `/oracle <question>` / `/ask-oracle <question>` — Start a background oracle second-opinion job
+- `/oracle <question>` — Start a background oracle second-opinion job
 - `/research <topic>` — Start a background researcher job
-- `/deep-review <area>` — Start a background oracle review with git diff context
+- `/deep-review <area>` — Review current changes with git diff context and five focused Oracle child reviews
 - `/research-and-plan <feature>` — Background researcher → oracle implementation recommendation
-- `/oracle-checkpoint <decision>` — Background researcher → oracle checkpoint for high-uncertainty decisions
+
+Prompts own launch settings, scope, and handoffs; agent definitions own shared evidence, budget, and output policy. The main agent coordinates the results, implements accepted recommendations, and verifies changes. Librarian is available by direct delegation for remote GitHub investigation, not local repo search.
+
+`/ask-oracle` has been replaced by `/oracle`; `/oracle-checkpoint` by `/research-and-plan`.
 
 ### [Themes](themes/)
 
@@ -120,7 +123,6 @@ Use the librarian agent to search GitHub for real examples of React useEffect cl
 /oracle Is there a better way to handle the state machine in src/parser.ts?
 /research What's the current best approach for real-time sync in web apps? Compare options.
 /research-and-plan Add end-to-end encryption to our messaging feature
-/oracle-checkpoint Choose an approach for cache invalidation across worker + API boundaries
 /deep-review Review the error handling in src/api/
 
 # Sequential handoff

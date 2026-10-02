@@ -1,12 +1,14 @@
 ---
-description: Research the state of the art, then plan the implementation
+description: Research options, then recommend an implementation for this codebase
 ---
-Use detached background agent jobs for this workflow. Do not use the synchronous subagent tool.
+Use detached background agent jobs for this workflow. Do not use the synchronous subagent tool. Use each agent's defaults for evidence, budgets, and output.
 
-Step 1 now: use agent_job_start to start the "researcher" agent with mode="standard" and followUp=true for this task:
+Step 1: use agent_job_start to start the "researcher" agent with mode="standard" and followUp=true.
 
-Produce a concise, evidence-first research brief for: $@. Require local repo evidence first when relevant, targeted tool calls only, at most 8 sources, no long code blocks, and a maximum of 900 words.
+Task: Gather the options, constraints, and prior art needed to recommend an implementation for: $@
 
 After starting the researcher job, stop.
 
-When the researcher completion follow-up arrives, start a second background job with agent_job_start for the "oracle" agent, mode="standard", followUp=true. Pass the researcher output into the oracle task and ask it to synthesize the research into a concrete implementation recommendation for our codebase.
+When the researcher completion follow-up arrives, use agent_job_start to start the "oracle" agent with mode="standard" and followUp=true. Pass the researcher output and the original task into the oracle job. Ask for a concrete implementation recommendation for this codebase, including trade-offs and verification. This is advice only; do not implement changes.
+
+After starting the oracle job, stop. Resume the main workflow when its completion follow-up arrives.
