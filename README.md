@@ -86,9 +86,14 @@ To update, just `git pull` — symlinks pick up changes automatically.
 
 Agent definitions used by the agent-jobs extension:
 
+- **manager** — Owns sequential builder dispatch, Oracle review/repair, evidence checks, completion, and updates to pending tasks. Inherits the caller's model.
+- **builder** — Implements or repairs one task and returns proof; does not dispatch reviewers, mark completion, or edit pending tasks. Inherits the caller's model.
+
 - **oracle** — Deep reasoning second opinion (GPT-6 Astra, xhigh). For complex debugging, architecture decisions, and read-only code reviews that always run the Are You Proud validation.
 - **researcher** — Concise research specialist (Claude Sonnet 5.5 via claude-bridge). Investigates technologies, reads docs/source, compares approaches, and returns evidence-first briefs with bounded tool/output budgets. Uses `websearch`/`webfetch` instead of shelling out.
 - **librarian** — Remote GitHub code research specialist (Claude Sonnet 5.5 via claude-bridge). Uses only `bash` with the authenticated `gh` CLI for public/private GitHub source search and upstream library inspection. Read-only.
+
+Say “Use manager to implement TASK-003” or “Use manager to implement the remaining tasks for this feature.” The manager automatically routes builder → Oracle → repairs until clean. The current launcher starts a fresh context on every call, including repairs; task Results and review findings carry the handoff. These are prompt-defined roles, not an enforced scheduler. `/agents` remains the job-monitor UI, not the delivery manager.
 
 ### Feature packets
 
@@ -100,7 +105,7 @@ Workflow prompt templates:
 
 - `/oracle <question>` — Start a background oracle second-opinion job
 - `/research <topic>` — Start a background researcher job
-- `/deep-review <area>` — Review current changes with git diff context and five focused Oracle child reviews
+- `/deep-review <area>` — Five-way review of current changes: git diff context and five focused Oracle child reviews (other Oracle reviews use one reviewer)
 - `/research-and-plan <feature>` — Background researcher → oracle implementation recommendation
 
 Prompts own launch settings, scope, and handoffs; agent definitions own shared evidence, budget, and output policy. The main agent coordinates the results, implements accepted recommendations, and verifies changes. Librarian is available by direct delegation for remote GitHub investigation, not local repo search.

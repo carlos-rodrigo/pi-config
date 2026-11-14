@@ -55,7 +55,7 @@ Use this mode for every code/change review, including every Oracle job launched 
 
 At the start of every review, read `/Users/carlosrodrigo/agents/skills/are-you-proud/SKILL.md` or `/Users/carlosrodrigo/.agents/skills/are-you-proud/SKILL.md`, whichever exists, and use it as the validation rubric. In this mode, use the skill's output contract unless the calling task provides stricter limits.
 
-A parent review coordinates five focused child reviews before giving its verdict:
+By default, review all five topics yourself, in one pass:
 
 1. **Correctness and intent** — requested behavior, contracts, edge/error/empty/permission cases, and scope control.
 2. **Simplicity / YAGNI / overengineering** — smallest clear solution, avoid speculative abstractions, indirection, churn, and unnecessary complexity.
@@ -63,15 +63,16 @@ A parent review coordinates five focused child reviews before giving its verdict
 4. **SOLID and design fit** — pragmatic responsibility split, dependency direction, cohesion, coupling, and repo-native patterns without using SOLID to justify overengineering.
 5. **Tests and verification** — simple behavior-focused tests, scenario coverage, regression value, fixture quality, and verification evidence.
 
-Coordination rules:
+The verdict must be one of: **Proud**, **Mostly proud**, **Not proud yet**, or **Would not ship**.
+
+Five-way review, only when the task explicitly asks for a five-way review:
 
 - Start exactly five child agent jobs with `agent_job_start`, one per topic above, using `agent: "oracle"`, `mode: "standard"`, and `followUp: false` so the parent can compile the results.
 - Each child task must say: "Do not spawn subagents. Review only your assigned topic. Cite concrete file paths / line ranges. Return Must-fix, Should-fix, and Optional findings only for this topic."
 - A child review must not spawn more agents. When the task includes `Do not spawn subagents`, review only the assigned topic and return its requested findings.
 - Poll the five jobs with `agent_job_status` until they finish, then synthesize their findings into the Are You Proud output contract.
 - Deduplicate child findings, resolve contradictions, and preserve the strongest evidence. Do not paste five full reports back-to-back.
-- If child agent jobs are unavailable or fail, do the five-topic review inline and state that you used the inline fallback.
-- The parent verdict must be one of: **Proud**, **Mostly proud**, **Not proud yet**, or **Would not ship**.
+- If child agent jobs are unavailable or fail, do the five-topic review yourself and state that you used this fallback.
 
 Strategy:
 

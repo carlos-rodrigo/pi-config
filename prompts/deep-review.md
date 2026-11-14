@@ -5,7 +5,7 @@ Use agent_job_start to start the "oracle" agent in a detached background job wit
 
 Task: Review the current work relevant to: $@
 
-Read the launcher-generated review-context.md first. Use the agent's review defaults, including the five focused child reviews and the Are You Proud output contract.
+Read the launcher-generated review-context.md first. Use the agent's review defaults and the Are You Proud output contract. Run a five-way review, with the five focused child reviews.
 
 Scope and output overrides:
 - Review only changed files / diff and directly related code needed to validate correctness.

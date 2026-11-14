@@ -24,7 +24,7 @@ test("oracle agent emphasizes concise, evidence-first, high-signal feedback", ()
 	assert.match(oracleAgent, /Documentation Destination[\s\S]*none/);
 });
 
-test("oracle runs Are You Proud validation for every review with five focused child jobs", () => {
+test("oracle reviews five topics in one pass and fans out only on explicit request", () => {
 	assert.match(oracleAgent, /Are You Proud review mode:/);
 	assert.match(oracleAgent, /every code\/change review/i);
 	assert.match(oracleAgent, /At the start of every review/i);
@@ -34,7 +34,8 @@ test("oracle runs Are You Proud validation for every review with five focused ch
 	assert.match(oracleAgent, /Naming and self-explanatory code/);
 	assert.match(oracleAgent, /SOLID and design fit/);
 	assert.match(oracleAgent, /Tests and verification/);
-	assert.match(oracleAgent, /Start exactly five child agent jobs/);
+	assert.match(oracleAgent, /By default, review all five topics yourself, in one pass/);
+	assert.match(oracleAgent, /only when the task explicitly asks for a five-way review:[\s\S]*Start exactly five child agent jobs/);
 	assert.match(oracleAgent, /followUp: false/);
 	assert.match(oracleAgent, /Do not spawn subagents/);
 	assert.match(oracleAgent, /child review must not spawn/i);
@@ -107,6 +108,7 @@ test("oracle and researcher prompt templates use non-blocking agent jobs", () =>
 		assert.doesNotMatch(prompt, /Use the subagent tool/i);
 	}
 	assert.match(deepReviewPrompt, /mode="review"/);
+	assert.match(deepReviewPrompt, /Run a five-way review/);
 	for (const prompt of [oraclePrompt, researchPrompt, researchAndPlanPrompt]) {
 		assert.match(prompt, /mode="standard"/);
 	}
