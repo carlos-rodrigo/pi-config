@@ -50,7 +50,7 @@ For a single high-impact safety issue, promotion can happen after one incident i
 - **Benchmark seed:** `agent_benchmark` can compare cheap local config behavior before and after a proposed improvement.
 - **Hook/warning:** `overseer` warns about repeated tool failures but remains non-blocking and rate-limited.
 - **Extension/tool:** `/propose-improvement` drafts an evidence-based proposal; it does not implement it.
-- **Skill/guidance:** `implement-task` requires task-contract audits so repeated misses become visible before completion.
+- **Skill/guidance:** `feedback-loop` requires recorded evidence and a clean Oracle review before a task is done, so repeated misses become visible before completion.
 
 ### Finish-phase checklist
 

@@ -78,26 +78,21 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[workflow-modes](extensions/workflow-modes/)** — Manual Fast (GPT-6.1 Sol) / Smart (Claude Opus 5.5 via claude-bridge) / Deep+Max (GPT-6 Astra) presets.
 - **[worktree-manager](extensions/worktree-manager/)** — Git worktree lifecycle manager.
 
-### [Skills](skills/)
-
-- **system-diagram** — Excalidraw-style HTML/SVG System Diagrams for code flows, component communication, domain concepts, and system mental models.
-
 ### [Agents](agents/)
 
 Agent definitions used by the agent-jobs extension:
 
 - **manager** — Owns sequential builder dispatch, Oracle review/repair, evidence checks, completion, and updates to pending tasks. Inherits the caller's model.
 - **builder** — Implements or repairs one task and returns proof; does not dispatch reviewers, mark completion, or edit pending tasks. Inherits the caller's model.
-
 - **oracle** — Deep reasoning second opinion (GPT-6 Astra, xhigh). For complex debugging, architecture decisions, and read-only code reviews that always run the Are You Proud validation.
 - **researcher** — Concise research specialist (Claude Sonnet 5.5 via claude-bridge). Investigates technologies, reads docs/source, compares approaches, and returns evidence-first briefs with bounded tool/output budgets. Uses `websearch`/`webfetch` instead of shelling out.
 - **librarian** — Remote GitHub code research specialist (Claude Sonnet 5.5 via claude-bridge). Uses only `bash` with the authenticated `gh` CLI for public/private GitHub source search and upstream library inspection. Read-only.
 
 Say “Use manager to implement TASK-003” or “Use manager to implement the remaining tasks for this feature.” The manager automatically routes builder → Oracle → repairs until clean. The current launcher starts a fresh context on every call, including repairs; task Results and review findings carry the handoff. These are prompt-defined roles, not an enforced scheduler. `/agents` remains the job-monitor UI, not the delivery manager.
 
-### Feature packets
+### Feature docs
 
-See [docs/features/README.md](docs/features/README.md) for the durable feature packet shape. No feature orchestration extension is currently shipped from this repo; create/update feature packet files directly or through the planning skills/prompts.
+New feature work is planned in ignored `.features/{feature}/plan.md` with the `plan` skill from the [agents repo](https://github.com/carlos-rodrigo/agents-md); lasting decisions go into an ADR. `docs/features/` keeps the remaining durable notes for older features. See [docs/features/README.md](docs/features/README.md).
 
 ### [Prompts](prompts/)
 

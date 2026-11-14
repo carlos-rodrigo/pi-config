@@ -7,7 +7,7 @@
 ```
 docs/
 ├── playbooks/     ← curated how-to guides (auto-maintained by agents)
-├── features/      ← durable feature docs when they are worth writing
+├── features/      ← durable notes on how older features work
 │   └── archive/   ← completed features
 ```
 
@@ -19,7 +19,7 @@ Curated guides for building specific types of things. Each playbook covers patte
 
 ## Features (`features/`)
 
-Durable feature knowledge when it materially helps future work: strategy briefs and current system models. Persists after feature completes (moved to `archive/`).
+Durable notes on how older features work. New feature plans live in ignored `.features/{name}/plan.md`; see `features/README.md`.
 
 Write feature docs when they:
 - stabilize scope or requirements,
