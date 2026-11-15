@@ -27,7 +27,6 @@ Use `/fast`, `/smart`, `/deep`, `/max`, or **Ctrl+Shift+M** to select a preset.
 ### Inside the box
 
 - Your current prompt, with two spaces of horizontal padding.
-- When the editor is empty, Auto Prompt can show a gray suggested prompt. Press **Right Arrow** to accept it. Any other input dismisses it; printable input then continues normally.
 - Autocomplete results appear below the bordered box rather than inside it.
 
 ### Bottom border
@@ -35,8 +34,8 @@ Use `/fast`, `/smart`, `/deep`, `/max`, or **Ctrl+Shift+M** to select a preset.
 - **`42% of 200k`:** how much of the model's context window the current conversation occupies.
 - **`1.3M burned`:** cumulative tokens processed by assistant messages in the current session branch, including input, output, cache reads, and cache writes.
 - **`$1.14`:** cumulative assistant cost for the current session branch.
-- **Extension status:** when present, one active status follows the cost, for example `Improving prompt…`, `reviewing`, `queue: 2 queued`, or an Agent Memory status. Failures and active work take priority. Mode status is excluded because it already appears in the top border.
-- **Activity:** semantic-index rebuild progress and the number of running background agent jobs appear in the accent color before the path, for example `idx: embedding 60% · ~11s · 2 bg jobs`.
+- **Extension status:** when present, one active status follows the cost, for example `reviewing`, a semantic-search status, or `queue: 2 queued`. Review and semantic-search statuses take priority. Mode status is excluded because it already appears in the top border.
+- **Index rebuild:** semantic-index rebuild progress appears in the accent color before the path, for example `idx: embedding 60% · ~11s`. Agent-job and loop counts are not displayed; use `/agents` and `/loops` to inspect them.
 - **`~/project`:** the current working directory, shortened with `~` when it is under the home directory and rendered as muted metadata.
 - **`(main)`:** the current branch in the accent color in a normal checkout. Linked worktrees instead show `[WT <worktree> · <branch>]`.
 

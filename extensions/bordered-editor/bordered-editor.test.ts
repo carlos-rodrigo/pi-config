@@ -5,64 +5,19 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import borderedEditor, {
-	formatBackgroundJobIndicator,
 	formatBottomLeftUsage,
-	formatComposerActivityIndicator,
-	formatLoopJobIndicator,
 	formatTokenCount,
 	getAssistantUsageTotals,
 	pickPrimaryExtensionStatus,
 } from "./index.ts";
 
-test("pickPrimaryExtensionStatus promotes Agent Memory failure over active statuses", () => {
+test("pickPrimaryExtensionStatus prefers foreground semantic search over ambient statuses", () => {
 	const statuses = new Map<string, string>([
-		["workflow-mode", "mode: Smart"],
-		["auto-prompt", "Improving prompt…"],
-		["agent-memory", "mem: failed · embeddings unavailable · /agent-memory status"],
-	]);
-
-	assert.equal(
-		pickPrimaryExtensionStatus(statuses),
-		"mem: failed · embeddings unavailable · /agent-memory status",
-	);
-});
-
-test("pickPrimaryExtensionStatus does not promote healthy Agent Memory over active work", () => {
-	const statuses = new Map<string, string>([
-		["agent-memory", "mem: ready · project 1 · global 0"],
-		["auto-prompt", "Improving prompt…"],
-	]);
-
-	assert.equal(pickPrimaryExtensionStatus(statuses), "Improving prompt…");
-});
-
-test("pickPrimaryExtensionStatus keeps healthy Agent Memory ambient behind prompt queue", () => {
-	const statuses = new Map<string, string>([
-		["agent-memory", "mem: ready · project 1 · global 0"],
 		["prompt-queue", "queue: 2 queued"],
-		["workflow-mode", "mode: Smart"],
+		["semantic-search", "searching…"],
 	]);
 
-	assert.equal(pickPrimaryExtensionStatus(statuses), "queue: 2 queued");
-});
-
-test("pickPrimaryExtensionStatus uses healthy Agent Memory as the ambient fallback", () => {
-	const statuses = new Map<string, string>([
-		["agent-memory", "mem: running"],
-		["workflow-mode", "mode: Smart"],
-	]);
-
-	assert.equal(pickPrimaryExtensionStatus(statuses), "mem: running");
-});
-
-test("pickPrimaryExtensionStatus prefers active auto-prompt status over ambient statuses", () => {
-	const statuses = new Map<string, string>([
-		["workflow-mode", "mode: Smart"],
-		["prompt-queue", "queue: 2 queued"],
-		["auto-prompt", "Improving prompt…"],
-	]);
-
-	assert.equal(pickPrimaryExtensionStatus(statuses), "Improving prompt…");
+	assert.equal(pickPrimaryExtensionStatus(statuses), "searching…");
 });
 
 test("pickPrimaryExtensionStatus prefers review over prompt queue", () => {
@@ -130,11 +85,23 @@ test("composer restores workflow mode, live model and effort while preserving op
 			setEditorComponent: (factory: typeof editorFactory) => { editorFactory = factory; },
 		},
 	} as unknown as ExtensionContext;
+	events.emit("agent-jobs:running-count", { count: 2 });
+	events.emit("loop-jobs:running-count", { count: 3 });
+	events.emit("semantic-search:rebuild-status", { indicator: "idx: embedding 60% · ~11s" });
 	await handlers.get("session_start")!({}, ctx);
 	const editor = editorFactory!({ terminal: { rows: 40 }, requestRender() {} }, theme, { matches: () => false });
-	const rendered = editor.render(100).join("\n");
+	const rendered = editor.render(180).join("\n");
 	assert.match(rendered, /mode:deep/);
 	assert.match(rendered, /GPT-6 Astra · xhigh/);
+	assert.match(rendered, /idx: embedding 60% · ~11s/);
+	assert.doesNotMatch(rendered, /bg jobs?|\d+ loops?/);
+	events.emit("agent-jobs:running-count", { count: 7 });
+	events.emit("loop-jobs:running-count", { count: 5 });
+	assert.equal(editor.render(180).join("\n"), rendered, "job/loop events no longer change the composer");
+	events.emit("semantic-search:rebuild-status", { indicator: "idx: done" });
+	assert.match(editor.render(180).join("\n"), /idx: done/);
+	events.emit("semantic-search:rebuild-status", { indicator: null });
+	assert.doesNotMatch(editor.render(180).join("\n"), /idx:/);
 	thinking = "medium";
 	events.emit("workflow:mode", { mode: "smart", label: "Smart" });
 	assert.match(editor.render(100)[0], /mode:smart.*GPT-6 Astra · medium/);
@@ -143,25 +110,6 @@ test("composer restores workflow mode, live model and effort while preserving op
 	}
 	assert.match(rendered, /25% of 200k/);
 	assert.match(rendered, /\/tmp\/project/);
-});
-
-test("formatBackgroundJobIndicator only appears for running jobs", () => {
-	assert.equal(formatBackgroundJobIndicator(0), null);
-	assert.equal(formatBackgroundJobIndicator(1), "1 bg job");
-	assert.equal(formatBackgroundJobIndicator(2), "2 bg jobs");
-});
-
-test("formatLoopJobIndicator only appears for running loops", () => {
-	assert.equal(formatLoopJobIndicator(0), null);
-	assert.equal(formatLoopJobIndicator(1), "1 loop");
-	assert.equal(formatLoopJobIndicator(2), "2 loops");
-});
-
-test("formatComposerActivityIndicator combines index rebuilds, agent jobs, and loops", () => {
-	assert.equal(formatComposerActivityIndicator(null, 0), null);
-	assert.equal(formatComposerActivityIndicator("idx: embedding 60% · ~11s", 0), "idx: embedding 60% · ~11s");
-	assert.equal(formatComposerActivityIndicator(null, 0, 2), "2 loops");
-	assert.equal(formatComposerActivityIndicator("idx: embedding 60% · ~11s", 2, 1), "idx: embedding 60% · ~11s · 2 bg jobs · 1 loop");
 });
 
 test("formatTokenCount keeps token totals compact", () => {

@@ -19,7 +19,6 @@ git clone https://github.com/carlos-rodrigo/pi-config.git
 cd pi-config
 
 pi install ./extensions/agent-jobs
-pi install ./extensions/auto-prompt
 pi install ./extensions/bordered-editor
 pi install ./extensions/branch-switcher
 pi install ./extensions/code-intel
@@ -31,7 +30,6 @@ pi install ./extensions/prompt-queue
 pi install ./extensions/review-mode
 pi install ./extensions/semantic-search
 pi install ./extensions/session-query
-pi install ./extensions/verify
 pi install ./extensions/web-tools
 pi install ./extensions/workflow-modes
 pi install ./extensions/worktree-manager
@@ -39,7 +37,6 @@ pi install ./extensions/worktree-manager
 
 Notes:
 - Use the extension directory path; each extension exposes an `index.ts` entrypoint.
-- Some extensions are best used together, for example Auto Prompt (`auto-prompt`) + `bordered-editor`.
 - Pi can install a single local file, but it does **not** currently install one subpath from a git package in a single `pi install` command. For remote one-by-one installs, each extension would need to be published as its own package.
 
 ### Via install.sh (everything)
@@ -61,7 +58,6 @@ To update, just `git pull` — symlinks pick up changes automatically.
 ### [Extensions](extensions/)
 
 - **[agent-jobs](extensions/agent-jobs/)** — Run researcher/oracle jobs as detached processes and resume via session-aware follow-up messages.
-- **[auto-prompt](extensions/auto-prompt/)** — Inline ghost-text prompt suggestions.
 - **[bordered-editor](extensions/bordered-editor/)** — Bordered composer with context, activity, cost, and git status.
 - **[branch-switcher](extensions/branch-switcher/)** — Interactive `/branch` command for local and remote branches.
 - **[code-intel](extensions/code-intel/)** — `code_find` orchestration plus symbol, dependency, git-history, and AST search tools.
@@ -73,7 +69,6 @@ To update, just `git pull` — symlinks pick up changes automatically.
 - **[review-mode](extensions/review-mode/)** — Overlay review workbench for local/staged/unstaged/outgoing diffs.
 - **[semantic-search](extensions/semantic-search/)** — Local Ollama-backed hybrid code index, semantic search, and repo concept map.
 - **[session-query](extensions/session-query/)** — Query previous Pi session files for context and decisions.
-- **[verify](extensions/verify/)** — Preflight `verification_plan`, back-pressure verification hook, and `/setup-verify` scaffolder.
 - **[web-tools](extensions/web-tools/)** — Web search and fetch tools.
 - **[workflow-modes](extensions/workflow-modes/)** — Manual Fast (GPT-6.1 Sol) / Smart (Claude Opus 5.5 via claude-bridge) / Deep+Max (GPT-6 Astra) presets.
 - **[worktree-manager](extensions/worktree-manager/)** — Git worktree lifecycle manager.

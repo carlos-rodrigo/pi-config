@@ -1,27 +1,23 @@
 /**
- * Bordered Editor — compact input box with operational status,
- * project context, and ghost text support for Auto Prompt suggestions.
+ * Bordered Editor — compact input box with operational status
+ * and project context.
  *
  * ╭─ mode:smart ───────────── GPT-6 Astra · medium ─╮
- * │   ▌Implement the error handling changes                │  ← gray ghost text
+ * │   ▌Implement the error handling changes                │
  * ╰─ 42% of 200k · 1.2M burned · $1.14 ─ ~/project (main) ─╯
  *
  * Top border: workflow mode and live model · thinking level.
  * Bottom left:  context% of Nk · cumulative tokens burned · $cost - active status
  * Bottom right: cwd plus git state — branch (main checkout) or worktree info
- *
- * Ghost text: appears when editor is empty, right arrow accepts, any key dismisses.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { CustomEditor, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, matchesKey, Key, visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
+import { visibleWidth, truncateToWidth } from "@earendil-works/pi-tui";
 
 const ANSI_SGR = /\x1b\[[0-9;]*m/g;
-const GHOST_COLOR = "\x1b[90m"; // bright black (gray)
-const ANSI_RESET = "\x1b[0m";
 const PADDING_X = 2;
 
 function shouldShowPrimaryExtensionStatus(key: string, status: string): boolean {
@@ -35,20 +31,17 @@ function shouldShowPrimaryExtensionStatus(key: string, status: string): boolean 
 }
 
 export function pickPrimaryExtensionStatus(statuses: ReadonlyMap<string, string>): string | null {
-	const memoryStatus = statuses.get("agent-memory");
-	if (memoryStatus?.trim().startsWith("mem: failed")) return memoryStatus;
-
-	const highPriorityKeys = ["auto-prompt", "review", "semantic-search"];
+	const highPriorityKeys = ["review", "semantic-search"];
 	for (const key of highPriorityKeys) {
 		const status = statuses.get(key);
 		if (status && shouldShowPrimaryExtensionStatus(key, status)) return status;
 	}
 
 	for (const [key, value] of statuses) {
-		if (key !== "agent-memory" && shouldShowPrimaryExtensionStatus(key, value)) return value;
+		if (shouldShowPrimaryExtensionStatus(key, value)) return value;
 	}
 
-	return memoryStatus ?? null;
+	return null;
 }
 
 const THINKING_COLORS = {
@@ -65,31 +58,6 @@ function modeColor(mode: string | null) {
 	if (mode === "max") return "thinkingMax";
 	if (mode === "deep") return "thinkingXhigh";
 	return "thinkingMedium";
-}
-
-export function formatBackgroundJobIndicator(count: number): string | null {
-	if (!Number.isFinite(count) || count <= 0) return null;
-	return count === 1 ? "1 bg job" : `${count} bg jobs`;
-}
-
-export function formatLoopJobIndicator(count: number): string | null {
-	if (!Number.isFinite(count) || count <= 0) return null;
-	return count === 1 ? "1 loop" : `${count} loops`;
-}
-
-export function formatComposerActivityIndicator(
-	indexRebuildIndicator: string | null | undefined,
-	backgroundJobCount: number,
-	loopJobCount = 0,
-): string | null {
-	const labels: string[] = [];
-	const indexLabel = indexRebuildIndicator?.trim();
-	if (indexLabel) labels.push(indexLabel);
-	const jobLabel = formatBackgroundJobIndicator(backgroundJobCount);
-	if (jobLabel) labels.push(jobLabel);
-	const loopLabel = formatLoopJobIndicator(loopJobCount);
-	if (loopLabel) labels.push(loopLabel);
-	return labels.length > 0 ? labels.join(" · ") : null;
 }
 
 export function formatTokenCount(count: number): string {
@@ -236,14 +204,7 @@ class BorderedEditor extends CustomEditor {
 	private getGitBranch: () => string | null = () => null;
 	private getWorktreeInfo: () => string | null = () => null;
 	private getExtensionStatus: () => string | null = () => null;
-	private backgroundJobCount = 0;
-	private loopJobCount = 0;
 	private indexRebuildIndicator: string | null = null;
-
-	// --- Ghost text state ---
-	private ghostText: string | null = null;
-	onGhostAccepted?: (text: string) => void;
-	onGhostDismissed?: () => void;
 
 	setDataProviders(
 		ctx: ExtensionContext,
@@ -260,59 +221,8 @@ class BorderedEditor extends CustomEditor {
 		this.borderColor = (s: string) => ctx.ui.theme.fg(this.modeLabel ? modeColor(this.modeLabel) : "border", s);
 	}
 
-	setBackgroundJobCount(count: number): void {
-		this.backgroundJobCount = Math.max(0, Math.floor(count));
-	}
-
-	setLoopJobCount(count: number): void {
-		this.loopJobCount = Math.max(0, Math.floor(count));
-	}
-
 	setIndexRebuildIndicator(indicator: string | null): void {
 		this.indexRebuildIndicator = indicator?.trim() || null;
-	}
-
-	setGhostText(text: string | null): void {
-		if (text && this.getText().length > 0) {
-			// Don't show ghost when editor has content
-			return;
-		}
-		this.ghostText = text;
-	}
-
-	clearGhostText(): void {
-		this.ghostText = null;
-	}
-
-	// --- Input handling for ghost text ---
-
-	handleInput(data: string): void {
-		if (this.ghostText && this.getText().length === 0) {
-			if (matchesKey(data, Key.right)) {
-				// Accept: fill editor with ghost text
-				const text = this.ghostText;
-				this.ghostText = null;
-				this.ctx?.ui.setEditorText(text);
-				this.onGhostAccepted?.(text);
-				return;
-			}
-
-			// Any other input: dismiss ghost first
-			this.ghostText = null;
-			this.onGhostDismissed?.();
-
-			// Escape just dismisses ghost — don't pass through (avoids agent abort flicker)
-			if (matchesKey(data, Key.escape)) return;
-
-			// Backspace on empty editor — nothing to delete, just dismiss
-			if (matchesKey(data, Key.backspace)) return;
-
-			// Everything else (printable chars, ctrl combos, etc.) — pass through
-			super.handleInput(data);
-			return;
-		}
-
-		super.handleInput(data);
 	}
 
 	// --- Rendering ---
@@ -324,11 +234,6 @@ class BorderedEditor extends CustomEditor {
 		const lines = super.render(innerWidth);
 		const bc = this.borderColor;
 		const theme = this.ctx?.ui.theme;
-
-		// If ghost text is active and editor is empty, replace the cursor line
-		if (this.ghostText && this.getText().length === 0) {
-			this.replaceWithGhostLine(lines, innerWidth);
-		}
 
 		// Find bottom border: last line that starts with ─ after stripping ANSI
 		let bottomIdx = 0;
@@ -371,7 +276,7 @@ class BorderedEditor extends CustomEditor {
 				: this.ctx.cwd;
 			const branch = this.getGitBranch();
 			const worktreeInfo = this.getWorktreeInfo();
-			const activityIndicator = formatComposerActivityIndicator(this.indexRebuildIndicator, this.backgroundJobCount, this.loopJobCount);
+			const activityIndicator = this.indexRebuildIndicator;
 			bottomRight = activityIndicator ? theme.fg("accent", activityIndicator) + theme.fg("dim", " · ") : "";
 			bottomRight += theme.fg("muted", cwd);
 			if (worktreeInfo) {
@@ -397,32 +302,6 @@ class BorderedEditor extends CustomEditor {
 			// Autocomplete rows below the box
 			return " " + line + " ";
 		});
-	}
-
-	/** Replace the first content line with ghost text when editor is empty. */
-	private replaceWithGhostLine(lines: string[], innerWidth: number): void {
-		if (!this.ghostText) return;
-
-		// Find the first content line (between inner top and bottom borders).
-		// Content lines are those between the ─ borders.
-		let firstContentIdx = -1;
-		for (let i = 1; i < lines.length; i++) {
-			if (!lines[i].replace(ANSI_SGR, "").startsWith("─")) {
-				firstContentIdx = i;
-				break;
-			}
-		}
-		if (firstContentIdx < 0) return;
-
-		const padding = " ".repeat(PADDING_X);
-		const maxGhostWidth = innerWidth - PADDING_X;
-		const gt = truncateToWidth(this.ghostText, maxGhostWidth);
-		const gtVW = visibleWidth(gt);
-		const fill = " ".repeat(Math.max(0, maxGhostWidth - gtVW));
-
-		// CURSOR_MARKER positions the hardware cursor; only emit when focused
-		const marker = this.focused ? CURSOR_MARKER : "";
-		lines[firstContentIdx] = padding + marker + GHOST_COLOR + gt + ANSI_RESET + fill;
 	}
 
 	/** Build a border line with optional left/right labels embedded in ─ */
@@ -470,8 +349,6 @@ class BorderedEditor extends CustomEditor {
 export default function (pi: ExtensionAPI) {
 	let editorInstance: BorderedEditor | undefined;
 	let requestRender: (() => void) | undefined;
-	let backgroundJobCount = 0;
-	let loopJobCount = 0;
 	let indexRebuildIndicator: string | null = null;
 
 	pi.events.on("workflow:mode", (data) => {
@@ -480,48 +357,11 @@ export default function (pi: ExtensionAPI) {
 		requestRender?.();
 	});
 
-	// --- Background job count events ---
-
-	pi.events.on("agent-jobs:running-count", (data) => {
-		const { count } = data as { count?: number };
-		backgroundJobCount = count ?? 0;
-		if (editorInstance) {
-			editorInstance.setBackgroundJobCount(backgroundJobCount);
-			requestRender?.();
-		}
-	});
-
-	pi.events.on("loop-jobs:running-count", (data) => {
-		const { count } = data as { count?: number };
-		loopJobCount = count ?? 0;
-		if (editorInstance) {
-			editorInstance.setLoopJobCount(loopJobCount);
-			requestRender?.();
-		}
-	});
-
 	pi.events.on("semantic-search:rebuild-status", (data) => {
 		const { indicator } = data as { indicator?: unknown };
 		indexRebuildIndicator = typeof indicator === "string" ? indicator : null;
 		if (editorInstance) {
 			editorInstance.setIndexRebuildIndicator(indexRebuildIndicator);
-			requestRender?.();
-		}
-	});
-
-	// --- Auto Prompt ghost text events ---
-
-	pi.events.on("auto-prompt:suggest", (data) => {
-		const { text } = data as { text: string };
-		if (editorInstance) {
-			editorInstance.setGhostText(text);
-			requestRender?.();
-		}
-	});
-
-	pi.events.on("auto-prompt:clear", () => {
-		if (editorInstance) {
-			editorInstance.clearGhostText();
 			requestRender?.();
 		}
 	});
@@ -557,12 +397,10 @@ export default function (pi: ExtensionAPI) {
 			};
 		});
 
-		// Install bordered editor with ghost text support
+		// Install bordered editor
 		ctx.ui.setEditorComponent((tui, theme, kb) => {
 			requestRender = () => tui.requestRender();
 			const editor = new BorderedEditor(tui, theme, kb, { paddingX: PADDING_X });
-			editor.setBackgroundJobCount(backgroundJobCount);
-			editor.setLoopJobCount(loopJobCount);
 			editor.setIndexRebuildIndicator(indexRebuildIndicator);
 			editor.setDataProviders(
 				ctx,
@@ -571,14 +409,6 @@ export default function (pi: ExtensionAPI) {
 				() => pi.getThinkingLevel(),
 				getExtensionStatus,
 			);
-
-			// Wire ghost text callbacks → events
-			editor.onGhostAccepted = (text) => {
-				pi.events.emit("auto-prompt:accepted", { text });
-			};
-			editor.onGhostDismissed = () => {
-				pi.events.emit("auto-prompt:dismissed", {});
-			};
 
 			editorInstance = editor;
 			pi.events.emit("workflow:request-mode", {});

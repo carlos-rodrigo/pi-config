@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import overseerExtension, { detectLargeMutation, detectRepeatedFailure } from "./index.ts";
-import { WARNING_EVENT } from "../self-improvement-archive/index.ts";
+import overseerExtension, { WARNING_EVENT, detectLargeMutation, detectRepeatedFailure } from "./index.ts";
 
 function createHarness() {
 	const handlers = new Map<string, Array<(...args: any[]) => unknown>>();

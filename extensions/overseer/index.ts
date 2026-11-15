@@ -1,13 +1,18 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { WARNING_EVENT, type WarningArchivePayload } from "../self-improvement-archive/index.ts";
+// Event name predates the removed self-improvement archive; kept so external listeners do not break.
+export const WARNING_EVENT = "self-improvement:warning";
 
 const REPEATED_FAILURE_THRESHOLD = 2;
 const LARGE_WRITE_CHARS = 50_000;
 const LARGE_EDIT_CHARS = 50_000;
 
-export type OverseerWarning = WarningArchivePayload & {
+export type OverseerWarning = {
+	type: string;
+	message: string;
 	severity: "info" | "warning";
+	toolName?: string;
+	count?: number;
 };
 
 type ToolResultLike = {

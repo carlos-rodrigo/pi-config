@@ -8,7 +8,7 @@ Compound engineering means converting proven, repeated lessons into small assets
 
 Good compounding is conservative:
 
-- Evidence first: use task results, verification failures, archive trends, benchmark results, or repeated manual friction.
+- Evidence first: use task results, verification failures, benchmark results, or repeated manual friction.
 - Human-gated: proposals remain advisory until the user approves implementation.
 - Smallest leverage: prefer the least durable artifact that prevents rediscovery.
 - Reversible: every durable change should have clear rollback or expiry criteria.
@@ -34,7 +34,7 @@ Do not skip to hooks, extensions, or skills unless lower rungs have failed or wo
 
 Promote a lesson only when most of these are true:
 
-- It appeared in at least two tasks, benchmark runs, archive trends, or review findings.
+- It appeared in at least two tasks, benchmark runs, or review findings.
 - The future trigger is recognizable before or during similar work.
 - The asset will reduce user burden, repeated agent reasoning, or prevent a known class of mistakes.
 - The maintenance cost is lower than rediscovering the lesson.
@@ -45,11 +45,7 @@ For a single high-impact safety issue, promotion can happen after one incident i
 
 ### Examples in this Pi config
 
-- **Doc/playbook:** `docs/playbooks/self-improvement.md` keeps the human-gated self-improvement workflow discoverable without adding runtime behavior.
-- **Test/regression:** structured verification outcome tests protect the archive format from accidental drift.
-- **Benchmark seed:** `agent_benchmark` can compare cheap local config behavior before and after a proposed improvement.
 - **Hook/warning:** `overseer` warns about repeated tool failures but remains non-blocking and rate-limited.
-- **Extension/tool:** `/propose-improvement` drafts an evidence-based proposal; it does not implement it.
 - **Skill/guidance:** `feedback-loop` requires recorded evidence and a clean Oracle review before a task is done, so repeated misses become visible before completion.
 
 ### Finish-phase checklist

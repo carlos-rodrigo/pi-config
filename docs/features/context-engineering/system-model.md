@@ -32,7 +32,6 @@ Tasks are operational and ephemeral. Durable strategy and current architecture l
 
 - `scripts/verify.sh` — project regression gate. Silent on success, verbose on failure.
 - `scripts/run_silent.sh` — helper for context-efficient command output.
-- `verification_plan` — pre-edit verification contract for behavior-changing work.
 - `agent-jobs` researcher/oracle — optional context firewall and second-opinion review.
 
 ## Intended agent flow

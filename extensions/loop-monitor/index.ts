@@ -1,10 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth, visibleWidth, type TUI } from "@earendil-works/pi-tui";
+import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
+import { Key, Markdown, matchesKey, truncateToWidth, visibleWidth, type TUI } from "@earendil-works/pi-tui";
 
 export type LoopJobState = "running" | "completed" | "failed" | "cancelled";
-export type TaskStatus = "draft" | "ready" | "blocked" | "done" | "open";
+export type TaskStatus = "todo" | "in-progress" | "blocked" | "done";
 export type TaskAssociation = "explicit" | "inferred" | "unassigned";
 export type MonitorView = "tasks" | "loops";
 
@@ -24,24 +24,18 @@ export interface PersistedLoopJob {
 	errorMessage?: string;
 }
 
-export interface ActiveTask {
-	id: string;
-	title: string;
-	status: TaskStatus;
-}
-
 export interface ActiveTaskBoard {
 	current?: string;
 	next?: string;
 	blockers?: string;
-	tasks: Map<string, ActiveTask>;
 }
 
 export interface ProjectTask {
 	id: string;
 	feature: string;
 	title: string;
-	status: TaskStatus;
+	/** Raw frontmatter value; may be a legacy status that is not a TaskStatus. */
+	status: string;
 	filePath: string;
 	content: string;
 }
@@ -59,7 +53,7 @@ export interface LoopMonitorItem {
 	job: PersistedLoopJob;
 	taskId: string;
 	taskTitle?: string;
-	taskStatus?: TaskStatus;
+	taskStatus?: string;
 	association: TaskAssociation;
 	board: ActiveTaskBoard;
 	iteration: CurrentIteration;
@@ -71,9 +65,9 @@ export interface TaskMonitorEntry {
 	loops: LoopMonitorItem[];
 }
 
-export interface TaskSections {
-	ready: TaskMonitorEntry[];
-	inProgress: TaskMonitorEntry[];
+export interface TaskFeatureGroup {
+	feature: string;
+	entries: TaskMonitorEntry[];
 }
 
 export interface LoopMonitorSnapshot {
@@ -167,12 +161,13 @@ function cleanBoardValue(value: string): string {
 	return value.trim().replace(/^`|`$/g, "").replace(/^\*\*|\*\*$/g, "").trim();
 }
 
-function isTaskStatus(value: string): value is TaskStatus {
-	return value === "draft" || value === "ready" || value === "blocked" || value === "done" || value === "open";
+export function isTaskStatus(value: string): value is TaskStatus {
+	return value === "todo" || value === "in-progress" || value === "blocked" || value === "done";
 }
 
+// Task status comes only from brief frontmatter. Boards have no fixed format, so only `- Current/Next/Blockers:` lines are read; `Current` is a loop association hint.
 export function parseActiveTaskBoard(markdown: string): ActiveTaskBoard {
-	const board: ActiveTaskBoard = { tasks: new Map() };
+	const board: ActiveTaskBoard = {};
 	for (const line of markdown.split(/\r?\n/)) {
 		const field = line.match(/^\s*-\s*(Current|Next|Blockers):\s*(.*?)\s*$/i);
 		if (field) {
@@ -182,15 +177,7 @@ export function parseActiveTaskBoard(markdown: string): ActiveTaskBoard {
 				case "next": board.next = value; break;
 				case "blockers": board.blockers = value; break;
 			}
-			continue;
 		}
-
-		const task = line.match(/^\s*-\s*\[[ xX]\]\s*(TASK-[A-Za-z0-9_.-]+)\s+[—-]\s+(.+?)\s+\((draft|ready|blocked|done|open)\)\s*$/i);
-		if (!task) continue;
-		const status = task[3]!.toLowerCase();
-		if (!isTaskStatus(status)) continue;
-		const activeTask = { id: task[1]!, title: task[2]!.trim(), status };
-		board.tasks.set(activeTask.id.toUpperCase(), activeTask);
 	}
 	return board;
 }
@@ -205,7 +192,7 @@ export function parseTaskBrief(markdown: string, feature: string, filePath: stri
 	}
 	const id = fields.get("id")?.replace(/^['"]|['"]$/g, "");
 	const status = fields.get("status")?.replace(/^['"]|['"]$/g, "").toLowerCase();
-	if (!id || !/^TASK-[A-Za-z0-9_.-]+$/i.test(id) || !status || !isTaskStatus(status)) return undefined;
+	if (!id || !/^TASK-[A-Za-z0-9_.-]+$/i.test(id) || !status) return undefined;
 
 	const body = markdown.slice(frontmatter[0].length).trimStart();
 	const heading = body.match(/^#\s+(TASK-[A-Za-z0-9_.-]+)\s+[—-]\s+(.+?)\s*$/m);
@@ -227,7 +214,7 @@ export function stripTerminalControls(text: string): string {
 		.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
 		.replace(/\u001B[@-_]/g, "")
 		.replace(/\r(?!\n)/g, "\n")
-		.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001A\u001C-\u001F\u007F-\u009F]/g, "");
+		.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "");
 }
 
 function sanitizeDisplayValue(text: string): string {
@@ -375,7 +362,7 @@ function compareTaskEntries(a: TaskMonitorEntry, b: TaskMonitorEntry): number {
 	return a.task.feature.localeCompare(b.task.feature) || a.task.id.localeCompare(b.task.id);
 }
 
-export function buildTaskSections(tasks: readonly ProjectTask[], loops: readonly LoopMonitorItem[]): TaskSections {
+export function buildTaskGroups(tasks: readonly ProjectTask[], loops: readonly LoopMonitorItem[]): TaskFeatureGroup[] {
 	const runningByTask = new Map<string, LoopMonitorItem[]>();
 	for (const item of loops) {
 		if (item.job.state !== "running" || item.association === "unassigned") continue;
@@ -386,20 +373,22 @@ export function buildTaskSections(tasks: readonly ProjectTask[], loops: readonly
 		runningByTask.set(key, associated);
 	}
 
-	const ready: TaskMonitorEntry[] = [];
-	const inProgress: TaskMonitorEntry[] = [];
+	const groups = new Map<string, TaskFeatureGroup>();
 	const seenTasks = new Set<string>();
 	for (const task of tasks) {
+		if (task.status === "done") continue;
 		const key = taskKey(task.feature, task.id);
 		if (seenTasks.has(key)) continue;
 		seenTasks.add(key);
-		const associated = runningByTask.get(key) ?? [];
-		if (associated.length > 0) inProgress.push({ task, loops: associated });
-		else if (task.status === "ready" || task.status === "open") ready.push({ task, loops: [] });
+		let group = groups.get(task.feature);
+		if (!group) {
+			group = { feature: task.feature, entries: [] };
+			groups.set(task.feature, group);
+		}
+		group.entries.push({ task, loops: runningByTask.get(key) ?? [] });
 	}
-	ready.sort(compareTaskEntries);
-	inProgress.sort(compareTaskEntries);
-	return { ready, inProgress };
+	for (const group of groups.values()) group.entries.sort(compareTaskEntries);
+	return [...groups.values()].sort((a, b) => a.feature.localeCompare(b.feature));
 }
 
 export async function loadLoopMonitorSnapshot(cwd: string, options: LoadOptions = {}): Promise<LoopMonitorSnapshot> {
@@ -423,13 +412,12 @@ export async function loadLoopMonitorSnapshot(cwd: string, options: LoadOptions 
 		}
 		const reference = loopTaskReference(job, board);
 		const projectTask = taskLookup.get(taskKey(job.feature, reference.taskId));
-		const boardTask = board.tasks.get(reference.taskId.toUpperCase());
 		const log = await readLogTail(cwd, job.loopLogPath);
 		items.push({
 			job,
 			taskId: reference.taskId,
-			taskTitle: projectTask?.title ?? boardTask?.title,
-			taskStatus: projectTask?.status ?? boardTask?.status,
+			taskTitle: projectTask?.title,
+			taskStatus: projectTask?.status,
 			association: reference.association,
 			board,
 			iteration: extractCurrentIteration(log.text, maxLogLines),
@@ -444,6 +432,16 @@ export async function loadLoopMonitorSnapshot(cwd: string, options: LoadOptions 
 		items,
 		warnings: [...jobWarnings, ...taskWarnings],
 	};
+}
+
+function taskStatusColor(status: string): "muted" | "accent" | "warning" | "success" {
+	switch (status) {
+		case "todo": return "muted";
+		case "in-progress": return "accent";
+		case "done": return "success";
+		case "blocked": return "warning";
+		default: return "warning"; // unrecognized legacy value
+	}
 }
 
 function formatAge(time: number | undefined, now: number): string {
@@ -489,36 +487,6 @@ function splitFrameSeparator(width: number, leftWidth: number, theme: Theme): st
 	return theme.fg(MONITOR_DIVIDER_COLOR, `├${"─".repeat(leftWidth)}┼${"─".repeat(rightWidth)}┤`);
 }
 
-function wrapPlainText(text: string, width: number): string[] {
-	const safeWidth = Math.max(1, width);
-	const wrapped: string[] = [];
-	for (const sourceLine of stripTerminalControls(text).replace(/\t/g, "    ").split(/\r?\n/)) {
-		let remaining = sourceLine.trimEnd();
-		if (remaining.length === 0) {
-			wrapped.push("");
-			continue;
-		}
-		while (visibleWidth(remaining) > safeWidth) {
-			const characters = Array.from(remaining);
-			let used = 0;
-			let fit = 0;
-			let lastSpace = -1;
-			for (let index = 0; index < characters.length; index++) {
-				const characterWidth = visibleWidth(characters[index]!);
-				if (used + characterWidth > safeWidth) break;
-				used += characterWidth;
-				fit = index + 1;
-				if (/\s/.test(characters[index]!)) lastSpace = fit;
-			}
-			const cut = lastSpace > 0 ? lastSpace : Math.max(1, fit);
-			wrapped.push(characters.slice(0, cut).join("").trimEnd());
-			remaining = characters.slice(cut).join("").trimStart();
-		}
-		wrapped.push(remaining);
-	}
-	return wrapped;
-}
-
 function stateText(state: LoopJobState, theme: Theme): string {
 	switch (state) {
 		case "running": return theme.fg("success", "● running");
@@ -542,7 +510,9 @@ export class LoopMonitorComponent {
 	private taskContentScroll = 0;
 	private taskContentLineCount = 0;
 	private taskContentRows = 1;
-	private expandedTask = false;
+	private taskContentFocused = false;
+	private taskMarkdown?: Markdown;
+	private taskMarkdownSource?: string;
 	private activeLogJobId?: string;
 	private logScroll = 0;
 	private lastLogRows = MIN_LOG_ROWS;
@@ -577,13 +547,20 @@ export class LoopMonitorComponent {
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || data === "q") {
+		if (matchesKey(data, Key.escape) && this.view === "tasks" && this.taskContentFocused) {
+			this.taskContentFocused = false;
+			this.syncActiveLog();
+			this.tui.requestRender();
+			return;
+		}
+		if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || matchesKey(data, "q")) {
 			this.dispose();
 			this.onClose();
 			return;
 		}
 		if (matchesKey(data, Key.tab) || matchesKey(data, Key.shift("tab"))) {
 			this.view = this.view === "tasks" ? "loops" : "tasks";
+			this.taskContentFocused = false;
 			this.ensureSelections();
 			this.syncActiveLog();
 			this.tui.requestRender();
@@ -597,18 +574,19 @@ export class LoopMonitorComponent {
 			this.openRelatedItem();
 			return;
 		}
-		if (matchesKey(data, Key.up) || data === "k") {
-			this.moveSelection(-1);
+		if (matchesKey(data, Key.up) || matchesKey(data, "k") || matchesKey(data, Key.shift("k"))) {
+			if (this.view === "tasks" && this.taskContentFocused) this.scrollDetail(-1, 1);
+			else this.moveSelection(-1);
 			return;
 		}
-		if (matchesKey(data, Key.down) || data === "j") {
-			this.moveSelection(1);
+		if (matchesKey(data, Key.down) || matchesKey(data, "j") || matchesKey(data, Key.shift("j"))) {
+			if (this.view === "tasks" && this.taskContentFocused) this.scrollDetail(1, 1);
+			else this.moveSelection(1);
 			return;
 		}
 		if (matchesKey(data, Key.enter) || data === "\r") {
-			if (this.view === "tasks" && (this.selectedTaskEntry()?.loops.length ?? 0) > 0) {
-				this.expandedTask = !this.expandedTask;
-				this.taskContentScroll = 0;
+			if (this.view === "tasks" && this.selectedTaskEntry()) {
+				this.taskContentFocused = !this.taskContentFocused;
 				this.syncActiveLog();
 				this.tui.requestRender();
 			}
@@ -654,7 +632,7 @@ export class LoopMonitorComponent {
 			Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, Math.floor((safeWidth - 3) * 0.34))),
 		);
 		const rightWidth = Math.max(1, safeWidth - leftWidth - 3);
-		const taskSections = buildTaskSections(this.snapshot.tasks, this.snapshot.items);
+		const taskGroups = buildTaskGroups(this.snapshot.tasks, this.snapshot.items);
 		const running = this.snapshot.items.filter((candidate) => candidate.job.state === "running").length;
 		const projectName = sanitizeDisplayValue(path.basename(this.snapshot.cwd) || this.snapshot.cwd);
 		const tasksTab = this.view === "tasks" ? this.theme.fg("accent", "[Tasks]") : "Tasks";
@@ -666,7 +644,7 @@ export class LoopMonitorComponent {
 			splitFrameSeparator(safeWidth, leftWidth, this.theme),
 		];
 		const sidebar = this.view === "tasks"
-			? this.renderTaskSidebar(taskSections, bodyRows)
+			? this.renderTaskSidebar(taskGroups, bodyRows)
 			: this.renderLoopSidebar(bodyRows, now);
 		const detail = this.view === "tasks"
 			? this.renderTaskDetail(bodyRows, rightWidth, now)
@@ -677,16 +655,21 @@ export class LoopMonitorComponent {
 		lines.push(splitFrameSeparator(safeWidth, leftWidth, this.theme));
 		const rawWarning = this.refreshError ?? this.snapshot.warnings[0];
 		const warning = rawWarning ? sanitizeDisplayValue(rawWarning) : undefined;
+		const controls = this.view === "tasks"
+			? this.taskContentFocused
+				? "↑↓/jk scroll task · Enter/Esc list · PgUp/PgDn page · Tab view · q close"
+				: "Enter content · ↑↓/jk select · PgUp/PgDn detail · Tab view · o related · r refresh · q close"
+			: "↑↓/jk select · PgUp/PgDn detail · Tab view · o related · G follow · r refresh · q close";
 		const help = warning
 			? `${this.theme.fg("warning", warning)} · r refresh · q close`
-			: "↑↓/jk select · PgUp/PgDn detail · Tab view · o related · G follow · r refresh · q close";
+			: controls;
 		lines.push(frameLine(help, safeWidth, this.theme));
 		lines.push(frameBorder(undefined, safeWidth, false, this.theme));
 		return lines.map((line) => truncateToWidth(line, safeWidth, ""));
 	}
 
 	invalidate(): void {
-		// Rendering is computed from current state and theme each time.
+		this.taskMarkdown?.invalidate();
 	}
 
 	dispose(): void {
@@ -698,16 +681,16 @@ export class LoopMonitorComponent {
 	}
 
 	private taskEntries(): TaskMonitorEntry[] {
-		const sections = buildTaskSections(this.snapshot.tasks, this.snapshot.items);
-		return [...sections.ready, ...sections.inProgress];
+		return buildTaskGroups(this.snapshot.tasks, this.snapshot.items).flatMap(group => group.entries);
 	}
 
 	private ensureSelections(): void {
-		const sections = buildTaskSections(this.snapshot.tasks, this.snapshot.items);
-		const taskEntries = [...sections.ready, ...sections.inProgress];
+		const taskEntries = this.taskEntries();
 		if (!this.selectedTaskKey || !taskEntries.some((entry) => taskKey(entry.task.feature, entry.task.id) === this.selectedTaskKey)) {
-			const preferred = sections.inProgress[0] ?? sections.ready[0];
+			const preferred = taskEntries.find(entry => entry.loops.length > 0) ?? taskEntries[0];
 			this.selectedTaskKey = preferred ? taskKey(preferred.task.feature, preferred.task.id) : undefined;
+			this.taskContentFocused = false;
+			this.taskContentScroll = 0;
 		}
 		if (!this.selectedLoopId || !this.snapshot.items.some((item) => item.job.jobId === this.selectedLoopId)) {
 			this.selectedLoopId = this.snapshot.items[0]?.job.jobId;
@@ -726,7 +709,7 @@ export class LoopMonitorComponent {
 
 	private outputItem(): LoopMonitorItem | undefined {
 		if (this.view === "loops") return this.selectedLoopItem();
-		if (this.expandedTask) return undefined;
+		if (this.taskContentFocused) return undefined;
 		return this.selectedTaskEntry()?.loops[0];
 	}
 
@@ -752,7 +735,7 @@ export class LoopMonitorComponent {
 			const next = (current + delta + entries.length) % entries.length;
 			this.selectedTaskKey = taskKey(entries[next]!.task.feature, entries[next]!.task.id);
 			this.taskContentScroll = 0;
-			this.expandedTask = false;
+			this.taskContentFocused = false;
 		} else {
 			if (this.snapshot.items.length === 0) return;
 			const current = Math.max(0, this.snapshot.items.findIndex((item) => item.job.jobId === this.selectedLoopId));
@@ -769,6 +752,7 @@ export class LoopMonitorComponent {
 			if (!loop) return;
 			this.selectedLoopId = loop.job.jobId;
 			this.view = "loops";
+			this.taskContentFocused = false;
 		} else {
 			const loop = this.selectedLoopItem();
 			if (!loop || loop.association === "unassigned") return;
@@ -776,14 +760,14 @@ export class LoopMonitorComponent {
 			if (!this.taskEntries().some((entry) => taskKey(entry.task.feature, entry.task.id) === key)) return;
 			this.selectedTaskKey = key;
 			this.view = "tasks";
-			this.expandedTask = false;
+			this.taskContentFocused = false;
 			this.taskContentScroll = 0;
 		}
 		this.syncActiveLog();
 		this.tui.requestRender();
 	}
 
-	private scrollDetail(direction: -1 | 1): void {
+	private scrollDetail(direction: -1 | 1, step?: number): void {
 		const item = this.outputItem();
 		if (item) {
 			this.activateLog(item);
@@ -794,7 +778,7 @@ export class LoopMonitorComponent {
 			if (this.following) this.seenLineCount = item.iteration.sourceLineCount;
 		} else {
 			const maxScroll = Math.max(0, this.taskContentLineCount - this.taskContentRows);
-			this.taskContentScroll = Math.max(0, Math.min(maxScroll, this.taskContentScroll + direction * this.taskContentRows));
+			this.taskContentScroll = Math.max(0, Math.min(maxScroll, this.taskContentScroll + direction * (step ?? this.taskContentRows)));
 		}
 		this.tui.requestRender();
 	}
@@ -829,6 +813,8 @@ export class LoopMonitorComponent {
 			if (!nextTasks.some((entry) => taskKey(entry.task.feature, entry.task.id) === this.selectedTaskKey)) {
 				const fallback = nextTasks[Math.min(previousTaskIndex, Math.max(0, nextTasks.length - 1))];
 				this.selectedTaskKey = fallback ? taskKey(fallback.task.feature, fallback.task.id) : undefined;
+				this.taskContentFocused = false;
+				this.taskContentScroll = 0;
 			}
 			if (!next.items.some((item) => item.job.jobId === this.selectedLoopId)) {
 				this.selectedLoopId = next.items[Math.min(previousLoopIndex, Math.max(0, next.items.length - 1))]?.job.jobId;
@@ -861,7 +847,7 @@ export class LoopMonitorComponent {
 	}
 
 	private visibleSidebarRows(
-		rows: Array<{ text: string; selected?: boolean }>,
+		rows: Array<{ text: string; selected?: boolean; featureHeader?: string }>,
 		height: number,
 		view: MonitorView,
 	): string[] {
@@ -871,35 +857,38 @@ export class LoopMonitorComponent {
 		scroll = Math.max(0, Math.min(scroll, maxScroll));
 		if (selectedRow >= 0 && selectedRow < scroll) scroll = selectedRow;
 		else if (selectedRow >= scroll + height) scroll = selectedRow - height + 1;
+		// Keep the feature name visible when its heading has scrolled out of view.
+		if (view === "tasks" && height > 1 && rows[scroll]?.featureHeader) {
+			if (selectedRow >= scroll + height - 1) scroll = selectedRow - height + 2;
+			this.taskSidebarScroll = scroll;
+			const featureHeader = rows[scroll]?.featureHeader;
+			if (featureHeader) return [featureHeader, ...rows.slice(scroll, scroll + height - 1).map(row => row.text)];
+		}
 		if (view === "tasks") this.taskSidebarScroll = scroll;
 		else this.loopSidebarScroll = scroll;
 		return rows.slice(scroll, scroll + height).map((row) => row.text);
 	}
 
-	private renderTaskSidebar(sections: TaskSections, height: number): string[] {
-		const rows: Array<{ text: string; selected?: boolean }> = [];
-		const addSection = (label: string, entries: TaskMonitorEntry[]) => {
-			rows.push({ text: this.theme.bold(` ${label} · ${entries.length}`) });
-			if (entries.length === 0) rows.push({ text: this.theme.fg("dim", "   none") });
-			for (const entry of entries) {
+	private renderTaskSidebar(groups: TaskFeatureGroup[], height: number): string[] {
+		const rows: Array<{ text: string; selected?: boolean; featureHeader?: string }> = [];
+		for (const group of groups) {
+			const featureHeader = this.theme.fg("accent", this.theme.bold(` ${sanitizeDisplayValue(group.feature)} · ${group.entries.length}`));
+			rows.push({ text: featureHeader });
+			for (const entry of group.entries) {
 				const key = taskKey(entry.task.feature, entry.task.id);
 				const selected = key === this.selectedTaskKey;
 				const marker = selected ? this.theme.fg("accent", "▶") : " ";
 				const runtime = entry.loops.length > 0
 					? ` ${this.theme.fg("success", `● ${entry.loops[0]!.iteration.iteration ?? "—"}/${entry.loops[0]!.iteration.maxIterations ?? entry.loops[0]!.job.maxIterations}`)}`
 					: "";
+				const status = this.theme.fg(taskStatusColor(entry.task.status), `[${sanitizeDisplayValue(entry.task.status)}]`);
 				rows.push({
-					selected,
-					text: `${marker} ${sanitizeDisplayValue(entry.task.id)}${runtime} · ${sanitizeDisplayValue(entry.task.title)}`,
+					selected, featureHeader,
+					text: `${marker} ${sanitizeDisplayValue(entry.task.id)} ${status}${runtime} · ${sanitizeDisplayValue(entry.task.title)}`,
 				});
 			}
-		};
-		addSection("READY", sections.ready);
-		rows.push({ text: "" });
-		addSection("IN PROGRESS", sections.inProgress);
-		if (sections.ready.length + sections.inProgress.length === 0) {
-			rows.push({ text: "" }, { text: this.theme.fg("dim", " No active task briefs found.") });
 		}
+		if (groups.length === 0) rows.push({ text: this.theme.fg("dim", " No unfinished tasks.") });
 		return this.visibleSidebarRows(rows, height, "tasks");
 	}
 
@@ -930,12 +919,12 @@ export class LoopMonitorComponent {
 
 	private renderTaskDetail(height: number, width: number, now: number): string[] {
 		const entry = this.selectedTaskEntry();
-		if (!entry) return [this.theme.fg("dim", " Select a ready or in-progress task.")];
+		if (!entry) return [this.theme.fg("dim", " Select a task from a feature.")];
 		const task = entry.task;
 		const loop = entry.loops[0];
 		const rows: string[] = [
 			this.theme.bold(` ${sanitizeDisplayValue(task.id)} — ${sanitizeDisplayValue(task.title)}`),
-			` ${sanitizeDisplayValue(task.feature)} · stored status: ${task.status}`,
+			` ${sanitizeDisplayValue(task.feature)} · stored status: ${sanitizeDisplayValue(task.status)}${isTaskStatus(task.status) ? "" : " (unrecognized)"}`,
 		];
 		if (loop) {
 			const association = loop.association === "inferred" ? "inferred from Current" : "explicit task";
@@ -945,22 +934,29 @@ export class LoopMonitorComponent {
 			rows.push(` runtime: running · ${association} · iteration ${iteration}${entry.loops.length > 1 ? ` · ${entry.loops.length} loops` : ""}`);
 		}
 
-		const content = wrapPlainText(task.content || "Task content unavailable.", Math.max(1, width - 2));
+		const source = stripTerminalControls(task.content || "Task content unavailable.");
+		if (!this.taskMarkdown || this.taskMarkdownSource !== source) {
+			this.taskMarkdownSource = source;
+			this.taskMarkdown = new Markdown(source, 0, 0, getMarkdownTheme(), {
+				color: text => this.theme.fg("text", text),
+			});
+		}
+		const content = this.taskMarkdown.render(Math.max(1, width - 2));
 		this.taskContentLineCount = content.length;
-		if (!loop || this.expandedTask) {
-			rows.push(` ${this.theme.fg("muted", `── TASK CONTENT${loop ? " · Enter to collapse" : ""}`)}`);
+		if (!loop || this.taskContentFocused) {
+			rows.push(` ${this.theme.fg(this.taskContentFocused ? "accent" : "muted", `── TASK CONTENT · ${this.taskContentFocused ? "FOCUSED · Enter/Esc to list" : "Enter to focus"}`)}`);
 			this.taskContentRows = Math.max(1, height - rows.length);
 			const maxScroll = Math.max(0, content.length - this.taskContentRows);
 			this.taskContentScroll = Math.max(0, Math.min(this.taskContentScroll, maxScroll));
 			for (const line of content.slice(this.taskContentScroll, this.taskContentScroll + this.taskContentRows)) {
-				rows.push(` ${this.theme.fg("text", line)}`);
+				rows.push(` ${line}`);
 			}
 			return rows.slice(0, height);
 		}
 
-		rows.push(` ${this.theme.fg("muted", "── TASK CONTENT · Enter to expand")}`);
+		rows.push(` ${this.theme.fg("muted", "── TASK CONTENT · Enter to focus")}`);
 		const excerptRows = Math.max(1, Math.min(4, height - rows.length - MIN_LOG_ROWS - 1));
-		for (const line of content.slice(0, excerptRows)) rows.push(` ${this.theme.fg("text", line)}`);
+		for (const line of content.slice(0, excerptRows)) rows.push(` ${line}`);
 		const logRows = Math.max(2, height - rows.length);
 		rows.push(...this.renderLogBlock(loop, logRows, width, now));
 		return rows.slice(0, height);
@@ -1062,7 +1058,7 @@ export default function loopMonitorExtension(pi: ExtensionAPI) {
 		handler: async (ctx) => showLoopMonitor(ctx as ExtensionContext, "tasks"),
 	});
 	pi.registerCommand("tasks", {
-		description: "Browse ready and in-progress tasks in the current project",
+		description: "Browse todo, in-progress, and blocked tasks in the current project",
 		handler: async (_args, ctx) => showLoopMonitor(ctx as ExtensionContext, "tasks"),
 	});
 	pi.registerCommand("loops", {

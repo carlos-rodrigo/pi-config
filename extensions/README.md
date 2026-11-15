@@ -18,9 +18,6 @@ Or run the install script for symlink-based local development:
 
 ```bash
 pi install ./extensions/agent-jobs
-pi install ./extensions/agent-benchmark
-pi install ./extensions/agent-memory
-pi install ./extensions/auto-prompt
 pi install ./extensions/bordered-editor
 pi install ./extensions/code-intel
 pi install ./extensions/branch-switcher
@@ -35,9 +32,7 @@ pi install ./extensions/overseer
 pi install ./extensions/prompt-queue
 pi install ./extensions/review-mode
 pi install ./extensions/semantic-search
-pi install ./extensions/self-improvement-archive
 pi install ./extensions/session-query
-pi install ./extensions/verify
 pi install ./extensions/web-tools
 pi install ./extensions/workflow-modes
 pi install ./extensions/worktree-manager
@@ -48,9 +43,6 @@ pi install ./extensions/worktree-manager
 | Extension | Description |
 |-----------|-------------|
 | [agent-jobs](agent-jobs/) | Non-blocking detached researcher/oracle processes with persisted logs/results |
-| [agent-benchmark](agent-benchmark/) | Cheap local benchmark suite for evidence-based Pi config improvement |
-| [agent-memory](agent-memory/) | Default-on local project/global memory with bounded recall, review controls, and verification feedback |
-| [auto-prompt](auto-prompt/) | Inline ghost text prompt suggestions (fish-style) |
 | [bordered-editor](bordered-editor/) | Bordered input editor with context, activity, and git info |
 | [branch-switcher](branch-switcher/) | Interactive git branch switching with local + remote-only branch support |
 | [checkpoint-rollback](checkpoint-rollback/) | Human-controlled git checkpoints with previewed rollback and explicit confirmation |
@@ -65,11 +57,9 @@ pi install ./extensions/worktree-manager
 | [prompt-queue](prompt-queue/) | Interactive queue palette for staging prompts, pasting them into the editor, or running them serially |
 | [review-mode](review-mode/) | Overlay review workbench for local/staged/unstaged/outgoing diffs with colorized preview, hunk/file/all scopes, same-session questions, and saved review notes |
 | [semantic-search](semantic-search/) | Local Ollama-backed hybrid code index, semantic search tool, and repo concept map |
-| [self-improvement-archive](self-improvement-archive/) | Quiet local archive of run, verification, benchmark, warning, and proposal evidence |
 | [session-query](session-query/) | Query previous Pi session files for context and decisions |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
 | [workflow-modes](workflow-modes/) | Manual Fast (GPT-6.1 Sol) / Smart (Claude Opus 5.5 via claude-bridge) / Deep+Max (GPT-6 Astra) presets |
-| [verify](verify/) | Preflight `verification_plan`, back-pressure hook, and `scripts/verify.sh` scaffolding via `/setup-verify` |
 | [worktree-manager](worktree-manager/) | Git worktree management with complete local development-environment copying |
 
 ## Code Mode structured results
@@ -95,7 +85,6 @@ Structured results omit internals such as process ids, tmux windows, origin sess
 
 ## Notes
 
-- **auto-prompt** + **bordered-editor** work together via `pi.events` — auto-prompt generates suggestions, bordered-editor renders the ghost text.
 - **agent-jobs** is terminal-multiplexer agnostic; it launches detached OS processes and persists results under `.pi/agent-jobs/`.
 - Researcher, oracle, and deep-review prompt templates use **agent-jobs** for non-blocking background work.
 - **worktree-manager** copies local root dotfiles/directories, `.env*`, project skills/tasks, and a relocatable semantic index from the invoking worktree, then fills gaps from the primary worktree. Use `copyLocal: false` or `--no-copy-local` for an isolated checkout. Pi runtime histories and caches are excluded, and exact copied paths are added to `.git/info/exclude` so the checkout stays clean.

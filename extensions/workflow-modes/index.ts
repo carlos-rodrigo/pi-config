@@ -1,7 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { recommendModeFromArchive } from "../self-improvement-archive/index.ts";
 import { MODEL_PROFILES, hasExplicitStartupOverrides } from "../lib/model-profiles.ts";
 
 type AgentMode = "fast" | "smart" | "deep" | "max";
@@ -168,14 +167,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (input.toLowerCase() === "help") {
-				ctx.ui.notify("Usage: /mode fast | /mode smart | /mode deep | /mode max | /mode recommend", "info");
-				return;
-			}
-
-			if (["recommend", "why"].includes(input.toLowerCase())) {
-				const recommendation = recommendModeFromArchive(ctx.cwd);
-				ctx.ui.notify(`Recommended mode: ${MODE_LABEL[recommendation.mode]} — ${recommendation.reason}`, "info");
-				ctx.ui.setEditorText?.(`Recommended mode: ${recommendation.mode}\n\n${recommendation.reason}\n\nRun /${recommendation.mode} to switch if you agree.`);
+				ctx.ui.notify("Usage: /mode fast | /mode smart | /mode deep | /mode max", "info");
 				return;
 			}
 

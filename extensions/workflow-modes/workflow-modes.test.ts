@@ -1,12 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 
 import { matchesKey, setKittyProtocolActive } from "@earendil-works/pi-tui";
 
-import { appendArchiveRecord } from "../self-improvement-archive/index.ts";
 import workflowModesExtension, { normalizeMode } from "./index.ts";
 
 type ShortcutHandler = { description: string; handler: (...args: any[]) => unknown };
@@ -301,19 +297,9 @@ test("/mode command accepts aliases and rejects unknown values", async () => {
 	assert.match(notifications.at(-1)?.message ?? "", /Unknown mode\. Use: fast, smart, deep, or max/i);
 });
 
-test("/mode recommend reports archive-derived guidance without switching", async (t) => {
-	const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "workflow-mode-recommend-"));
-	t.after(() => fs.rmSync(fixture, { recursive: true, force: true }));
-	appendArchiveRecord(fixture, {
-		schemaVersion: 1,
-		kind: "verification",
-		timestamp: "2026-06-26T00:00:00.000Z",
-		verification: { projectRoot: fixture, command: "bash scripts/verify.sh", status: "failed", trigger: "auto" },
-	});
-
+test("/mode recommend is no longer a mode command and does not switch", async () => {
 	const { commands, pi, getSelectedModel } = createPiHarness();
 	const { ctx, notifications, editorTexts } = createContext();
-	(ctx as any).cwd = fixture;
 	workflowModesExtension(pi as any);
 
 	const modeCommand = commands.get("mode");
@@ -321,8 +307,8 @@ test("/mode recommend reports archive-derived guidance without switching", async
 	await modeCommand.handler("recommend", ctx as any);
 
 	assert.equal(getSelectedModel(), undefined);
-	assert.match(notifications.at(-1)?.message ?? "", /Recommended mode: Smart/i);
-	assert.match(editorTexts.at(-1) ?? "", /Run \/smart to switch if you agree/);
+	assert.match(notifications.at(-1)?.message ?? "", /Unknown mode\. Use: fast, smart, deep, or max/i);
+	assert.equal(editorTexts.length, 0);
 });
 
 test("session_start defaults to Fast with GPT-6.1 Sol medium", async () => {

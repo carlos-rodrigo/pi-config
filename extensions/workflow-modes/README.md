@@ -14,7 +14,6 @@ pi install ./extensions/workflow-modes
 |---------|-------------|
 | `/fast`, `/smart`, `/deep`, `/max` | Switch to a specific mode/effort |
 | `/mode <name>` | Switch mode by name (accepts aliases, including `maximum` and `rush`) |
-| `/mode recommend` | Show an archive-derived mode recommendation without switching automatically |
 | `Ctrl+Shift+M` | Cycle through modes: fast → smart → deep → max → fast |
 | `--workflow-mode <name>` | Start Pi in a specific mode without colliding with Pi’s built-in `--mode` flag |
 

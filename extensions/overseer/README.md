@@ -9,7 +9,7 @@ While Pi is active, it watches for:
 - repeated identical tool errors
 - very large `write` or `edit` mutations that may deserve a focused edit instead
 
-Warnings are rate-limited per session and emitted through Pi notifications plus the self-improvement archive event bus. This first slice never blocks tools, cancels agents, or modifies prompts.
+Warnings are rate-limited per session and emitted through Pi notifications plus a `self-improvement:warning` event on `pi.events`. This first slice never blocks tools, cancels agents, or modifies prompts.
 
 ## Command
 

@@ -30,4 +30,4 @@ run_silent "description" command arg1 arg2
 
 `scripts/verify.sh` is the repo quality gate. It should be silent on success and verbose on failure.
 
-The `verify` extension auto-runs this script on `agent_end` for touched project roots that contain `scripts/verify.sh`, then injects failures as follow-up messages.
+Run it before finishing work in this repo.
