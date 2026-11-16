@@ -4,9 +4,10 @@ import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import register from "./index.ts";
 import { discoverAgents } from "./agents.ts";
+import type { AgentManagerComponent } from "./manager.ts";
 
 async function fixture(t: test.TestContext) {
 	const root = await mkdtemp(join(tmpdir(), "foreground-agent-"));
@@ -27,16 +28,21 @@ setTimeout(() => {
 	const previousPath = process.env.PATH;
 	process.env.PATH = `${bin}:${previousPath}`;
 	const tools = new Map<string, ToolDefinition>();
+	const commands = new Map<string, Parameters<ExtensionAPI["registerCommand"]>[1]>();
 	const shutdown: Array<() => unknown> = [];
 	const followUps: string[] = [];
 	register({
 		on(name: string, callback: () => unknown) { if (name === "session_shutdown") shutdown.push(callback); },
-		registerCommand() {}, registerTool(tool: ToolDefinition) { tools.set(tool.name, tool); },
+		registerCommand(name: string, command: Parameters<ExtensionAPI["registerCommand"]>[1]) { commands.set(name, command); },
+		registerTool(tool: ToolDefinition) { tools.set(tool.name, tool); },
 		getAllTools: () => [{ name: "read" }, { name: "grep" }],
 		getThinkingLevel: () => "high",
 		sendUserMessage: (text: string) => followUps.push(text),
 		events: { emit() {} },
-		exec: async (command: string, args: string[]) => ({ code: 0, stdout: execFileSync(command, args, { encoding: "utf8" }), stderr: "", killed: false }),
+		exec: async (command: string, args: string[]) => {
+			try { return { code: 0, stdout: execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), stderr: "", killed: false }; }
+			catch (error) { const e = error as { status?: number; stdout?: string; stderr?: string }; return { code: e.status ?? 1, stdout: String(e.stdout ?? ""), stderr: String(e.stderr ?? ""), killed: false }; }
+		},
 	} as unknown as ExtensionAPI);
 	t.after(async () => {
 		for (const stop of shutdown) await stop();
@@ -44,7 +50,22 @@ setTimeout(() => {
 		await rm(root, { recursive: true, force: true });
 	});
 	const ctx = { cwd: root, isProjectTrusted: () => true, model: { provider: "parent", id: "model" }, thinkingLevel: "high" } as ExtensionContext;
-	return { root, tools, ctx, followUps, shutdown };
+	async function inspectManager(): Promise<string> {
+		let rendered = "";
+		const command = commands.get("agents")!;
+		await command.handler("", { ...ctx, mode: "tui", ui: {
+			notify(message: string) { throw new Error(message); },
+			async custom(factory: (tui: unknown, theme: Theme, bindings: unknown, done: () => void) => AgentManagerComponent) {
+				const component = factory({ terminal: { rows: 40 }, requestRender() {} }, {
+					fg: (_color: string, text: string) => text, bold: (text: string) => text,
+				} as unknown as Theme, {}, () => {});
+				rendered = component.render(140).join("\n");
+				component.close();
+			},
+		} } as unknown as Parameters<typeof command.handler>[1]);
+		return rendered;
+	}
+	return { root, bin, tools, commands, ctx, followUps, shutdown, inspectManager };
 }
 const project = { agentScope: "project", confirmProjectAgents: false };
 
@@ -214,4 +235,65 @@ test("discovery accepts YAML arrays and skips incorrectly typed fields", async (
 	const agents = discoverAgents(root, "project").agents;
 	assert.equal(agents.length, 1);
 	assert.deepEqual(agents[0]?.tools, ["read", "grep"]);
+});
+
+test("manager shows eight foreground tasks and closing it leaves execution owned by the waiter", async t => {
+	const { tools, ctx, inspectManager } = await fixture(t);
+	const controller = new AbortController();
+	let ready!: () => void;
+	const running = new Promise<void>(resolve => { ready = resolve; });
+	const operation = tools.get("subagent")!.execute("manager-batch", { ...project,
+		tasks: Array.from({ length: 8 }, (_, i) => ({ agent: "fixture", task: `slow item-${i}` })),
+	}, controller.signal, update => {
+		const results = (update.details as { results: Array<{ state: string }> }).results;
+		if (results.filter(result => result.state === "running").length === 4) ready();
+	}, ctx);
+	const rejected = assert.rejects(operation, /abort/i);
+	await running;
+	const rendered = await inspectManager();
+	assert.match(rendered, /4 recorded running · 4 queued\/launching/);
+	assert.match(rendered, /queued/);
+	controller.abort();
+	await rejected;
+});
+
+test("manager binds durable identity before readiness and retains it through launch failure", async t => {
+	const { tools, ctx, bin, root, inspectManager } = await fixture(t);
+	const readyGate = join(root, "allow-launch");
+	await writeFile(join(bin, "bash"), `#!/bin/sh\nwhile [ ! -f '${readyGate}' ]; do /bin/sleep 0.01; done\nexec /bin/bash "$@"\n`, { mode: 0o700 });
+	const operation = tools.get("subagent")!.execute("delayed", { ...project, agent: "fixture", task: "inspect" }, undefined, undefined, ctx);
+	let observed = false;
+	for (let i = 0; i < 100; i++) {
+		const dirs = await readdir(join(root, ".pi/agent-jobs")).catch(() => []);
+		const status = dirs[0] ? JSON.parse(await readFile(join(root, ".pi/agent-jobs", dirs[0], "status.json"), "utf8").catch(() => "null")) : null;
+		if (status?.state === "running" && !status.processId) { observed = true; break; }
+		await new Promise(resolve => setTimeout(resolve, 5));
+	}
+	assert.ok(observed, "observe status written before launcher readiness");
+	const launching = await inspectManager();
+	assert.match(launching, /1 recorded running · 0 queued\/launching/);
+	await writeFile(readyGate, "ready");
+	await operation;
+
+	await writeFile(join(bin, "bash"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+	await assert.rejects(tools.get("subagent")!.execute("spawn-failure", { ...project, agent: "fixture", task: "inspect" }, undefined, undefined, ctx), /did not become ready/);
+	const failed = await inspectManager();
+	assert.equal(failed.split("\n").filter(line => /fixture · failed/.test(line)).length, 1);
+	assert.match(failed, /0 recorded running · 0 queued\/launching/);
+});
+
+test("manager observes at least five detached jobs and closing leaves them running", async t => {
+	const { tools, ctx, inspectManager } = await fixture(t);
+	const ids: string[] = [];
+	try {
+		for (let i = 0; i < 5; i++) {
+			const result = await tools.get("agent_job_start")!.execute(`bg-${i}`, { ...project, agent: "fixture", task: `slow bg-${i}`, followUp: false }, undefined, undefined, ctx);
+			ids.push((result.details as { jobId: string }).jobId);
+		}
+		assert.match(await inspectManager(), /5 recorded running/);
+		for (const jobId of ids) {
+			const result = await tools.get("agent_job_status")!.execute("status", { jobId }, undefined, undefined, ctx);
+			assert.equal((result.details as { state: string }).state, "running");
+		}
+	} finally { for (const jobId of ids) await cancelJob(tools, ctx, jobId); }
 });

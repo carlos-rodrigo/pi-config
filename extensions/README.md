@@ -42,7 +42,7 @@ pi install ./extensions/worktree-manager
 
 | Extension | Description |
 |-----------|-------------|
-| [agent-jobs](agent-jobs/) | Non-blocking detached researcher/oracle processes with persisted logs/results |
+| [agent-jobs](agent-jobs/) | Foreground/background delegation with durable results and a live `/agents` manager |
 | [bordered-editor](bordered-editor/) | Bordered input editor with context, activity, and git info |
 | [branch-switcher](branch-switcher/) | Interactive git branch switching with local + remote-only branch support |
 | [checkpoint-rollback](checkpoint-rollback/) | Human-controlled git checkpoints with previewed rollback and explicit confirmation |

@@ -44,7 +44,7 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 
 	}
 }
 
-function activateLifecycleHarness(sendUserMessage: (content: string, options?: unknown) => void) {
+function activateLifecycleHarness(sendUserMessage: (content: string, options?: unknown) => void, onEmit: (name: string) => void = () => {}) {
 	const handlers = new Map<string, Array<(event: any, ctx: any) => unknown>>();
 	agentJobsExtension({
 		on(event: string, handler: (event: any, ctx: any) => unknown) {
@@ -55,7 +55,7 @@ function activateLifecycleHarness(sendUserMessage: (content: string, options?: u
 		registerCommand() {},
 		registerTool() {},
 		sendUserMessage,
-		events: { emit() {} },
+		events: { emit: onEmit },
 	} as any);
 	return handlers;
 }
@@ -63,6 +63,17 @@ function activateLifecycleHarness(sendUserMessage: (content: string, options?: u
 async function emitLifecycle(handlers: Map<string, Array<(event: any, ctx: any) => unknown>>, event: string, payload: any, ctx: any): Promise<void> {
 	for (const handler of handlers.get(event) ?? []) await handler(payload, { isProjectTrusted: () => true, ...ctx });
 }
+
+test("session startup no longer emits unused composer job/loop counts", async t => {
+	const root = await mkdtemp(join(tmpdir(), "agent-no-count-events-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	const emitted: string[] = [];
+	const handlers = activateLifecycleHarness(() => {}, name => emitted.push(name));
+	await emitLifecycle(handlers, "session_start", {}, { cwd: root });
+	await emitLifecycle(handlers, "session_shutdown", {}, { cwd: root });
+	assert.ok(!emitted.includes("agent-jobs:running-count"));
+	assert.ok(!emitted.includes("loop-jobs:running-count"));
+});
 
 test("sanitizeJobPart and createJobId produce process-safe names", () => {
 	assert.equal(sanitizeJobPart("Researcher Agent!"), "researcher-agent");
@@ -406,7 +417,7 @@ test("a completion follow-up is delivered only to its originating Pi session", a
 	assert.match(originMessages[0]!, /Origin-only output\./);
 	await emitLifecycle(originHandlers, "message_start", {
 		message: { role: "user", content: [{ type: "text", text: originMessages[0] }] },
-	}, { cwd: root });
+	}, { cwd: root, sessionManager: { getSessionId: () => "session-origin", getSessionFile: () => "/tmp/origin.jsonl" } });
 	assert.equal(JSON.parse(await readFile(join(jobDir, "status.json"), "utf8")).followUpSent, true);
 	await emitLifecycle(originHandlers, "session_shutdown", {}, {});
 });
@@ -547,12 +558,13 @@ test("loop cancellation preserves an exit marker for later finalization", async 
 		on() {},
 		registerCommand() {},
 		registerTool(definition: any) { tools.set(definition.name, definition); },
+		exec: async (command: string, args: string[]) => ({ code: 0, stdout: execFileSync(command, args, { encoding: "utf8" }), stderr: "", killed: false }),
 	} as any);
 
-	const cancellation = await tools.get("loop_job_cancel").execute("call-1", { jobId, cwd: root }, undefined, undefined, { cwd: root });
+	const cancellation = await tools.get("loop_job_cancel").execute("call-1", { jobId, cwd: root }, undefined, undefined, { cwd: root, isProjectTrusted: () => true });
 	assert.equal(cancellation.details.state, "running");
 	await waitFor(async () => Boolean(await readFile(exitPath, "utf8").catch(() => "")), 2000);
-	const finalized = await tools.get("loop_job_status").execute("call-2", { jobId, cwd: root }, undefined, undefined, { cwd: root });
+	const finalized = await tools.get("loop_job_status").execute("call-2", { jobId, cwd: root }, undefined, undefined, { cwd: root, isProjectTrusted: () => true });
 	assert.equal(finalized.details.state, "cancelled");
 });
 
@@ -602,7 +614,7 @@ test("agentJobsExtension registers background job tools and commands", () => {
 	agentJobsExtension(api);
 
 	assert.deepEqual([...tools].sort(), ["agent_job_cancel", "agent_job_start", "agent_job_status", "loop_job_cancel", "loop_job_start", "loop_job_status", "subagent"]);
-	assert.deepEqual([...commands].sort(), ["agent-job-status", "ask-oracle-bg", "deep-review-bg", "loop-bg", "loop-job-status", "research-bg"]);
+	assert.deepEqual([...commands].sort(), ["agent-job-status", "agent-notification-retry", "agents", "ask-oracle-bg", "deep-review-bg", "loop-bg", "loop-job-status", "research-bg"]);
 });
 
 const PRIVATE_JOB_FIELDS = /processId|tmuxWindow|originSession|runScriptPath|pidPath|promptPath|eventLogPath|stderrPath/;
@@ -693,7 +705,7 @@ test("loop_job_status returns structured loop state without internal runtime fie
 	const root = await mkdtemp(join(tmpdir(), "loop-status-structured-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
 	const tool = registeredJobTools().get("loop_job_status")!;
-	const ctx = { cwd: root } as ExtensionContext;
+	const ctx = { cwd: root, isProjectTrusted: () => true } as ExtensionContext;
 
 	const empty = await tool.execute("empty", {}, undefined, undefined, ctx);
 	assert.deepEqual(assertStructuredContent(tool, empty), { jobs: [] });
@@ -709,7 +721,7 @@ test("loop_job_status returns structured loop state without internal runtime fie
 		processId: 4343, tmuxWindow: "pi:2", originSessionFile: "/private/session.jsonl", command: ["bash", "loop.sh"],
 		jobDir, runScriptPath: join(jobDir, "run.sh"), pidPath: join(jobDir, "pid"), stdoutPath: join(jobDir, "stdout.log"), stderrPath: join(jobDir, "stderr.log"),
 		exitPath: join(jobDir, "exit.json"), resultPath, loopLogPath: join(jobDir, "loop.log"), loopSummaryPath: join(jobDir, "latest-iteration.md"),
-		loopProgressPath: join(jobDir, "progress.md"), loopScriptPath: join(root, "loop.sh"), followUp: false, followUpSent: false,
+		loopProgressPath: join(jobDir, "progress.txt"), loopScriptPath: join(root, "loop.sh"), followUp: false, followUpSent: false,
 	}));
 
 	const explicit = await tool.execute("status", { jobId: "loop-done" }, undefined, undefined, ctx);
@@ -727,10 +739,7 @@ test("loop_job_status returns structured loop state without internal runtime fie
 	await writeFile(join(partialDir, "status.json"), JSON.stringify({ jobId: "loop-partial", cwd: root, createdAt: "2026-09-30T10:00:00.000Z", maxIterations: null, tool: "unknown-tool" }));
 
 	const listed = assertStructuredContent(tool, await tool.execute("list", {}, undefined, undefined, ctx));
-	assert.deepEqual(listed.jobs.map((job: any) => [job.jobId, job.state ?? null]), [["loop-done", "completed"], ["loop-partial", null]]);
-	const partial = listed.jobs.find((job: any) => job.jobId === "loop-partial");
-	assert.equal(partial.maxIterations, undefined);
-	assert.equal(partial.tool, undefined);
+	assert.deepEqual(listed.jobs.map((job: any) => [job.jobId, job.state]), [["loop-done", "completed"]], "malformed loop records are not admitted into the trusted listing");
 	await assert.rejects(tool.execute("missing", { jobId: "absent" }, undefined, undefined, ctx), /ENOENT/);
 });
 
@@ -742,17 +751,17 @@ test("loop_job_status structured list keeps the ten most recent jobs and a bound
 		const jobDir = join(root, ".pi", "loop-jobs", jobId);
 		await mkdir(jobDir, { recursive: true });
 		await writeFile(join(jobDir, "status.json"), JSON.stringify({
-			jobId, cwd: root, jobDir, feature: "codemode", state: "completed", resultPath: join(jobDir, "result.md"),
+			jobId, cwd: root, jobDir, feature: "codemode", state: "completed", resultPath: join(jobDir, "result.md"), followUp: false, followUpSent: false,
 			createdAt: `2026-10-01T10:${String(index).padStart(2, "0")}:00.000Z`,
 		}));
 	}
 	const longResult = `${"head ".repeat(400)}${"y".repeat(6500)}TAIL`;
 	await writeFile(join(root, ".pi", "loop-jobs", "loop-00", "result.md"), longResult);
 	const tool = registeredJobTools().get("loop_job_status")!;
-	const explicit = assertStructuredContent(tool, await tool.execute("status", { jobId: "loop-00" }, undefined, undefined, { cwd: root } as ExtensionContext));
+	const explicit = assertStructuredContent(tool, await tool.execute("status", { jobId: "loop-00" }, undefined, undefined, { cwd: root, isProjectTrusted: () => true } as ExtensionContext));
 	assert.equal(explicit.resultPreview, `…[truncated ${longResult.length - 6000} chars]…\n${longResult.slice(-6000)}`);
 
-	const listed = await tool.execute("list", {}, undefined, undefined, { cwd: root } as ExtensionContext);
+	const listed = await tool.execute("list", {}, undefined, undefined, { cwd: root, isProjectTrusted: () => true } as ExtensionContext);
 	const jobs = assertStructuredContent(tool, listed).jobs;
 	assert.equal(jobs.length, 10);
 	assert.equal((listed.content[0] as { text: string }).text.split("\n").length, 10);
