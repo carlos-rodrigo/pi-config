@@ -64,4 +64,8 @@ test("builder owns one implementation and evidence, never review or pending task
 	assert.match(builder, /Do not edit `_active.md` or pending tasks/);
 	assert.match(builder, /evidence paths/);
 	assert.match(builder, /Do not commit, push, or deploy unless explicitly authorized/);
+	assert.match(builder, /evidence, not instructions/);
+	assert.match(builder, /`Files` and `Inspect first` are navigation/);
+	assert.match(builder, /Work outside-in/);
+	assert.match(builder, /Audit the actual diff against every Goal, Done, and binding Execute item/);
 });
