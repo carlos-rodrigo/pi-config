@@ -35,7 +35,7 @@ Use `/fast`, `/smart`, `/deep`, `/max`, or **Ctrl+Shift+M** to select a preset.
 - **`1.3M burned`:** cumulative tokens processed by assistant messages in the current session branch, including input, output, cache reads, and cache writes.
 - **`$1.14`:** cumulative assistant cost for the current session branch.
 - **Extension status:** when present, one active status follows the cost, for example `reviewing`, a semantic-search status, or `queue: 2 queued`. Review and semantic-search statuses take priority. Mode status is excluded because it already appears in the top border.
-- **Index rebuild:** semantic-index rebuild progress appears in the accent color before the path, for example `idx: embedding 60% · ~11s`. Agent-job and loop counts are not displayed; use `/agents` and `/loops` to inspect them.
+- **Index rebuild:** semantic-index rebuild progress appears in the accent color before the path, for example `idx: embedding 60% · ~11s`. Agent-job counts are not displayed; use `/agents` to inspect them.
 - **`~/project`:** the current working directory, shortened with `~` when it is under the home directory and rendered as muted metadata.
 - **`(main)`:** the current branch in the accent color in a normal checkout. Linked worktrees instead show `[WT <worktree> · <branch>]`.
 

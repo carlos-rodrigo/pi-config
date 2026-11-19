@@ -86,7 +86,6 @@ test("composer restores workflow mode, live model and effort while preserving op
 		},
 	} as unknown as ExtensionContext;
 	events.emit("agent-jobs:running-count", { count: 2 });
-	events.emit("loop-jobs:running-count", { count: 3 });
 	events.emit("semantic-search:rebuild-status", { indicator: "idx: embedding 60% · ~11s" });
 	await handlers.get("session_start")!({}, ctx);
 	const editor = editorFactory!({ terminal: { rows: 40 }, requestRender() {} }, theme, { matches: () => false });
@@ -94,10 +93,9 @@ test("composer restores workflow mode, live model and effort while preserving op
 	assert.match(rendered, /mode:deep/);
 	assert.match(rendered, /GPT-6 Astra · xhigh/);
 	assert.match(rendered, /idx: embedding 60% · ~11s/);
-	assert.doesNotMatch(rendered, /bg jobs?|\d+ loops?/);
+	assert.doesNotMatch(rendered, /bg jobs?/);
 	events.emit("agent-jobs:running-count", { count: 7 });
-	events.emit("loop-jobs:running-count", { count: 5 });
-	assert.equal(editor.render(180).join("\n"), rendered, "job/loop events no longer change the composer");
+	assert.equal(editor.render(180).join("\n"), rendered, "job events no longer change the composer");
 	events.emit("semantic-search:rebuild-status", { indicator: "idx: done" });
 	assert.match(editor.render(180).join("\n"), /idx: done/);
 	events.emit("semantic-search:rebuild-status", { indicator: null });

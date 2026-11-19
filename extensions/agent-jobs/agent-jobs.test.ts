@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import { execFileSync } from "node:child_process";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
@@ -11,20 +11,26 @@ import { assertStructuredContent } from "../lib/assert-structured-content.ts";
 
 import agentJobsExtension, {
 	buildAgentTask,
-	buildLoopCommandArgs,
-	buildLoopRunScript,
 	buildRunScript,
 	collectReviewContext,
 	createJobId,
 	launchDetachedRunScript,
 	parseAgentEvents,
-	parseLoopBgCommandArgs,
-	parseLoopJobStatusCommandArgs,
-	resolveLoopFeature,
+	parseJobStatusCommandArgs,
 	sanitizeJobPart,
 	shellQuote,
 	shouldTerminateAfterAgentJobStart,
 } from "./index.ts";
+
+// An isolated, empty trust store keeps the user's ~/.pi/agent untouched.
+const agentDir = await mkdtemp(join(tmpdir(), "agent-jobs-agent-dir-"));
+const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+process.env.PI_CODING_AGENT_DIR = agentDir;
+after(async () => {
+	if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+	await rm(agentDir, { recursive: true, force: true });
+});
 
 const testAgent = {
 	name: "oracle",
@@ -36,12 +42,22 @@ const testAgent = {
 	filePath: "/tmp/oracle.md",
 };
 
-async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 1000): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
+// Waits only for positive conditions, so the generous deadline bounds failures without slowing passing runs under load.
+const WAIT_TIMEOUT_MS = 30_000;
+// In-process deliveries caused by an immediate trigger (initial poll, post-acknowledgement re-poll) must arrive
+// before the watcher's 5 s interval backstop could deliver them instead.
+const IMMEDIATE_TRIGGER_TIMEOUT_MS = 2_000;
+
+async function waitFor(predicate: () => boolean | Promise<boolean>, description = "condition", timeoutMs = WAIT_TIMEOUT_MS): Promise<void> {
+	const deadline = performance.now() + timeoutMs;
 	while (!(await predicate())) {
-		if (Date.now() >= deadline) throw new Error("Timed out waiting for condition");
+		if (performance.now() >= deadline) throw new Error(`Timed out after ${timeoutMs}ms waiting for ${description}`);
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
+}
+
+function waitForImmediateTrigger(predicate: () => boolean | Promise<boolean>, description: string): Promise<void> {
+	return waitFor(predicate, description, IMMEDIATE_TRIGGER_TIMEOUT_MS);
 }
 
 function activateLifecycleHarness(sendUserMessage: (content: string, options?: unknown) => void, onEmit: (name: string) => void = () => {}) {
@@ -64,7 +80,7 @@ async function emitLifecycle(handlers: Map<string, Array<(event: any, ctx: any) 
 	for (const handler of handlers.get(event) ?? []) await handler(payload, { isProjectTrusted: () => true, ...ctx });
 }
 
-test("session startup no longer emits unused composer job/loop counts", async t => {
+test("session startup no longer emits unused composer job counts", async t => {
 	const root = await mkdtemp(join(tmpdir(), "agent-no-count-events-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
 	const emitted: string[] = [];
@@ -72,7 +88,6 @@ test("session startup no longer emits unused composer job/loop counts", async t 
 	await emitLifecycle(handlers, "session_start", {}, { cwd: root });
 	await emitLifecycle(handlers, "session_shutdown", {}, { cwd: root });
 	assert.ok(!emitted.includes("agent-jobs:running-count"));
-	assert.ok(!emitted.includes("loop-jobs:running-count"));
 });
 
 test("sanitizeJobPart and createJobId produce process-safe names", () => {
@@ -135,100 +150,21 @@ test("launchDetachedRunScript runs independently without tmux", async (t) => {
 
 	const pid = await launchDetachedRunScript(root, scriptPath);
 	assert.ok(Number.isInteger(pid) && pid > 0);
-	await waitFor(async () => (await readFile(markerPath, "utf8").catch(() => "")) === "done");
+	await waitFor(async () => (await readFile(markerPath, "utf8").catch(() => "")) === "done", `detached script marker ${markerPath}`);
 });
 
 test("launchDetachedRunScript reports spawn failures", async () => {
 	await assert.rejects(launchDetachedRunScript("/path/that/does/not/exist", "/tmp/run.sh"), /spawn|ENOENT/i);
 });
 
-test("buildLoopCommandArgs and buildLoopRunScript launch loop.sh with durable logs", () => {
-	const command = buildLoopCommandArgs({
-		loopScriptPath: "/Users/me/.agents/skills/loop/loop.sh",
-		feature: "campaign-stock-ledger",
-		task: "TASK-002",
+test("parseJobStatusCommandArgs supports project-root polling", () => {
+	assert.deepEqual(parseJobStatusCommandArgs("--project-root /tmp/repo oracle-123"), {
 		cwd: "/tmp/repo",
-		maxIterations: 5,
-		tool: "pi",
-		sleepSeconds: 5,
-		pollSeconds: 30,
-		rateLimitStreak: 3,
+		jobId: "oracle-123",
 	});
-	const script = buildLoopRunScript({
-		cwd: "/tmp/repo",
-		jobId: "loop-1",
-		command,
-		stdoutPath: "/tmp/repo/.pi/loop-jobs/loop-1/stdout.log",
-		stderrPath: "/tmp/repo/.pi/loop-jobs/loop-1/stderr.log",
-		exitPath: "/tmp/repo/.pi/loop-jobs/loop-1/exit.json",
-		pidPath: "/tmp/repo/.pi/loop-jobs/loop-1/pid",
-		resultPath: "/tmp/repo/.pi/loop-jobs/loop-1/result.md",
+	assert.deepEqual(parseJobStatusCommandArgs("oracle-123"), {
+		jobId: "oracle-123",
 	});
-
-	assert.deepEqual(command, [
-		"bash",
-		"/Users/me/.agents/skills/loop/loop.sh",
-		"--feature",
-		"campaign-stock-ledger",
-		"--project-root",
-		"/tmp/repo",
-		"--task",
-		"TASK-002",
-		"--tool",
-		"pi",
-		"--sleep",
-		"5",
-		"--poll",
-		"30",
-		"--rate-limit-streak",
-		"3",
-		"5",
-	]);
-	assert.match(script, /pi background loop job: loop-1/);
-	assert.match(script, /'bash' '\/Users\/me\/\.agents\/skills\/loop\/loop\.sh' '--feature' 'campaign-stock-ledger'/);
-	assert.match(script, /> '\/tmp\/repo\/\.pi\/loop-jobs\/loop-1\/stdout\.log' 2> '\/tmp\/repo\/\.pi\/loop-jobs\/loop-1\/stderr\.log'/);
-	assert.match(script, /exit\.json/);
-});
-
-test("parseLoopBgCommandArgs accepts flags and positional shorthand", () => {
-	assert.deepEqual(parseLoopBgCommandArgs("--feature campaign-stock-ledger --task TASK-002 --max 5 --tool pi --poll 30 --sleep 5"), {
-		feature: "campaign-stock-ledger",
-		task: "TASK-002",
-		maxIterations: 5,
-		tool: "pi",
-		pollSeconds: 30,
-		sleepSeconds: 5,
-	});
-	assert.deepEqual(parseLoopBgCommandArgs("campaign-stock-ledger TASK-002 5"), {
-		feature: "campaign-stock-ledger",
-		task: "TASK-002",
-		maxIterations: 5,
-	});
-});
-
-test("parseLoopJobStatusCommandArgs supports project-root polling", () => {
-	assert.deepEqual(parseLoopJobStatusCommandArgs("--project-root /tmp/repo loop-123"), {
-		cwd: "/tmp/repo",
-		jobId: "loop-123",
-	});
-	assert.deepEqual(parseLoopJobStatusCommandArgs("loop-123"), {
-		jobId: "loop-123",
-	});
-});
-
-test("resolveLoopFeature infers feature from task or single ready feature", async () => {
-	const root = await mkdtemp(join(tmpdir(), "pi-loop-feature-"));
-	try {
-		await mkdir(join(root, ".features", "alpha", "tasks"), { recursive: true });
-		await mkdir(join(root, ".features", "beta", "tasks"), { recursive: true });
-		await writeFile(join(root, ".features", "alpha", "tasks", "001-alpha.md"), "---\nid: TASK-001\nstatus: ready\n---\n", "utf8");
-		await writeFile(join(root, ".features", "beta", "tasks", "002-beta.md"), "---\nid: TASK-002\nstatus: draft\n---\n", "utf8");
-
-		assert.equal(await resolveLoopFeature(root, undefined, "TASK-002"), "beta");
-		assert.equal(await resolveLoopFeature(root), "alpha");
-	} finally {
-		await rm(root, { recursive: true, force: true });
-	}
 });
 
 test("parseAgentEvents extracts final assistant output, usage, and tool count", () => {
@@ -299,18 +235,18 @@ test("collectReviewContext snapshots diff context without requiring oracle bash 
 	assert.match(context, /read\/grep\/find\/ls/);
 });
 
-test("session start serially delivers pending agent and loop follow-ups and acknowledges them when received", async (t) => {
+test("session start serially delivers pending agent follow-ups and acknowledges them when received", async (t) => {
 	const root = await mkdtemp(join(tmpdir(), "agent-job-pending-follow-up-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
 	const createdAt = new Date().toISOString();
 	const agentJobId = "researcher-completed";
 	const agentJobDir = join(root, ".pi", "agent-jobs", agentJobId);
-	const loopJobId = "loop-completed";
-	const loopJobDir = join(root, ".pi", "loop-jobs", loopJobId);
+	const oracleJobId = "oracle-completed";
+	const oracleJobDir = join(root, ".pi", "agent-jobs", oracleJobId);
 	await mkdir(agentJobDir, { recursive: true });
-	await mkdir(loopJobDir, { recursive: true });
+	await mkdir(oracleJobDir, { recursive: true });
 	await writeFile(join(agentJobDir, "result.md"), "Agent finished output.\n", "utf8");
-	await writeFile(join(loopJobDir, "result.md"), "Loop finished output.\n", "utf8");
+	await writeFile(join(oracleJobDir, "result.md"), "Oracle finished output.\n", "utf8");
 	await writeFile(join(agentJobDir, "status.json"), JSON.stringify({
 		jobId: agentJobId,
 		agent: "researcher",
@@ -326,19 +262,18 @@ test("session start serially delivers pending agent and loop follow-ups and ackn
 		followUp: true,
 		followUpSent: false,
 	}), "utf8");
-	await writeFile(join(loopJobDir, "status.json"), JSON.stringify({
-		jobId: loopJobId,
-		feature: "fixture",
-		task: "TASK-001",
+	await writeFile(join(oracleJobDir, "status.json"), JSON.stringify({
+		jobId: oracleJobId,
+		agent: "oracle",
+		mode: "standard",
 		cwd: root,
 		createdAt,
 		updatedAt: createdAt,
 		state: "completed",
-		tmuxWindow: "pi-loop-test",
-		jobDir: loopJobDir,
-		resultPath: join(loopJobDir, "result.md"),
-		loopLogPath: join(loopJobDir, "loop.log"),
-		loopSummaryPath: join(loopJobDir, "latest-iteration.md"),
+		tmuxWindow: "pi-oracle-test",
+		jobDir: oracleJobDir,
+		resultPath: join(oracleJobDir, "result.md"),
+		eventLogPath: join(oracleJobDir, "events.jsonl"),
 		followUp: true,
 		followUpSent: false,
 	}), "utf8");
@@ -346,21 +281,21 @@ test("session start serially delivers pending agent and loop follow-ups and ackn
 	const sent: Array<{ content: string; options?: unknown }> = [];
 	const handlers = activateLifecycleHarness((content, options) => sent.push({ content, options }));
 	await emitLifecycle(handlers, "session_start", {}, { cwd: root });
-	await waitFor(() => sent.length === 1);
+	await waitForImmediateTrigger(() => sent.length === 1, "first follow-up delivered at session_start");
 	assert.equal(JSON.parse(await readFile(join(agentJobDir, "status.json"), "utf8")).followUpSent, false);
-	assert.equal(JSON.parse(await readFile(join(loopJobDir, "status.json"), "utf8")).followUpSent, false);
+	assert.equal(JSON.parse(await readFile(join(oracleJobDir, "status.json"), "utf8")).followUpSent, false);
 
 	await emitLifecycle(handlers, "message_start", {
 		message: { role: "user", content: [{ type: "text", text: sent[0]!.content }] },
 	}, { cwd: root });
-	await waitFor(() => sent.length === 2);
+	await waitForImmediateTrigger(() => sent.length === 2, "second follow-up delivered after acknowledgement");
 
 	assert.ok(sent.some(({ content }) => content.includes("Agent finished output.")));
-	assert.ok(sent.some(({ content }) => content.includes("Loop finished output.")));
+	assert.ok(sent.some(({ content }) => content.includes("Oracle finished output.")));
 	for (const message of sent) assert.deepEqual(message.options, { deliverAs: "followUp" });
 	const deliveryStates = [
 		JSON.parse(await readFile(join(agentJobDir, "status.json"), "utf8")).followUpSent,
-		JSON.parse(await readFile(join(loopJobDir, "status.json"), "utf8")).followUpSent,
+		JSON.parse(await readFile(join(oracleJobDir, "status.json"), "utf8")).followUpSent,
 	];
 	assert.equal(deliveryStates.filter(Boolean).length, 1);
 
@@ -368,7 +303,7 @@ test("session start serially delivers pending agent and loop follow-ups and ackn
 		message: { role: "user", content: [{ type: "text", text: sent[1]!.content }] },
 	}, { cwd: root });
 	assert.equal(JSON.parse(await readFile(join(agentJobDir, "status.json"), "utf8")).followUpSent, true);
-	assert.equal(JSON.parse(await readFile(join(loopJobDir, "status.json"), "utf8")).followUpSent, true);
+	assert.equal(JSON.parse(await readFile(join(oracleJobDir, "status.json"), "utf8")).followUpSent, true);
 	await emitLifecycle(handlers, "session_shutdown", {}, {});
 });
 
@@ -413,7 +348,7 @@ test("a completion follow-up is delivered only to its originating Pi session", a
 		cwd: root,
 		sessionManager: { getSessionId: () => "session-origin", getSessionFile: () => "/tmp/origin.jsonl" },
 	});
-	await waitFor(() => originMessages.length === 1);
+	await waitForImmediateTrigger(() => originMessages.length === 1, "follow-up delivered to the origin session");
 	assert.match(originMessages[0]!, /Origin-only output\./);
 	await emitLifecycle(originHandlers, "message_start", {
 		message: { role: "user", content: [{ type: "text", text: originMessages[0] }] },
@@ -453,14 +388,14 @@ test("a completion follow-up rejected during shutdown is retried by the next ses
 		throw new Error("stale extension runtime");
 	});
 	await emitLifecycle(staleHandlers, "session_start", {}, { cwd: root });
-	await waitFor(() => attempts === 1);
+	await waitForImmediateTrigger(() => attempts === 1, "rejected follow-up attempt at session_start");
 	assert.equal(JSON.parse(await readFile(join(jobDir, "status.json"), "utf8")).followUpSent, false);
 	await emitLifecycle(staleHandlers, "session_shutdown", {}, {});
 
 	const sent: string[] = [];
 	const resumedHandlers = activateLifecycleHarness((content) => sent.push(content));
 	await emitLifecycle(resumedHandlers, "session_start", {}, { cwd: root });
-	await waitFor(() => sent.length === 1);
+	await waitForImmediateTrigger(() => sent.length === 1, "follow-up retried by the next session");
 	assert.match(sent[0]!, /Recovered output\./);
 	await emitLifecycle(resumedHandlers, "message_start", {
 		message: { role: "user", content: [{ type: "text", text: sent[0] }] },
@@ -509,65 +444,6 @@ test("agent job cancellation stays pending until the process exits", async (t) =
 	assert.match(result.content[0].text, /Cancellation requested/);
 });
 
-test("loop cancellation preserves an exit marker for later finalization", async (t) => {
-	const root = await mkdtemp(join(tmpdir(), "loop-job-cancel-"));
-	t.after(() => rm(root, { recursive: true, force: true }));
-	const jobId = "loop-fixture";
-	const jobDir = join(root, ".pi", "loop-jobs", jobId);
-	const runScriptPath = join(jobDir, "run.sh");
-	const exitPath = join(jobDir, "exit.json");
-	await mkdir(jobDir, { recursive: true });
-	const runScript = buildLoopRunScript({
-		cwd: root,
-		jobId,
-		command: ["bash", "-c", "trap 'exit 130' INT TERM; while :; do sleep 1; done"],
-		stdoutPath: join(jobDir, "stdout.log"),
-		stderrPath: join(jobDir, "stderr.log"),
-		exitPath,
-		pidPath: join(jobDir, "pid"),
-		resultPath: join(jobDir, "result.md"),
-	});
-	await writeFile(runScriptPath, runScript, "utf8");
-	const processId = await launchDetachedRunScript(root, runScriptPath, join(jobDir, "pid"));
-	t.after(() => {
-		try { process.kill(-processId, "SIGKILL"); } catch {}
-	});
-	const createdAt = new Date().toISOString();
-	await writeFile(join(jobDir, "status.json"), JSON.stringify({
-		jobId,
-		feature: "fixture",
-		cwd: root,
-		createdAt,
-		updatedAt: createdAt,
-		state: "running",
-		processId,
-		jobDir,
-		runScriptPath,
-		stdoutPath: join(jobDir, "stdout.log"),
-		stderrPath: join(jobDir, "stderr.log"),
-		resultPath: join(jobDir, "result.md"),
-		exitPath,
-		pidPath: join(jobDir, "pid"),
-		loopLogPath: join(jobDir, "loop.log"),
-		loopSummaryPath: join(jobDir, "latest-iteration.md"),
-		followUp: false,
-		followUpSent: false,
-	}), "utf8");
-	const tools = new Map<string, any>();
-	agentJobsExtension({
-		on() {},
-		registerCommand() {},
-		registerTool(definition: any) { tools.set(definition.name, definition); },
-		exec: async (command: string, args: string[]) => ({ code: 0, stdout: execFileSync(command, args, { encoding: "utf8" }), stderr: "", killed: false }),
-	} as any);
-
-	const cancellation = await tools.get("loop_job_cancel").execute("call-1", { jobId, cwd: root }, undefined, undefined, { cwd: root, isProjectTrusted: () => true });
-	assert.equal(cancellation.details.state, "running");
-	await waitFor(async () => Boolean(await readFile(exitPath, "utf8").catch(() => "")), 2000);
-	const finalized = await tools.get("loop_job_status").execute("call-2", { jobId, cwd: root }, undefined, undefined, { cwd: root, isProjectTrusted: () => true });
-	assert.equal(finalized.details.state, "cancelled");
-});
-
 test("agent status and listing accept absolute or relative project roots", async (t) => {
 	t.mock.method(ProjectTrustStore.prototype, "get", () => true);
 	const parent = await mkdtemp(join(tmpdir(), "agent-status-cross-project-"));
@@ -613,8 +489,8 @@ test("agentJobsExtension registers background job tools and commands", () => {
 
 	agentJobsExtension(api);
 
-	assert.deepEqual([...tools].sort(), ["agent_job_cancel", "agent_job_start", "agent_job_status", "loop_job_cancel", "loop_job_start", "loop_job_status", "subagent"]);
-	assert.deepEqual([...commands].sort(), ["agent-job-status", "agent-notification-retry", "agents", "ask-oracle-bg", "deep-review-bg", "loop-bg", "loop-job-status", "research-bg"]);
+	assert.deepEqual([...tools].sort(), ["agent_job_cancel", "agent_job_start", "agent_job_status", "subagent"]);
+	assert.deepEqual([...commands].sort(), ["agent-job-status", "agent-notification-retry", "agents", "ask-oracle-bg", "deep-review-bg", "research-bg"]);
 });
 
 const PRIVATE_JOB_FIELDS = /processId|tmuxWindow|originSession|runScriptPath|pidPath|promptPath|eventLogPath|stderrPath/;
@@ -700,71 +576,3 @@ test("agent_job_status structured summaries drop malformed fields and bound text
 	assert.equal(assertStructuredContent(tool, listed).jobs.length, 10);
 	assert.equal((listed.content[0] as { text: string }).text.split("\n").length, 10);
 });
-
-test("loop_job_status returns structured loop state without internal runtime fields", async (t) => {
-	const root = await mkdtemp(join(tmpdir(), "loop-status-structured-"));
-	t.after(() => rm(root, { recursive: true, force: true }));
-	const tool = registeredJobTools().get("loop_job_status")!;
-	const ctx = { cwd: root, isProjectTrusted: () => true } as ExtensionContext;
-
-	const empty = await tool.execute("empty", {}, undefined, undefined, ctx);
-	assert.deepEqual(assertStructuredContent(tool, empty), { jobs: [] });
-
-	const jobDir = join(root, ".pi", "loop-jobs", "loop-done");
-	await mkdir(jobDir, { recursive: true });
-	const resultPath = join(jobDir, "result.md");
-	await writeFile(resultPath, "Loop finished: TASK-001 done.");
-	await writeFile(join(jobDir, "status.json"), JSON.stringify({
-		jobId: "loop-done", feature: "codemode", task: "TASK-001", cwd: root,
-		createdAt: "2026-10-01T10:00:00.000Z", updatedAt: "2026-10-01T11:00:00.000Z", completedAt: "2026-10-01T11:00:00.000Z",
-		state: "completed", exitCode: 0, summary: "1 task done", maxIterations: 10, tool: "pi", sleepSeconds: 2, pollSeconds: 3,
-		processId: 4343, tmuxWindow: "pi:2", originSessionFile: "/private/session.jsonl", command: ["bash", "loop.sh"],
-		jobDir, runScriptPath: join(jobDir, "run.sh"), pidPath: join(jobDir, "pid"), stdoutPath: join(jobDir, "stdout.log"), stderrPath: join(jobDir, "stderr.log"),
-		exitPath: join(jobDir, "exit.json"), resultPath, loopLogPath: join(jobDir, "loop.log"), loopSummaryPath: join(jobDir, "latest-iteration.md"),
-		loopProgressPath: join(jobDir, "progress.txt"), loopScriptPath: join(root, "loop.sh"), followUp: false, followUpSent: false,
-	}));
-
-	const explicit = await tool.execute("status", { jobId: "loop-done" }, undefined, undefined, ctx);
-	const data = assertStructuredContent(tool, explicit);
-	assert.equal(data.job.jobId, "loop-done");
-	assert.equal(data.job.feature, "codemode");
-	assert.equal(data.job.state, "completed");
-	assert.equal(data.job.maxIterations, 10);
-	assert.equal(data.resultPreview, "Loop finished: TASK-001 done.");
-	assert.doesNotMatch(JSON.stringify(data), PRIVATE_JOB_FIELDS);
-	assert.doesNotMatch(JSON.stringify(data), /"command"/);
-
-	const partialDir = join(root, ".pi", "loop-jobs", "loop-partial");
-	await mkdir(partialDir, { recursive: true });
-	await writeFile(join(partialDir, "status.json"), JSON.stringify({ jobId: "loop-partial", cwd: root, createdAt: "2026-09-30T10:00:00.000Z", maxIterations: null, tool: "unknown-tool" }));
-
-	const listed = assertStructuredContent(tool, await tool.execute("list", {}, undefined, undefined, ctx));
-	assert.deepEqual(listed.jobs.map((job: any) => [job.jobId, job.state]), [["loop-done", "completed"]], "malformed loop records are not admitted into the trusted listing");
-	await assert.rejects(tool.execute("missing", { jobId: "absent" }, undefined, undefined, ctx), /ENOENT/);
-});
-
-test("loop_job_status structured list keeps the ten most recent jobs and a bounded result tail", async (t) => {
-	const root = await mkdtemp(join(tmpdir(), "loop-status-limit-"));
-	t.after(() => rm(root, { recursive: true, force: true }));
-	for (let index = 0; index < 11; index++) {
-		const jobId = `loop-${String(index).padStart(2, "0")}`;
-		const jobDir = join(root, ".pi", "loop-jobs", jobId);
-		await mkdir(jobDir, { recursive: true });
-		await writeFile(join(jobDir, "status.json"), JSON.stringify({
-			jobId, cwd: root, jobDir, feature: "codemode", state: "completed", resultPath: join(jobDir, "result.md"), followUp: false, followUpSent: false,
-			createdAt: `2026-10-01T10:${String(index).padStart(2, "0")}:00.000Z`,
-		}));
-	}
-	const longResult = `${"head ".repeat(400)}${"y".repeat(6500)}TAIL`;
-	await writeFile(join(root, ".pi", "loop-jobs", "loop-00", "result.md"), longResult);
-	const tool = registeredJobTools().get("loop_job_status")!;
-	const explicit = assertStructuredContent(tool, await tool.execute("status", { jobId: "loop-00" }, undefined, undefined, { cwd: root, isProjectTrusted: () => true } as ExtensionContext));
-	assert.equal(explicit.resultPreview, `…[truncated ${longResult.length - 6000} chars]…\n${longResult.slice(-6000)}`);
-
-	const listed = await tool.execute("list", {}, undefined, undefined, { cwd: root, isProjectTrusted: () => true } as ExtensionContext);
-	const jobs = assertStructuredContent(tool, listed).jobs;
-	assert.equal(jobs.length, 10);
-	assert.equal((listed.content[0] as { text: string }).text.split("\n").length, 10);
-	assert.deepEqual(jobs.map((job: any) => job.jobId), (listed.details as { jobs: Array<{ jobId: string }> }).jobs.map((job) => job.jobId));
-});
-

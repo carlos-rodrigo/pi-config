@@ -26,13 +26,13 @@ pi install ./extensions/document-reviewer
 pi install ./extensions/file-opener
 pi install ./extensions/git-blame
 pi install ./extensions/lazygit
-pi install ./extensions/loop-monitor
 pi install ./extensions/implementation-lifecycle
 pi install ./extensions/overseer
 pi install ./extensions/prompt-queue
 pi install ./extensions/review-mode
 pi install ./extensions/semantic-search
 pi install ./extensions/session-query
+pi install ./extensions/task-monitor
 pi install ./extensions/web-tools
 pi install ./extensions/workflow-modes
 pi install ./extensions/worktree-manager
@@ -42,7 +42,7 @@ pi install ./extensions/worktree-manager
 
 | Extension | Description |
 |-----------|-------------|
-| [agent-jobs](agent-jobs/) | Foreground/background delegation with durable results and a live `/agents` manager |
+| [agent-jobs](agent-jobs/) | Foreground/background delegation with durable results, model fallback when a provider is unavailable, and a live `/agents` manager |
 | [bordered-editor](bordered-editor/) | Bordered input editor with context, activity, and git info |
 | [branch-switcher](branch-switcher/) | Interactive git branch switching with local + remote-only branch support |
 | [checkpoint-rollback](checkpoint-rollback/) | Human-controlled git checkpoints with previewed rollback and explicit confirmation |
@@ -52,12 +52,12 @@ pi install ./extensions/worktree-manager
 | [git-blame](git-blame/) | Interactive git blame overlay |
 | [implementation-lifecycle](implementation-lifecycle/) | Always-on isolated writer → explicit verifier → independent reviewer lifecycle for direct implementation requests |
 | [lazygit](lazygit/) | LazyGit launcher via tmux |
-| [loop-monitor](loop-monitor/) | Read-only current-project Tasks/Loops monitor with task details and live iteration output |
 | [overseer](overseer/) | Warning-only event watchdog for repeated tool failures and risky large mutations |
 | [prompt-queue](prompt-queue/) | Interactive queue palette for staging prompts, pasting them into the editor, or running them serially |
 | [review-mode](review-mode/) | Overlay review workbench for local/staged/unstaged/outgoing diffs with colorized preview, hunk/file/all scopes, same-session questions, and saved review notes |
 | [semantic-search](semantic-search/) | Local Ollama-backed hybrid code index, semantic search tool, and repo concept map |
 | [session-query](session-query/) | Query previous Pi session files for context and decisions |
+| [task-monitor](task-monitor/) | Read-only current-project `/tasks` monitor with grouped unfinished tasks and Markdown task details |
 | [web-tools](web-tools/) | Web search (Exa/Tavily) and fetch tools |
 | [workflow-modes](workflow-modes/) | Manual Fast (GPT-6.1 Sol) / Smart (Claude Opus 5.5 via claude-bridge) / Deep+Max (GPT-6 Astra) presets |
 | [worktree-manager](worktree-manager/) | Git worktree management with complete local development-environment copying |
@@ -71,7 +71,7 @@ These tools declare `outputSchema`, so `codemode` scripts receive objects instea
 | code-intel | `code_find`, `task_context_graph`, `symbol_search`, `dependency_map`, `git_pickaxe`, `ast_search` |
 | web-tools | `websearch`, `webfetch` |
 | semantic-search | `semantic_search`, `repo_map`, `index_status`, `index_rebuild_status` |
-| agent-jobs | `agent_job_status`, `loop_job_status` (`{ job, resultPreview }` with `jobId`, otherwise `{ jobs }`) |
+| agent-jobs | `agent_job_status` (`{ job, resultPreview }` with `jobId`, otherwise `{ jobs }`) |
 
 ```js
 const [symbols, hits] = await Promise.all([

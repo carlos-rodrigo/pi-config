@@ -6,38 +6,17 @@ import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { initTheme, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 
-import loopMonitorExtension, {
-	LoopMonitorComponent,
+import taskMonitorExtension, {
+	TaskMonitorComponent,
 	buildTaskGroups,
-	extractCurrentIteration,
-	loadLoopMonitorSnapshot,
-	parseActiveTaskBoard,
+	loadTaskMonitorSnapshot,
 	parseTaskBrief,
-	selectCurrentProjectJobs,
-	type LoopMonitorItem,
-	type LoopMonitorSnapshot,
-	type PersistedLoopJob,
 	type ProjectTask,
+	type TaskMonitorSnapshot,
 } from "./index.ts";
 
 initTheme("dark", false);
 const NOW = new Date("2026-06-01T12:00:00Z");
-
-function loopJob(overrides: Partial<PersistedLoopJob> = {}): PersistedLoopJob {
-	return {
-		jobId: "loop-1",
-		feature: "payments",
-		task: "TASK-002",
-		cwd: "/tmp/project",
-		createdAt: "2026-06-01T11:55:00Z",
-		updatedAt: "2026-06-01T11:59:00Z",
-		state: "running",
-		maxIterations: 5,
-		pollSeconds: 3,
-		loopLogPath: "/tmp/project/.features/payments/artifacts/loop/loop.log",
-		...overrides,
-	};
-}
 
 function projectTask(overrides: Partial<ProjectTask> = {}): ProjectTask {
 	return {
@@ -47,20 +26,6 @@ function projectTask(overrides: Partial<ProjectTask> = {}): ProjectTask {
 		status: "todo",
 		filePath: "/tmp/project/.features/payments/tasks/002-handle-retries.md",
 		content: "## Brief\n\n- Goal: Add reliable retries.",
-		...overrides,
-	};
-}
-
-function monitorItem(overrides: Partial<LoopMonitorItem> = {}): LoopMonitorItem {
-	return {
-		job: loopJob(),
-		taskId: "TASK-002",
-		taskTitle: "Handle retries",
-		taskStatus: "todo",
-		association: "explicit",
-		board: { current: "TASK-002", next: "TASK-003", blockers: "none" },
-		iteration: { iteration: 2, maxIterations: 5, finished: false, lines: ["Working now"], sourceLineCount: 1 },
-		logUpdatedAt: NOW.getTime() - 2000,
 		...overrides,
 	};
 }
@@ -77,53 +42,6 @@ function testTheme(coloredText?: ColoredText[]): Theme {
 			},
 	}) as Theme;
 }
-
-test("extractCurrentIteration returns only the latest sanitized iteration", () => {
-	const parsed = extractCurrentIteration([
-		"[iteration 1/5] started at 2026-06-01 11:00:00",
-		"old output",
-		"[iteration 1/5] finished at 2026-06-01 11:01:00 (duration: 1m)",
-		"between iterations",
-		"[iteration 2/5] started at 2026-06-01 11:02:00",
-		"\u001b[31mRunning tests\u001b[0m\u0007",
-		"all good",
-		"[iteration 2/5] finished at 2026-06-01 11:03:00 (duration: 1m)",
-		"must not appear",
-	].join("\n"), 500);
-
-	assert.equal(parsed.iteration, 2);
-	assert.equal(parsed.maxIterations, 5);
-	assert.equal(parsed.finished, true);
-	assert.match(parsed.lines.join("\n"), /Running tests/);
-	assert.doesNotMatch(parsed.lines.join("\n"), /\u001b|must not appear|old output/);
-});
-
-test("parseActiveTaskBoard reads current, next, and blockers but no task statuses", () => {
-	const board = parseActiveTaskBoard(`
-# Current Feature: payments
-
-## Progress
-- [x] TASK-001 — Add model (done)
-- [ ] TASK-002 — Handle retries (ready)
-
-## Current / Next
-- Current: TASK-002
-- Next: TASK-003
-- Blockers: none
-`);
-
-	assert.equal(board.current, "TASK-002");
-	assert.equal(board.next, "TASK-003");
-	assert.equal(board.blockers, "none");
-	assert.deepEqual(Object.keys(board).sort(), ["blockers", "current", "next"]);
-
-	const tableBoard = parseActiveTaskBoard(`
-| Task | Status |
-| --- | --- |
-| TASK-002 | in-progress |
-`);
-	assert.deepEqual(tableBoard, {}, "a board without a Current line yields no loop association hint");
-});
 
 test("parseTaskBrief reads frontmatter, title, and display content", () => {
 	const task = parseTaskBrief(`---
@@ -159,46 +77,32 @@ test("parseTaskBrief keeps each lifecycle status and raw legacy values from fron
 	assert.equal(parseTaskBrief("---\nid: TASK-001\n---\n\n# TASK-001 — Work\n", "payments", "task.md"), undefined, "missing status stays invalid");
 });
 
-test("buildTaskGroups hides done tasks and completed-only features while preserving running associations", () => {
+test("buildTaskGroups hides done tasks and completed-only features and dedupes by feature and ID", () => {
 	const taskTwo = projectTask();
 	const taskThree = projectTask({ id: "TASK-003", title: "Add timeout tests" });
 	const blocked = projectTask({ id: "TASK-004", title: "Blocked work", status: "blocked" });
-	const running = monitorItem();
-	const recent = monitorItem({
-		job: loopJob({ jobId: "loop-recent", task: "TASK-003", state: "completed" }),
-		taskId: "TASK-003",
-	});
-	const unassigned = monitorItem({
-		job: loopJob({ jobId: "loop-unassigned", task: undefined }),
-		taskId: "feature loop",
-		association: "unassigned",
-	});
-
 	const inProgress = projectTask({ id: "TASK-005", status: "in-progress" });
 	const done = projectTask({ id: "TASK-006", status: "done" });
 	const legacy = projectTask({ id: "TASK-007", status: "ready" });
 	const otherFeature = projectTask({ feature: "accounts", id: "TASK-002", status: "todo" });
 	const completedFeature = projectTask({ feature: "completed-feature", status: "done" });
-	const doneLoop = monitorItem({ job: loopJob({ task: "TASK-006" }), taskId: "TASK-006" });
-	const groups = buildTaskGroups([taskTwo, taskThree, taskThree, blocked, inProgress, done, legacy, otherFeature, completedFeature], [running, recent, unassigned, doneLoop]);
+	const groups = buildTaskGroups([taskTwo, taskThree, taskThree, blocked, inProgress, done, legacy, otherFeature, completedFeature]);
 
 	assert.deepEqual(groups.map(group => group.feature), ["accounts", "payments"]);
-	assert.deepEqual(groups[1]?.entries.map(entry => [entry.task.id, entry.task.status]), [
+	assert.deepEqual(groups[0]?.tasks.map(task => task.id), ["TASK-002"]);
+	assert.deepEqual(groups[1]?.tasks.map(task => [task.id, task.status]), [
 		["TASK-002", "todo"], ["TASK-003", "todo"], ["TASK-004", "blocked"],
 		["TASK-005", "in-progress"], ["TASK-007", "ready"],
 	]);
-	assert.deepEqual(groups[1]?.entries[0]?.loops.map(item => item.job.jobId), ["loop-1"]);
-	assert.deepEqual(groups[0]?.entries[0]?.loops, [], "same task ID from another feature does not inherit the loop");
-	assert.deepEqual(groups[1]?.entries[1]?.loops, [], "recent terminal loops do not imply running activity");
 });
 
 test("task sidebar groups unfinished tasks, hides done, and keeps feature context when scrolling", () => {
 	const statuses: ProjectTask["status"][] = ["todo", "in-progress", "blocked", "ready", "done"];
 	const tasks = statuses.map((status, index) => projectTask({ id: `TASK-00${index + 1}`, status, title: `Task ${index + 1}` }));
-	const snapshot: LoopMonitorSnapshot = { cwd: "/tmp/project", loadedAt: NOW.getTime(), tasks, items: [], warnings: [] };
+	const snapshot: TaskMonitorSnapshot = { cwd: "/tmp/project", loadedAt: NOW.getTime(), tasks, warnings: [] };
 	const coloredText: ColoredText[] = [];
-	const component = new LoopMonitorComponent({ terminal: { rows: 40 }, requestRender() {} }, testTheme(coloredText), snapshot,
-		async () => snapshot, () => {}, { autoRefresh: false, initialView: "tasks" });
+	const component = new TaskMonitorComponent({ terminal: { rows: 40 }, requestRender() {} }, testTheme(coloredText), snapshot,
+		async () => snapshot, () => {}, { autoRefresh: false });
 	const rendered = component.render(130).join("\n");
 	assert.match(rendered, /payments · 4/);
 	for (const status of ["todo", "in-progress", "blocked", "ready"]) assert.ok(rendered.includes(`[${status}]`));
@@ -208,15 +112,15 @@ test("task sidebar groups unfinished tasks, hides done, and keeps feature contex
 	component.dispose();
 
 	const legacySnapshot = { ...snapshot, tasks: [projectTask({ status: "ready" })] };
-	const legacyView = new LoopMonitorComponent({ terminal: { rows: 40 }, requestRender() {} }, testTheme(), legacySnapshot,
-		async () => legacySnapshot, () => {}, { autoRefresh: false, initialView: "tasks" });
+	const legacyView = new TaskMonitorComponent({ terminal: { rows: 40 }, requestRender() {} }, testTheme(), legacySnapshot,
+		async () => legacySnapshot, () => {}, { autoRefresh: false });
 	assert.match(legacyView.render(130).join("\n"), /stored status: ready \(unrecognized\)/);
 	legacyView.dispose();
 
 	const manyTasks = Array.from({ length: 25 }, (_, index) => projectTask({ id: `TASK-${String(index).padStart(3, "0")}`, status: "todo" }));
 	const scrollingSnapshot = { ...snapshot, tasks: manyTasks };
-	const scroller = new LoopMonitorComponent({ terminal: { rows: 24 }, requestRender() {} }, testTheme(), scrollingSnapshot,
-		async () => scrollingSnapshot, () => {}, { autoRefresh: false, initialView: "tasks" });
+	const scroller = new TaskMonitorComponent({ terminal: { rows: 24 }, requestRender() {} }, testTheme(), scrollingSnapshot,
+		async () => scrollingSnapshot, () => {}, { autoRefresh: false });
 	for (let i = 0; i < 20; i++) scroller.handleInput("j");
 	const leftColumn = scroller.render(100).map(line => line.split("│")[1] ?? "").join("\n");
 	assert.match(leftColumn, /payments · 25/);
@@ -225,14 +129,14 @@ test("task sidebar groups unfinished tasks, hides done, and keeps feature contex
 });
 
 test("task selection distinguishes the same ID across features and survives status changes on refresh", async () => {
-	let snapshot: LoopMonitorSnapshot = {
-		cwd: "/tmp/project", loadedAt: NOW.getTime(), items: [], warnings: [], tasks: [
+	let snapshot: TaskMonitorSnapshot = {
+		cwd: "/tmp/project", loadedAt: NOW.getTime(), warnings: [], tasks: [
 			projectTask({ feature: "payments", id: "TASK-001", status: "blocked", title: "Payment work" }),
 			projectTask({ feature: "accounts", id: "TASK-001", status: "in-progress", title: "Account work" }),
 		],
 	};
-	const component = new LoopMonitorComponent({ terminal: { rows: 30 }, requestRender() {} }, testTheme(), snapshot,
-		async () => snapshot, () => {}, { autoRefresh: false, initialView: "tasks" });
+	const component = new TaskMonitorComponent({ terminal: { rows: 30 }, requestRender() {} }, testTheme(), snapshot,
+		async () => snapshot, () => {}, { autoRefresh: false });
 	assert.match(component.render(130).join("\n"), /TASK-001 — Account work/);
 	component.handleInput("j");
 	assert.match(component.render(130).join("\n"), /TASK-001 — Payment work/);
@@ -255,9 +159,9 @@ test("task selection distinguishes the same ID across features and survives stat
 
 test("task Markdown formats emphasis, lists, links and code, reflows on resize and refreshes theme/content", async () => {
 	const markdown = ["## Acceptance", "", "\x1bcUse **bold** and *italic* with `inline`.", "", "- First item", "- Second item", "", "[Docs](https://example.test/docs)", "", "| Name | State |", "| --- | --- |", "| Work | ready |", "", "```ts", "const value = 1;", "```"].join("\n");
-	let snapshot: LoopMonitorSnapshot = { cwd: "/tmp/project", loadedAt: NOW.getTime(), items: [], warnings: [], tasks: [projectTask({ content: markdown })] };
-	const component = new LoopMonitorComponent({ terminal: { rows: 40 }, requestRender() {} }, testTheme(), snapshot,
-		async () => snapshot, () => {}, { autoRefresh: false, initialView: "tasks" });
+	let snapshot: TaskMonitorSnapshot = { cwd: "/tmp/project", loadedAt: NOW.getTime(), warnings: [], tasks: [projectTask({ content: markdown })] };
+	const component = new TaskMonitorComponent({ terminal: { rows: 40 }, requestRender() {} }, testTheme(), snapshot,
+		async () => snapshot, () => {}, { autoRefresh: false });
 	const rendered = component.render(140).join("\n");
 	assert.doesNotMatch(rendered, /\*\*bold\*\*|\*italic\*|\[Docs\]\(/);
 	assert.match(rendered, /bold/);
@@ -284,12 +188,12 @@ test("task Markdown formats emphasis, lists, links and code, reflows on resize a
 
 test("Enter focuses task content, j/k scroll by line, and Escape restores list navigation", () => {
 	let closes = 0;
-	const snapshot: LoopMonitorSnapshot = { cwd: "/tmp/project", loadedAt: NOW.getTime(), items: [], warnings: [], tasks: [
+	const snapshot: TaskMonitorSnapshot = { cwd: "/tmp/project", loadedAt: NOW.getTime(), warnings: [], tasks: [
 		projectTask({ id: "TASK-001", title: "Long task", content: Array.from({ length: 100 }, (_, i) => `Line ${String(i + 1).padStart(3, "0")}`).join("  \n") }),
 		projectTask({ id: "TASK-002", title: "Other task" }),
 	] };
-	const component = new LoopMonitorComponent({ terminal: { rows: 24 }, requestRender() {} }, testTheme(), snapshot,
-		async () => snapshot, () => { closes++; }, { autoRefresh: false, initialView: "tasks" });
+	const component = new TaskMonitorComponent({ terminal: { rows: 24 }, requestRender() {} }, testTheme(), snapshot,
+		async () => snapshot, () => { closes++; }, { autoRefresh: false });
 	const render = () => component.render(120).join("\n");
 	component.render(120);
 	component.handleInput("\r");
@@ -330,28 +234,17 @@ test("Enter focuses task content, j/k scroll by line, and Escape restores list n
 	assert.equal(closes, 1);
 });
 
-test("content focus expands a running task brief and resets when the task completes on refresh", async () => {
-	let snapshot: LoopMonitorSnapshot = { cwd: "/tmp/project", loadedAt: NOW.getTime(), warnings: [], items: [monitorItem()], tasks: [
-		projectTask({ content: Array.from({ length: 50 }, (_, i) => `Brief line ${i}`).join("  \n") }),
+test("focused task content resets to the next task when the focused task completes on refresh", async () => {
+	let snapshot: TaskMonitorSnapshot = { cwd: "/tmp/project", loadedAt: NOW.getTime(), warnings: [], tasks: [
+		projectTask({ id: "TASK-002", status: "in-progress", content: Array.from({ length: 50 }, (_, i) => `Brief line ${i}`).join("  \n") }),
 		projectTask({ id: "TASK-003", title: "Next task" }),
 	] };
-	const component = new LoopMonitorComponent({ terminal: { rows: 30 }, requestRender() {} }, testTheme(), snapshot,
-		async () => snapshot, () => {}, { autoRefresh: false, initialView: "tasks" });
-	assert.match(component.render(130).join("\n"), /Working now/);
+	const component = new TaskMonitorComponent({ terminal: { rows: 30 }, requestRender() {} }, testTheme(), snapshot,
+		async () => snapshot, () => {}, { autoRefresh: false });
 	component.handleInput("\r");
 	let rendered = component.render(130).join("\n");
+	assert.match(rendered, /TASK-002 — Handle retries/);
 	assert.match(rendered, /FOCUSED/);
-	assert.match(rendered, /Brief line 10/);
-	assert.doesNotMatch(rendered, /Working now/);
-	component.handleInput("j");
-	component.handleInput("\t");
-	assert.match(component.render(130).join("\n"), /Working now/);
-	component.handleInput("\r");
-	assert.match(component.render(130).join("\n"), /Tasks.*\[Loops\]/);
-	component.handleInput("\t");
-	assert.doesNotMatch(component.render(130).join("\n"), /FOCUSED/);
-	component.handleInput("\r");
-	assert.match(component.render(130).join("\n"), /FOCUSED/);
 	snapshot = { ...snapshot, tasks: snapshot.tasks.map(task => task.id === "TASK-002" ? { ...task, status: "done" } : task) };
 	component.handleInput("r");
 	await new Promise<void>(resolve => setImmediate(resolve));
@@ -361,265 +254,99 @@ test("content focus expands a running task brief and resets when the task comple
 	component.dispose();
 });
 
+test("task navigation shows each selected task's Markdown body inside the colored frame", () => {
+	const snapshot: TaskMonitorSnapshot = { cwd: "/tmp/project", loadedAt: NOW.getTime(), warnings: [], tasks: [
+		projectTask({ id: "TASK-002", title: "Handle retries", content: "## Brief\nRetry details" }),
+		projectTask({ id: "TASK-003", title: "Add timeout tests", content: "## Brief\nTimeout details" }),
+	] };
+	const coloredText: ColoredText[] = [];
+	const component = new TaskMonitorComponent({ terminal: { rows: 30 }, requestRender() {} }, testTheme(coloredText), snapshot,
+		async () => snapshot, () => {}, { now: () => NOW.getTime(), autoRefresh: false });
+	const initial = component.render(110).join("\n");
+	assert.ok(coloredText.some(({ color }) => color === "thinkingXhigh"), "frame border color");
+	assert.ok(coloredText.some(({ color }) => color === "error"), "divider color");
+	assert.match(initial, /TASK-002 — Handle retries/);
+	assert.match(initial, /Retry details/);
+	assert.doesNotMatch(initial, /Timeout details/);
+
+	component.handleInput("\u001b[B");
+	const next = component.render(110).join("\n");
+	assert.match(next, /TASK-003 — Add timeout tests/);
+	assert.match(next, /Timeout details/);
+	assert.doesNotMatch(next, /Retry details/);
+
+	component.handleInput("\u001b[A");
+	const back = component.render(110).join("\n");
+	assert.match(back, /Retry details/);
+	assert.doesNotMatch(back, /Timeout details/);
+	component.dispose();
+});
+
 test("feature headers are sanitized and the empty task view gives accurate guidance", () => {
-	const snapshot: LoopMonitorSnapshot = { cwd: "/tmp/project", loadedAt: NOW.getTime(), items: [], warnings: [],
+	const snapshot: TaskMonitorSnapshot = { cwd: "/tmp/project", loadedAt: NOW.getTime(), warnings: [],
 		tasks: [projectTask({ feature: "\x1bcfeature\x1b]incomplete", status: "todo" })],
 	};
-	const component = new LoopMonitorComponent({ terminal: { rows: 24 }, requestRender() {} }, testTheme(), snapshot,
-		async () => snapshot, () => {}, { autoRefresh: false, initialView: "tasks" });
+	const component = new TaskMonitorComponent({ terminal: { rows: 24 }, requestRender() {} }, testTheme(), snapshot,
+		async () => snapshot, () => {}, { autoRefresh: false });
 	assert.doesNotMatch(component.render(130).join("\n"), /\x1bc|\x1b\]/);
 	component.dispose();
 	const empty = { ...snapshot, tasks: [] };
-	const emptyComponent = new LoopMonitorComponent({ terminal: { rows: 24 }, requestRender() {} }, testTheme(), empty,
-		async () => empty, () => {}, { autoRefresh: false, initialView: "tasks" });
+	const emptyComponent = new TaskMonitorComponent({ terminal: { rows: 24 }, requestRender() {} }, testTheme(), empty,
+		async () => empty, () => {}, { autoRefresh: false });
 	const rendered = emptyComponent.render(100).join("\n");
 	assert.match(rendered, /No unfinished tasks/);
 	assert.match(rendered, /Select a task from a feature/);
 	emptyComponent.dispose();
 });
 
-test("selectCurrentProjectJobs keeps current-project running jobs and recent terminal jobs", () => {
-	const selected = selectCurrentProjectJobs([
-		loopJob(),
-		loopJob({ jobId: "recent-failed", state: "failed", completedAt: "2026-06-01T10:00:00Z" }),
-		loopJob({ jobId: "old-completed", state: "completed", completedAt: "2026-05-29T10:00:00Z" }),
-		loopJob({ jobId: "other-project", cwd: "/tmp/other" }),
-	], "/tmp/project", NOW.getTime());
 
-	assert.deepEqual(selected.map((job) => job.jobId), ["loop-1", "recent-failed"]);
-});
-
-test("selectCurrentProjectJobs treats symlinked project paths as the same project", async (t) => {
-	const root = await mkdtemp(join(tmpdir(), "pi-loop-monitor-real-"));
-	const alias = `${root}-alias`;
-	t.after(() => Promise.all([
-		rm(root, { recursive: true, force: true }),
-		rm(alias, { recursive: true, force: true }),
-	]));
-	await symlink(root, alias);
-
-	const selected = selectCurrentProjectJobs([loopJob({ cwd: root })], alias, NOW.getTime());
-
-	assert.deepEqual(selected.map((job) => job.jobId), ["loop-1"]);
-});
-
-test("loadLoopMonitorSnapshot reads tasks and live logs only from the current project", async (t) => {
-	const root = await mkdtemp(join(tmpdir(), "pi-loop-monitor-"));
+test("loadTaskMonitorSnapshot reads task status from brief frontmatter, not the board", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "pi-task-monitor-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
-	const jobDir = join(root, ".pi", "loop-jobs", "loop-current");
-	const featureJobDir = join(root, ".pi", "loop-jobs", "loop-feature");
-	const otherJobDir = join(root, ".pi", "loop-jobs", "loop-other");
-	const featureDir = join(root, ".features", "payments");
-	const logPath = join(featureDir, "artifacts", "loop", "loop.log");
-	await mkdir(jobDir, { recursive: true });
-	await mkdir(featureJobDir, { recursive: true });
-	await mkdir(otherJobDir, { recursive: true });
-	await mkdir(join(featureDir, "tasks"), { recursive: true });
-	await mkdir(join(featureDir, "artifacts", "loop"), { recursive: true });
-	await writeFile(join(featureDir, "tasks", "_active.md"), `
-| Task | Status |
-| --- | --- |
-| TASK-002 | done |
-| TASK-003 | done |
-## Current / Next
-- Current: TASK-002
-- Next: TASK-003
-- Blockers: none
-`, "utf8");
-	await writeFile(join(featureDir, "tasks", "002-handle-retries.md"), `---
-id: TASK-002
-status: in-progress
----
-# TASK-002 — Handle retries
-## Brief
-- Goal: Add reliable retries.
-`, "utf8");
-	await writeFile(join(featureDir, "tasks", "003-timeouts.md"), `---
-id: TASK-003
-status: todo
----
-# TASK-003 — Add timeout tests
-## Brief
-- Goal: Cover timeouts.
-`, "utf8");
-	await writeFile(logPath, "[iteration 3/5] started at 2026-06-01 11:59:00\nWorking now\n", "utf8");
-	await writeFile(join(jobDir, "status.json"), JSON.stringify(loopJob({
-		jobId: "loop-current",
-		cwd: root,
-		loopLogPath: logPath,
-	})), "utf8");
-	await writeFile(join(featureJobDir, "status.json"), JSON.stringify(loopJob({
-		jobId: "loop-feature",
-		task: undefined,
-		cwd: root,
-		loopLogPath: logPath,
-	})), "utf8");
-	await writeFile(join(otherJobDir, "status.json"), JSON.stringify(loopJob({
-		jobId: "loop-other",
-		cwd: "/tmp/another-project",
-		loopLogPath: "/tmp/another-project/loop.log",
-	})), "utf8");
+	const taskDir = join(root, ".features", "payments", "tasks");
+	await mkdir(taskDir, { recursive: true });
+	await writeFile(join(taskDir, "_active.md"), "| Task | Status |\n| --- | --- |\n| TASK-002 | done |\n- Current: TASK-002\n", "utf8");
+	await writeFile(join(taskDir, "002-handle-retries.md"), "---\nid: TASK-002\nstatus: in-progress\n---\n# TASK-002 — Handle retries\n## Brief\n- Goal: Add reliable retries.\n", "utf8");
+	await writeFile(join(taskDir, "003-timeouts.md"), "---\nid: TASK-003\nstatus: todo\n---\n# TASK-003 — Add timeout tests\n", "utf8");
+	await writeFile(join(taskDir, "004-broken.md"), "no frontmatter\n", "utf8");
 
-	const snapshot = await loadLoopMonitorSnapshot(root, { now: NOW.getTime() });
+	const snapshot = await loadTaskMonitorSnapshot(root, { now: NOW.getTime() });
 
-	assert.equal(snapshot.items.length, 2);
-	const explicit = snapshot.items.find((item) => item.job.jobId === "loop-current");
-	const inferred = snapshot.items.find((item) => item.job.jobId === "loop-feature");
-	assert.equal(explicit?.taskId, "TASK-002");
-	assert.equal(explicit?.taskTitle, "Handle retries");
-	assert.equal(explicit?.taskStatus, "in-progress", "frontmatter wins over the board table");
-	assert.equal(explicit?.association, "explicit");
-	assert.equal(explicit?.iteration.iteration, 3);
-	assert.deepEqual(explicit?.iteration.lines.slice(-1), ["Working now"]);
-	assert.equal(inferred?.taskId, "TASK-002");
-	assert.equal(inferred?.association, "inferred");
-	assert.deepEqual(snapshot.tasks.map((task) => task.id), ["TASK-002", "TASK-003"]);
-	const groups = buildTaskGroups(snapshot.tasks, snapshot.items);
-	assert.deepEqual(groups[0]?.entries.map(entry => [entry.task.id, entry.task.status]), [["TASK-002", "in-progress"], ["TASK-003", "todo"]]);
-	assert.deepEqual(groups[0]?.entries[0]?.loops.map(item => item.job.jobId).sort(), ["loop-current", "loop-feature"]);
+	assert.equal(snapshot.loadedAt, NOW.getTime());
+	assert.deepEqual(snapshot.tasks.map((task) => [task.id, task.status]), [["TASK-002", "in-progress"], ["TASK-003", "todo"]]);
+	assert.deepEqual(snapshot.warnings, ["payments/004-broken.md: invalid task brief"]);
 });
 
-test("loadLoopMonitorSnapshot refuses loop logs outside the current project", async (t) => {
-	const root = await mkdtemp(join(tmpdir(), "pi-loop-monitor-safe-"));
-	const outside = await mkdtemp(join(tmpdir(), "pi-loop-monitor-outside-"));
+test("loadTaskMonitorSnapshot ignores symlinked task directories that leave the project", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "pi-task-monitor-safe-"));
+	const outside = await mkdtemp(join(tmpdir(), "pi-task-monitor-outside-"));
 	t.after(() => Promise.all([
 		rm(root, { recursive: true, force: true }),
 		rm(outside, { recursive: true, force: true }),
 	]));
-	const jobDir = join(root, ".pi", "loop-jobs", "loop-current");
-	const outsideLog = join(outside, "loop.log");
-	await mkdir(jobDir, { recursive: true });
-	await writeFile(outsideLog, "[iteration 1/5] started\nsecret output\n", "utf8");
-	await writeFile(join(jobDir, "status.json"), JSON.stringify(loopJob({
-		jobId: "loop-current",
-		cwd: root,
-		loopLogPath: outsideLog,
-	})), "utf8");
+	await writeFile(join(outside, "001-secret.md"), "---\nid: TASK-001\nstatus: todo\n---\n# TASK-001 — Secret\n", "utf8");
+	await mkdir(join(root, ".features", "payments"), { recursive: true });
+	await symlink(outside, join(root, ".features", "payments", "tasks"));
 
-	const snapshot = await loadLoopMonitorSnapshot(root, { now: NOW.getTime() });
+	const snapshot = await loadTaskMonitorSnapshot(root, { now: NOW.getTime() });
 
-	assert.equal(snapshot.items.length, 1);
-	assert.deepEqual(snapshot.items[0]?.iteration.lines, []);
+	assert.deepEqual(snapshot.tasks, []);
 });
 
-test("LoopMonitorComponent keeps lines within width and preserves paused log position", async () => {
-	const lines = Array.from({ length: 500 }, (_, index) => `output ${index + 1}`);
-	const snapshot: LoopMonitorSnapshot = {
-		cwd: "/tmp/project",
-		loadedAt: NOW.getTime(),
-		tasks: [projectTask({ title: "\u001b[31mHandle retries\u001b[0m" })],
-		items: [monitorItem({
-			taskTitle: "\u001b[31mHandle retries\u001b[0m",
-			iteration: { iteration: 2, maxIterations: 5, finished: false, lines, sourceLineCount: lines.length },
-		})],
-		warnings: [],
-	};
-	let loadedSnapshot = snapshot;
-	const component = new LoopMonitorComponent(
-		{ terminal: { rows: 24 }, requestRender() {} },
-		testTheme(),
-		snapshot,
-		async () => loadedSnapshot,
-		() => {},
-		{ now: () => NOW.getTime(), autoRefresh: false, initialView: "loops" },
-	);
-
-	const initial = component.render(72);
-	assert.ok(initial.every((line) => visibleWidth(line) <= 72));
-	assert.match(initial.join("\n"), /FOLLOWING/);
-	assert.match(initial.join("\n"), /Handle retries/);
-	assert.doesNotMatch(initial.join("\n"), /\u001b\[31m/);
-
-	component.handleInput("\u001b[5~");
-	const paused = component.render(72).join("\n");
-	assert.match(paused, /PAUSED/);
-	const anchor = paused.match(/output \d+/)?.[0];
-	assert.ok(anchor);
-
-	const nextLines = Array.from({ length: 500 }, (_, index) => `output ${index + 11}`);
-	loadedSnapshot = {
-		...snapshot,
-		items: [{
-			...snapshot.items[0]!,
-			iteration: { ...snapshot.items[0]!.iteration, lines: nextLines, sourceLineCount: 510 },
-		}],
-	};
-	component.handleInput("r");
-	await new Promise<void>((resolve) => setImmediate(resolve));
-	const refreshed = component.render(72).join("\n");
-	assert.match(refreshed, /PAUSED · 10 new/);
-	assert.match(refreshed, new RegExp(anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-
-	component.handleInput("G");
-	assert.match(component.render(72).join("\n"), /FOLLOWING/);
-	component.dispose();
-});
-
-test("LoopMonitorComponent navigates task details and switches to the loops view", () => {
-	const snapshot: LoopMonitorSnapshot = {
-		cwd: "/tmp/project",
-		loadedAt: NOW.getTime(),
-		tasks: [
-			projectTask({ id: "TASK-002", title: "Handle retries", content: "## Brief\nRetry details" }),
-			projectTask({ id: "TASK-003", title: "Add timeout tests", content: "## Brief\nTimeout details" }),
-		],
-		items: [monitorItem()],
-		warnings: [],
-	};
-	const coloredText: ColoredText[] = [];
-	const component = new LoopMonitorComponent(
-		{ terminal: { rows: 30 }, requestRender() {} },
-		testTheme(coloredText),
-		snapshot,
-		async () => snapshot,
-		() => {},
-		{ now: () => NOW.getTime(), autoRefresh: false, initialView: "tasks" },
-	);
-
-	const initialLines = component.render(110);
-	const initial = initialLines.join("\n");
-	assert.ok(initialLines.every((line) => visibleWidth(line) <= 110));
-	assert.ok(coloredText.some(({ color }) => color === "thinkingXhigh"));
-	assert.ok(coloredText.some(({ color }) => color === "error"));
-	assert.match(initial, /\[Tasks\].*Loops/);
-	assert.match(initial, /payments · 2/);
-	assert.match(initial, /TASK-002 \[todo\].*● 2\/5/);
-	assert.match(initial, /TASK-003 \[todo\]/);
-	assert.match(initial, /TASK-002 — Handle retries/);
-	assert.match(initial, /Working now/);
-
-	component.handleInput("\u001b[A");
-	const readySelected = component.render(110).join("\n");
-	assert.match(readySelected, /TASK-003 — Add timeout tests/);
-	assert.match(readySelected, /Timeout details/);
-
-	component.handleInput("\t");
-	const loops = component.render(110).join("\n");
-	assert.match(loops, /Tasks.*\[Loops\]/);
-	assert.match(loops, /RUNNING · 1/);
-	assert.match(loops, /Current iteration 2\/5/);
-
-	component.handleInput("o");
-	const relatedTask = component.render(110).join("\n");
-	assert.match(relatedTask, /\[Tasks\].*Loops/);
-	assert.match(relatedTask, /TASK-002 — Handle retries/);
-	component.dispose();
-});
-
-test("loopMonitorExtension opens task and loop entry commands without control actions", async (t) => {
+test("taskMonitorExtension registers only the read-only /tasks entry and its shortcut", async (t) => {
 	type CommandDefinition = Parameters<ExtensionAPI["registerCommand"]>[1];
 	type CustomFactory = (
 		tui: { terminal: { rows: number }; requestRender(): void },
 		theme: Theme,
 		keybindings: unknown,
 		done: (value?: void) => void,
-	) => LoopMonitorComponent;
-	const root = await mkdtemp(join(tmpdir(), "pi-loop-monitor-commands-"));
+	) => TaskMonitorComponent;
+	const root = await mkdtemp(join(tmpdir(), "pi-task-monitor-commands-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
 	const commands = new Map<string, CommandDefinition>();
 	const shortcuts = new Set<string>();
 	const renders: string[] = [];
-	loopMonitorExtension({
+	taskMonitorExtension({
 		registerCommand(name: string, definition: CommandDefinition) { commands.set(name, definition); },
 		registerShortcut(key: string) { shortcuts.add(key); },
 	} as unknown as ExtensionAPI);
@@ -641,12 +368,10 @@ test("loopMonitorExtension opens task and loop entry commands without control ac
 		},
 	} as unknown as ExtensionContext;
 
-	assert.deepEqual([...commands.keys()], ["tasks", "loops"]);
+	assert.deepEqual([...commands.keys()], ["tasks"]);
 	assert.deepEqual([...shortcuts], ["ctrl+shift+l"]);
-	assert.equal(commands.has("cancel-loop"), false);
 	assert.match(commands.get("tasks")!.description ?? "", /todo, in-progress, and blocked/);
 	await commands.get("tasks")!.handler("", context);
-	await commands.get("loops")!.handler("", context);
-	assert.match(renders[0]!, /\[Tasks\].*Loops/);
-	assert.match(renders[1]!, /Tasks.*\[Loops\]/);
+	assert.match(renders[0]!, /Tasks · /);
+	assert.match(renders[0]!, /No unfinished tasks/);
 });

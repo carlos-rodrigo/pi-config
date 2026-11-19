@@ -8,7 +8,7 @@ import { discoverAgents } from "../extensions/agent-jobs/agents.ts";
 const manager = readFileSync(new URL("./manager.md", import.meta.url), "utf8");
 const builder = readFileSync(new URL("./builder.md", import.meta.url), "utf8");
 
-test("delivery agents are discoverable and inherit the caller's model", () => {
+test("delivery agents are discoverable with Anthropic primaries and OpenAI fallbacks", () => {
 	const root = mkdtempSync(join(tmpdir(), "pi-delivery-agents-"));
 	try {
 		const agentsDir = join(root, ".pi", "agents");
@@ -18,7 +18,10 @@ test("delivery agents are discoverable and inherit the caller's model", () => {
 		}
 		const agents = discoverAgents(root, "project").agents;
 		assert.deepEqual(agents.map(agent => agent.name).sort(), ["builder", "manager"]);
-		for (const agent of agents) assert.equal(agent.model, undefined);
+		assert.equal(agents.find(agent => agent.name === "manager")!.model, "claude-bridge/claude-sonnet-5-5:high");
+		assert.deepEqual(agents.find(agent => agent.name === "manager")!.models, ["claude-bridge/claude-sonnet-5-5:high", "openai/gpt-6.1-sol:high"]);
+		assert.equal(agents.find(agent => agent.name === "builder")!.model, "claude-bridge/claude-opus-5-5:high");
+		assert.deepEqual(agents.find(agent => agent.name === "builder")!.models, ["claude-bridge/claude-opus-5-5:high", "openai/gpt-6.1-sol:xhigh"]);
 		const managerTools = agents.find(agent => agent.name === "manager")!.tools!;
 		for (const name of ["subagent", "agent_job_start", "agent_job_status", "agent_job_cancel", "edit", "write"]) {
 			assert.ok(managerTools.includes(name), `manager needs ${name}`);
@@ -52,6 +55,8 @@ test("manager requires independent clean review and real evidence before complet
 	assert.match(manager, /there is no review-round cap/);
 	assert.match(manager, /Only you mark the task `done`/);
 	assert.match(manager, /Oracle failure or unavailability leaves review incomplete/);
+	assert.match(manager, /Record the model that actually ran for each builder and Oracle round/);
+	assert.match(manager, /same model family as the builder, note it in the Result; it is still a valid review/);
 });
 
 test("builder owns one implementation and evidence, never review or pending tasks", () => {

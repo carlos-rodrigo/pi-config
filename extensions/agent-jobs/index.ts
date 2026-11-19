@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { Text } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { getAgentDir, ProjectTrustStore, truncateHead, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -12,16 +12,15 @@ import { execChecked } from "../lib/process.ts";
 import { ForegroundRegistry, buildManagerSnapshot, boundedPreview, type ManagerPreview, type ManagerSnapshot } from "./manager-model.ts";
 import { showAgentManager } from "./manager.ts";
 import { withJobLock } from "./lifecycle-lock.ts";
+import { providerUnavailableReason } from "./model-fallback.ts";
 
 type AgentThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
 
 const AGENT_JOB_MODES = ["standard", "review"] as const;
 const AGENT_JOB_STATES = ["running", "completed", "failed", "cancelled"] as const;
-const LOOP_TOOLS = ["amp", "claude", "opencode", "pi"] as const;
 
 export type AgentJobMode = (typeof AGENT_JOB_MODES)[number];
 export type AgentJobState = (typeof AGENT_JOB_STATES)[number];
-export type LoopTool = (typeof LOOP_TOOLS)[number];
 
 interface UsageStats {
 	input: number;
@@ -42,6 +41,9 @@ export interface AgentEventParseResult {
 	stopReason?: string;
 	errorMessage?: string;
 }
+
+/** One model run of a job; `error` is that attempt's failure reason. */
+export type ModelAttempt = { model: string; error?: string };
 
 export interface AgentJobStatus {
 	jobId: string;
@@ -68,7 +70,12 @@ export interface AgentJobStatus {
 	promptPath: string;
 	systemPromptPath?: string;
 	reviewContextPath?: string;
+	/** The primary model until the job finishes, then the model that actually ran. */
 	model?: string;
+	/** Ordered fallback list; the next model runs only after a provider-unavailability failure. */
+	models?: string[];
+	/** Every model run in order, recorded when the job finishes. */
+	attempts?: ModelAttempt[];
 	tools?: string[];
 	exitCode?: number;
 	completedAt?: string;
@@ -80,53 +87,7 @@ export interface AgentJobStatus {
 	followUpSent: boolean;
 }
 
-export interface LoopJobStatus {
-	jobId: string;
-	feature: string;
-	task?: string;
-	cwd: string;
-	createdAt: string;
-	updatedAt: string;
-	state: AgentJobState;
-	launcher?: "process" | "tmux";
-	processId?: number;
-	tmuxWindow?: string;
-	originSessionId?: string;
-	originSessionFile?: string;
-	jobDir: string;
-	runScriptPath: string;
-	stdoutPath: string;
-	stderrPath: string;
-	resultPath: string;
-	exitPath: string;
-	pidPath: string;
-	loopLogPath: string;
-	loopSummaryPath: string;
-	loopProgressPath: string;
-	loopScriptPath: string;
-	command: string[];
-	maxIterations: number;
-	tool?: LoopTool;
-	toolOrder?: string;
-	agent?: string;
-	sleepSeconds: number;
-	pollSeconds: number;
-	rateLimitStreak?: number;
-	exitCode?: number;
-	completedAt?: string;
-	cancelRequestedAt?: string;
-	summary?: string;
-	errorMessage?: string;
-	followUp: boolean;
-	followUpSent: boolean;
-}
-
 const JOBS_DIR = path.join(".pi", "agent-jobs");
-const LOOP_JOBS_DIR = path.join(".pi", "loop-jobs");
-const LOOP_DEFAULT_MAX_ITERATIONS = 10;
-const LOOP_DEFAULT_SLEEP_SECONDS = 2;
-const LOOP_DEFAULT_POLL_SECONDS = 3;
-const LOOP_DEFAULT_RATE_LIMIT_STREAK = 3;
 const WATCH_INTERVAL_MS = 5000;
 const MAX_RESULT_CHARS = 60_000;
 const FOLLOW_UP_RESULT_CHARS = 12_000;
@@ -138,20 +99,19 @@ const MAX_UNTRACKED_TOTAL_CHARS = 8000;
 
 type JobWatch = { interval: NodeJS.Timeout; poll: () => void };
 const watchedJobs = new Map<string, JobWatch>();
-const watchedLoopJobs = new Map<string, JobWatch>();
-type CompletionFollowUpKind = "agent" | "loop";
 type SessionIdentity = { id?: string; file?: string };
-type PendingFollowUpAck = { cwd: string; kind: CompletionFollowUpKind; jobId: string; parentCwd: string; session: SessionIdentity; queuedAt: number; blocking: boolean; received: boolean; retryRequested?: boolean; token: string };
+type PendingFollowUpAck = { cwd: string; jobId: string; parentCwd: string; session: SessionIdentity; queuedAt: number; blocking: boolean; received: boolean; retryRequested?: boolean; token: string };
 let followUpContext: Pick<ExtensionContext, "cwd" | "sessionManager" | "isIdle" | "hasPendingMessages"> | undefined;
 // Plain receipts survive /reload in this process. Never retain SDK contexts, timers,
 // or process-ownership evidence here; child processes cannot discover these tokens.
 const receiptStoreKey = Symbol.for("pi-config.agent-jobs.follow-up-receipts.v1");
 const receiptStore = globalThis as typeof globalThis & { [receiptStoreKey]?: Map<string, PendingFollowUpAck> };
 const pendingFollowUpAcks = receiptStore[receiptStoreKey] ??= new Map<string, PendingFollowUpAck>();
-const COMPLETION_FOLLOW_UP_MARKER = "pi-agent-jobs-follow-up";
+// Marker and receipt-key formats keep their former "agent" kind segment so receipts queued before /reload still match.
+const COMPLETION_FOLLOW_UP_MARKER = "pi-agent-jobs-follow-up:agent";
 
-function followUpKey(kind: CompletionFollowUpKind, jobId: string, cwd: string): string {
-	return JSON.stringify([kind, cwd, jobId]);
+function followUpKey(jobId: string, cwd: string): string {
+	return JSON.stringify(["agent", cwd, jobId]);
 }
 
 function matchesDeliveryContext(pending: PendingFollowUpAck, ctx = followUpContext): boolean {
@@ -161,16 +121,16 @@ function matchesDeliveryContext(pending: PendingFollowUpAck, ctx = followUpConte
 	return pending.parentCwd === ctx?.cwd;
 }
 
-function completionFollowUpMarker(kind: CompletionFollowUpKind, jobId: string): string {
-	return `<!-- ${COMPLETION_FOLLOW_UP_MARKER}:${kind}:${jobId} -->`;
+function completionFollowUpMarker(jobId: string): string {
+	return `<!-- ${COMPLETION_FOLLOW_UP_MARKER}:${jobId} -->`;
 }
 
-function parseCompletionFollowUpMarkers(text: string): Array<{ kind: CompletionFollowUpKind; jobId: string; token: string }> {
-	return [...text.matchAll(new RegExp(`<!-- ${COMPLETION_FOLLOW_UP_MARKER}:(agent|loop):([a-zA-Z0-9_.-]+):([a-f0-9]{32}) -->`, "g"))]
-		.map(match => ({ kind: match[1] as CompletionFollowUpKind, jobId: match[2]!, token: match[3]! }));
+function parseCompletionFollowUpMarkers(text: string): Array<{ jobId: string; token: string }> {
+	return [...text.matchAll(new RegExp(`<!-- ${COMPLETION_FOLLOW_UP_MARKER}:([a-zA-Z0-9_.-]+):([a-f0-9]{32}) -->`, "g"))]
+		.map(match => ({ jobId: match[1]!, token: match[2]! }));
 }
 
-function needsCompletionFollowUp(status: AgentJobStatus | LoopJobStatus): boolean {
+function needsCompletionFollowUp(status: AgentJobStatus): boolean {
 	return status.state !== "running" && status.followUp && !status.followUpSent;
 }
 
@@ -181,7 +141,7 @@ function sessionIdentityFromContext(ctx: { sessionManager?: { getSessionId?(): s
 	};
 }
 
-function isOriginSession(status: AgentJobStatus | LoopJobStatus, session: SessionIdentity): boolean {
+function isOriginSession(status: AgentJobStatus, session: SessionIdentity): boolean {
 	if (status.originSessionId) return status.originSessionId === session.id;
 	if (status.originSessionFile) return status.originSessionFile === session.file;
 	return true;
@@ -189,7 +149,6 @@ function isOriginSession(status: AgentJobStatus | LoopJobStatus, session: Sessio
 
 function pollWaitingFollowUps(): void {
 	for (const watch of watchedJobs.values()) watch.poll();
-	for (const watch of watchedLoopJobs.values()) watch.poll();
 }
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
@@ -200,10 +159,6 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 const AgentJobModeSchema = StringEnum(AGENT_JOB_MODES, {
 	description: 'Job prompt mode. Use "review" for oracle reviews so the launcher snapshots git diff context first.',
 	default: "standard",
-});
-
-const LoopToolSchema = StringEnum(LOOP_TOOLS, {
-	description: "Tool used by loop.sh for each implementation iteration. Defaults to loop.sh auto-detection.",
 });
 
 const MAX_JOB_SUMMARY_TEXT_CHARS = 1_000;
@@ -227,23 +182,15 @@ const AgentJobSummarySchema = Type.Object({
 	...JobLifecycleFields,
 	agent: Type.Optional(Type.String()),
 	mode: Type.Optional(StringEnum(AGENT_JOB_MODES)),
-	model: Type.Optional(Type.String()),
+	model: Type.Optional(Type.String({ description: "Primary model while running; the model that ran once finished." })),
+	attempts: Type.Optional(Type.Array(Type.Object({ model: Type.String(), error: Type.Optional(Type.String()) }), {
+		description: "Model runs in order; earlier entries failed because their provider was unavailable.",
+	})),
 	followUp: Type.Optional(Type.Boolean()),
 });
 
-const LoopJobSummarySchema = Type.Object({
-	jobId: Type.Optional(Type.String()),
-	state: Type.Optional(StringEnum(AGENT_JOB_STATES)),
-	...JobLifecycleFields,
-	feature: Type.Optional(Type.String()),
-	maxIterations: Type.Optional(Type.Number()),
-	tool: Type.Optional(StringEnum(LOOP_TOOLS)),
-	agent: Type.Optional(Type.String()),
-	loopSummaryPath: Type.Optional(Type.String()),
-	loopProgressPath: Type.Optional(Type.String()),
-}, { description: "Loop status files are not validated on read, so every field is optional." });
 
-function jobStatusOutputSchema(summarySchema: typeof AgentJobSummarySchema | typeof LoopJobSummarySchema) {
+function jobStatusOutputSchema(summarySchema: typeof AgentJobSummarySchema) {
 	return Type.Object({
 		job: Type.Optional(summarySchema),
 		resultPreview: Type.Optional(Type.String({ description: "Tail of the job result file, when it exists." })),
@@ -265,11 +212,17 @@ function summaryNumber(value: unknown): number | undefined {
 	return typeof value === "number" ? value : undefined;
 }
 
+function summaryAttempts(value: unknown): ModelAttempt[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	return value.filter((attempt): attempt is ModelAttempt => typeof attempt?.model === "string")
+		.map((attempt) => ({ model: summaryText(attempt.model)!, error: summaryText(attempt.error) }));
+}
+
 function summaryEnum<T extends string>(values: readonly T[], value: unknown): T | undefined {
 	return values.find((candidate) => candidate === value);
 }
 
-function lifecycleSummary(status: AgentJobStatus | LoopJobStatus) {
+function lifecycleSummary(status: AgentJobStatus) {
 	return {
 		task: summaryText(status.task),
 		cwd: summaryPath(status.cwd),
@@ -293,22 +246,8 @@ function agentJobSummary(status: AgentJobStatus) {
 		agent: summaryText(status.agent),
 		mode: summaryEnum(AGENT_JOB_MODES, status.mode),
 		model: summaryText(status.model),
+		attempts: summaryAttempts(status.attempts),
 		followUp: typeof status.followUp === "boolean" ? status.followUp : undefined,
-	};
-}
-
-/** Loop fields for Code Mode scripts; process ids, tmux windows, origin sessions, commands, and launcher files stay internal. */
-function loopJobSummary(status: LoopJobStatus) {
-	return {
-		jobId: summaryText(status.jobId),
-		state: summaryEnum(AGENT_JOB_STATES, status.state),
-		...lifecycleSummary(status),
-		feature: summaryText(status.feature),
-		agent: summaryText(status.agent),
-		tool: summaryEnum(LOOP_TOOLS, status.tool),
-		maxIterations: summaryNumber(status.maxIterations),
-		loopSummaryPath: summaryPath(status.loopSummaryPath),
-		loopProgressPath: summaryPath(status.loopProgressPath),
 	};
 }
 
@@ -442,18 +381,21 @@ export function parseAgentEvents(eventsJsonl: string): AgentEventParseResult {
 	return result;
 }
 
-function buildPiInvocationArgs(agent: AgentConfig, promptPath: string, systemPromptPath?: string, thinkingLevel?: AgentThinkingLevel): string[] {
+const EXECUTE_PROMPT = "Execute the task described in the attached prompt file.";
+const MODEL_FALLBACK_CLI = fileURLToPath(new URL("./model-fallback-cli.ts", import.meta.url));
+
+function fallbackNote(previousModel: string | undefined): string {
+	return `A previous attempt with model ${previousModel} stopped because its provider was unavailable. `
+		+ "It may have left edits in the working tree: inspect the current state (for example `git status`) and preserve and build on those edits instead of redoing or reverting them.";
+}
+
+function buildPiCommand(agent: AgentConfig, model: string | undefined, message: string, promptPath: string, systemPromptPath?: string, thinkingLevel?: AgentThinkingLevel): string {
 	const args = ["--mode", "json", "-p", "--no-session"];
-	if (agent.model) args.push("--model", agent.model);
+	if (model) args.push("--model", model);
 	if (thinkingLevel) args.push("--thinking", thinkingLevel);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 	if (systemPromptPath) args.push("--append-system-prompt", systemPromptPath);
-	args.push(`@${promptPath}`, "Execute the task described in the attached prompt file.");
-	return args;
-}
-
-function buildPiCommand(agent: AgentConfig, promptPath: string, systemPromptPath?: string, thinkingLevel?: AgentThinkingLevel): string {
-	const args = buildPiInvocationArgs(agent, promptPath, systemPromptPath, thinkingLevel);
+	args.push(`@${promptPath}`, message);
 	return ["pi", ...args].map(shellQuote).join(" ");
 }
 
@@ -470,7 +412,13 @@ export function buildRunScript(params: {
 	pidPath: string;
 	resultPath: string;
 }): string {
-	const piCommand = buildPiCommand(params.agent, params.promptPath, params.systemPromptPath, params.thinkingLevel);
+	const models = params.agent.models?.length ? params.agent.models : [params.agent.model];
+	const attempts = models.map((model, index) => {
+		const message = index === 0 ? EXECUTE_PROMPT : `${EXECUTE_PROMPT}\n\n${fallbackNote(models[index - 1])}`;
+		const command = `run_attempt ${buildPiCommand(params.agent, model, message, params.promptPath, params.systemPromptPath, params.thinkingLevel)}`;
+		return index === 0 ? command : `if should_fall_back ${index}; then ${command}; fi`;
+	});
+	const jobDir = shellQuote(path.dirname(params.eventLogPath));
 	return `#!/usr/bin/env bash
 set -u
 cd ${shellQuote(params.cwd)}
@@ -482,21 +430,39 @@ printf '%s\\n' ${shellQuote(`result: ${params.resultPath}`)}
 echo ""
 echo "Running agent in JSON mode..."
 child_pid=""
+attempt=0
+code=0
+stop_requested=0
 forward_signal() {
+  stop_requested=1
   if [ -n "$child_pid" ]; then kill -"$1" "$child_pid" 2>/dev/null || true; fi
 }
 trap 'forward_signal INT' INT
 trap 'forward_signal TERM' TERM
-${piCommand} > ${shellQuote(params.eventLogPath)} 2> ${shellQuote(params.stderrPath)} &
-child_pid=$!
-echo "$$" > ${shellQuote(params.pidPath)}
-wait "$child_pid"
-code=$?
-if kill -0 "$child_pid" 2>/dev/null; then
+run_attempt() {
+  if [ "$attempt" -gt 0 ] && [ "$stop_requested" -ne 0 ]; then return; fi
+  attempt=$((attempt + 1))
+  "$@" > ${shellQuote(params.eventLogPath)} 2> ${shellQuote(params.stderrPath)} &
+  child_pid=$!
+  if [ "$attempt" -eq 1 ]; then echo "$$" > ${shellQuote(params.pidPath)}; fi
   wait "$child_pid"
-  child_code=$?
-  if [ "$child_code" -ne 0 ]; then code=$child_code; fi
-fi
+  code=$?
+  if kill -0 "$child_pid" 2>/dev/null; then
+    wait "$child_pid"
+    child_code=$?
+    if [ "$child_code" -ne 0 ]; then code=$child_code; fi
+  fi
+}
+# Try the next model only if attempt $1 just ran, was not cancelled, and its provider was unavailable.
+should_fall_back() {
+  if [ "$attempt" -ne "$1" ] || [ "$stop_requested" -ne 0 ]; then return 1; fi
+  ${shellQuote(process.execPath)} --experimental-strip-types --no-warnings ${shellQuote(MODEL_FALLBACK_CLI)} ${shellQuote(params.eventLogPath)} ${shellQuote(params.stderrPath)} || return 1
+  if [ "$stop_requested" -ne 0 ]; then return 1; fi
+  mv ${shellQuote(params.eventLogPath)} ${jobDir}/attempt-"$1".events.jsonl
+  mv ${shellQuote(params.stderrPath)} ${jobDir}/attempt-"$1".stderr.log
+  echo "Model provider unavailable; trying the next model."
+}
+${attempts.join("\n")}
 trap - INT TERM
 finished_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 exit_tmp=${shellQuote(`${params.exitPath}.tmp`)}
@@ -713,15 +679,14 @@ async function assertArtifactPath(file: string, directory = false): Promise<void
 	}
 }
 
-async function trustedAgentRoot(ctx: { cwd: string; isProjectTrusted?(): boolean }, requested?: string, kind: CompletionFollowUpKind = "agent"): Promise<string> {
-	const label = kind === "agent" ? "Agent" : "Loop";
-	if (!ctx.isProjectTrusted?.()) throw new Error(`${label} jobs require a trusted Pi session.`);
+async function trustedAgentRoot(ctx: { cwd: string; isProjectTrusted?(): boolean }, requested?: string): Promise<string> {
+	if (!ctx.isProjectTrusted?.()) throw new Error("Agent jobs require a trusted Pi session.");
 	const root = await fs.promises.realpath(path.resolve(ctx.cwd, requested ?? "."));
 	const sessionRoot = await fs.promises.realpath(ctx.cwd);
 	const trust = new ProjectTrustStore(getAgentDir());
-	const jobRoot = kind === "agent" ? jobsRoot(root) : loopJobsRoot(root);
+	const jobRoot = jobsRoot(root);
 	if ((root !== sessionRoot && (trust.get(root) !== true || trust.get(jobRoot) !== true)) || trust.get(jobRoot) === false) {
-		throw new Error(`${label} job target is not trusted: ${root}`);
+		throw new Error(`Agent job target is not trusted: ${root}`);
 	}
 	await assertArtifactPath(path.join(root, ".pi"), true);
 	await assertArtifactPath(jobRoot, true);
@@ -847,7 +812,7 @@ async function terminateOwnedGroup(pi: ExtensionAPI, status: ProcessJob, checkPi
 	return true;
 }
 
-async function reconcileCleanup<T extends AgentJobStatus | LoopJobStatus>(pi: ExtensionAPI, status: T, save: (status: T) => Promise<void>): Promise<{ status: T; pending: boolean }> {
+async function reconcileCleanup(pi: ExtensionAPI, status: AgentJobStatus, save: (status: AgentJobStatus) => Promise<void>): Promise<{ status: AgentJobStatus; pending: boolean }> {
 	let purpose = knownGroups.get(status.runScriptPath)?.purpose
 		?? (Object.keys(UNVERIFIED_CLEANUP) as CleanupPurpose[]).find(key => status.summary === UNVERIFIED_CLEANUP[key]);
 	if (fileExists(cleanupJournal(status))) {
@@ -870,23 +835,23 @@ async function reconcileCleanup<T extends AgentJobStatus | LoopJobStatus>(pi: Ex
 		return { status, pending: true };
 	}
 	const reason = purpose === "launch" ? "Launch failed; process-group cleanup verified." : purpose === "foreground" ? "Foreground delegation cancelled." : "Cancelled by user; process-group cleanup verified.";
-	const parsed = "eventLogPath" in status ? parseAgentEvents(await readTextIfExists(status.eventLogPath)) : undefined;
+	const parsed = parseAgentEvents(await readTextIfExists(status.eventLogPath));
 	const exit = fileExists(status.exitPath) ? await readJson<{ exitCode: number; finishedAt: string }>(status.exitPath).catch(() => undefined) : undefined;
-	const updated = { ...status, ...(parsed ? { usage: parsed.usage } : {}), state: purpose === "launch" ? "failed" as const : "cancelled" as const,
+	const updated = { ...status, usage: parsed.usage, state: purpose === "launch" ? "failed" as const : "cancelled" as const,
 		exitCode: exit?.exitCode, completedAt: exit?.finishedAt || nowIso(), updatedAt: nowIso(), summary: reason,
 		errorMessage: purpose === "launch" ? status.errorMessage : undefined };
-	await fs.promises.writeFile(status.resultPath, `${truncateMiddle([reason, parsed?.finalOutput, status.errorMessage].filter(Boolean).join("\n\n"), MAX_RESULT_CHARS)}\n`, "utf8");
+	await fs.promises.writeFile(status.resultPath, `${truncateMiddle([reason, parsed.finalOutput, status.errorMessage].filter(Boolean).join("\n\n"), MAX_RESULT_CHARS)}\n`, "utf8");
 	await save(updated);
 	await clearCleanupJournal(status);
 	return { status: updated, pending: false };
 }
 
-async function startJobProcess<T extends AgentJobStatus | LoopJobStatus>(pi: ExtensionAPI, status: T, save: (status: T) => Promise<void>, kind: CompletionFollowUpKind = "agent"): Promise<void> {
-	return withJobLifecycle(status.cwd, status.jobId, kind, async () => {
+async function startJobProcess(pi: ExtensionAPI, status: AgentJobStatus): Promise<void> {
+	return withJobLifecycle(status.cwd, status.jobId, async () => {
 		try {
 			status.processId = await launchDetachedRunScript(status.cwd, status.runScriptPath, status.pidPath);
 			status.updatedAt = nowIso();
-			await save(status);
+			await writeStatus(status);
 		} catch (error) {
 			let cleanupError: unknown;
 			if (status.processId) {
@@ -899,7 +864,7 @@ async function startJobProcess<T extends AgentJobStatus | LoopJobStatus>(pi: Ext
 				updatedAt: nowIso(), completedAt: cleanupError ? undefined : nowIso(),
 				summary: cleanupError ? UNVERIFIED_CLEANUP.launch : "Failed to launch detached background process.",
 				errorMessage: cleanupError ? `${reason}; cleanup: ${String(cleanupError)}` : reason };
-			try { await save(failed); if (!cleanupError) await clearCleanupJournal(status); }
+			try { await writeStatus(failed); if (!cleanupError) await clearCleanupJournal(status); }
 			catch (persistenceError) { throw new AggregateError([error, ...(cleanupError ? [cleanupError] : []), persistenceError], "Launch failed; status could not be persisted."); }
 			if (cleanupError) throw new AggregateError([error, cleanupError], "Launch failed; process cleanup could not be verified.");
 			throw error;
@@ -911,13 +876,13 @@ async function writeStatus(status: AgentJobStatus): Promise<void> {
 	await writeJson(path.join(status.jobDir, "status.json"), status);
 }
 
-async function withJobLifecycle<T>(cwd: string, jobId: string, kind: CompletionFollowUpKind, action: () => Promise<T>): Promise<T> {
-	const status = kind === "agent" ? await readStatus(cwd, jobId) : await readLoopStatus(cwd, jobId);
+async function withJobLifecycle<T>(cwd: string, jobId: string, action: () => Promise<T>): Promise<T> {
+	const status = await readStatus(cwd, jobId);
 	return withJobLock(status.jobDir, action);
 }
 
 async function finalizeIfDone(pi: ExtensionAPI, cwd: string, jobId: string, sendFollowUp: boolean, session: SessionIdentity = {}): Promise<AgentJobStatus> {
-	return withJobLifecycle(cwd, jobId, "agent", () => finalizeAgentUnlocked(pi, cwd, jobId, sendFollowUp, session));
+	return withJobLifecycle(cwd, jobId, () => finalizeAgentUnlocked(pi, cwd, jobId, sendFollowUp, session));
 }
 
 async function finalizeAgentUnlocked(pi: ExtensionAPI, cwd: string, jobId: string, sendFollowUp: boolean, session: SessionIdentity = {}): Promise<AgentJobStatus> {
@@ -949,7 +914,15 @@ async function finalizeAgentUnlocked(pi: ExtensionAPI, cwd: string, jobId: strin
 			: state === "failed" && stderr.trim()
 				? `Agent failed.\n\n## stderr\n\n${truncateTail(stderr, STDERR_TAIL_CHARS)}`
 				: "(no output)";
-		const output = parsed.finalOutput || parsed.errorMessage || fallbackOutput;
+		const attemptError = state === "failed" ? parsed.errorMessage || (stderr.trim() ? firstNonEmptyLine(stderr) : `exit code ${exit.exitCode}`) : undefined;
+		const fallbacks = await fallenBackAttempts(status);
+		const model = status.models?.[fallbacks.length] ?? status.model;
+		const attempts: ModelAttempt[] | undefined = model ? [...fallbacks, attemptError ? { model, error: attemptError } : { model }] : undefined;
+		const triedEveryModel = attempts?.length === status.models?.length;
+		const errorMessage = attemptError && fallbacks.length
+			? `${triedEveryModel ? "Every model attempt failed" : "Failed after model fallback"} — ${attempts!.map((attempt) => `${attempt.model}: ${attempt.error}`).join("; ")}`
+			: attemptError;
+		const output = parsed.finalOutput || errorMessage || parsed.errorMessage || fallbackOutput;
 		const resultText = truncateMiddle(output, MAX_RESULT_CHARS);
 
 		await fs.promises.writeFile(status.resultPath, `${resultText.trim()}\n`, "utf8");
@@ -961,8 +934,10 @@ async function finalizeAgentUnlocked(pi: ExtensionAPI, cwd: string, jobId: strin
 			completedAt: exit.finishedAt,
 			updatedAt: nowIso(),
 			summary: firstNonEmptyLine(resultText) || (state === "completed" ? "Completed with no output." : state === "cancelled" ? "Cancelled by user." : "Failed with no output."),
-			errorMessage: state === "failed" ? parsed.errorMessage || (stderr.trim() ? firstNonEmptyLine(stderr) : `exit code ${exit.exitCode}`) : undefined,
+			errorMessage,
 			usage: parsed.usage,
+			model,
+			attempts,
 		};
 		await writeStatus(status);
 	}
@@ -973,6 +948,30 @@ async function finalizeAgentUnlocked(pi: ExtensionAPI, cwd: string, jobId: strin
 	return status;
 }
 
+/** Attempts that run.sh abandoned for an unavailable provider; it archived each one's logs as attempt-N.*. */
+async function fallenBackAttempts(status: AgentJobStatus): Promise<ModelAttempt[]> {
+	const attempts: ModelAttempt[] = [];
+	for (const model of Array.isArray(status.models) ? status.models : []) {
+		const eventLog = path.join(status.jobDir, `attempt-${attempts.length + 1}.events.jsonl`);
+		const stderrLog = path.join(status.jobDir, `attempt-${attempts.length + 1}.stderr.log`);
+		if (!fileExists(eventLog)) break;
+		await assertArtifactPath(eventLog);
+		await assertArtifactPath(stderrLog);
+		const reason = providerUnavailableReason(await readTextIfExists(eventLog), await readTextIfExists(stderrLog));
+		attempts.push({ model: String(model), error: reason ?? "Model provider unavailable." });
+	}
+	return attempts;
+}
+
+/** The model that ran and every earlier attempt abandoned because its provider was unavailable. */
+function formatModelAttempts(job: { model?: string; attempts?: ModelAttempt[] }): string[] {
+	const fallbacks = Array.isArray(job.attempts) ? job.attempts.slice(0, -1) : [];
+	return [
+		...(job.model ? [`Model: ${job.model}`] : []),
+		...fallbacks.map((attempt) => `Unavailable model: ${attempt.model} — ${attempt.error ?? "provider unavailable"}`),
+	];
+}
+
 async function sendCompletionFollowUp(pi: ExtensionAPI, status: AgentJobStatus, resultText: string): Promise<boolean> {
 	const clipped = resultText.length > FOLLOW_UP_RESULT_CHARS
 		? `${resultText.slice(0, FOLLOW_UP_RESULT_CHARS).trimEnd()}\n\n…[result truncated; full result: ${status.resultPath}]…`
@@ -981,6 +980,7 @@ async function sendCompletionFollowUp(pi: ExtensionAPI, status: AgentJobStatus, 
 	const message = [
 		`Background ${status.agent} job ${status.jobId} ${verdict}.`,
 		`Mode: ${status.mode}`,
+		...formatModelAttempts(status),
 		`Result file: ${status.resultPath}`,
 		`Event log: ${status.eventLogPath}`,
 		status.reviewContextPath ? `Review context: ${status.reviewContextPath}` : undefined,
@@ -990,15 +990,15 @@ async function sendCompletionFollowUp(pi: ExtensionAPI, status: AgentJobStatus, 
 		clipped.trim() || "(no output)",
 		"",
 		"Use this result to continue the user's workflow. If this was the first step of a researcher → oracle workflow, start the oracle step now with the relevant context.",
-		completionFollowUpMarker("agent", status.jobId),
+		completionFollowUpMarker(status.jobId),
 	]
 		.filter((line): line is string => line !== undefined)
 		.join("\n");
-	return queueCompletionFollowUp(pi, "agent", status, message);
+	return queueCompletionFollowUp(pi, status, message);
 }
 
-function queueCompletionFollowUp(pi: ExtensionAPI, kind: CompletionFollowUpKind, status: AgentJobStatus | LoopJobStatus, message: string): boolean {
-	const key = followUpKey(kind, status.jobId, status.cwd);
+function queueCompletionFollowUp(pi: ExtensionAPI, status: AgentJobStatus, message: string): boolean {
+	const key = followUpKey(status.jobId, status.cwd);
 	const existing = pendingFollowUpAcks.get(key);
 	if (existing?.received) { void acknowledgeCompletionFollowUp(key, existing); return true; }
 	if (existing && !existing.retryRequested) return true;
@@ -1011,10 +1011,10 @@ function queueCompletionFollowUp(pi: ExtensionAPI, kind: CompletionFollowUpKind,
 	}
 	if ([...pendingFollowUpAcks.values()].some(pending => pending.blocking && matchesDeliveryContext(pending))) return false;
 	const token = existing?.token ?? randomBytes(16).toString("hex");
-	pendingFollowUpAcks.set(key, { cwd: status.cwd, kind, jobId: status.jobId, parentCwd: followUpContext?.cwd ?? status.cwd, session: sessionIdentityFromContext(followUpContext ?? {}), queuedAt: Date.now(), blocking: true, received: false, token });
-	const marker = completionFollowUpMarker(kind, status.jobId);
+	pendingFollowUpAcks.set(key, { cwd: status.cwd, jobId: status.jobId, parentCwd: followUpContext?.cwd ?? status.cwd, session: sessionIdentityFromContext(followUpContext ?? {}), queuedAt: Date.now(), blocking: true, received: false, token });
+	const marker = completionFollowUpMarker(status.jobId);
 	const index = message.lastIndexOf(marker);
-	const authenticated = `<!-- ${COMPLETION_FOLLOW_UP_MARKER}:${kind}:${status.jobId}:${token} -->`;
+	const authenticated = `<!-- ${COMPLETION_FOLLOW_UP_MARKER}:${status.jobId}:${token} -->`;
 	message = message.slice(0, index) + authenticated + message.slice(index + marker.length);
 	try { pi.sendUserMessage(message, { deliverAs: "followUp" }); return true; }
 	catch { pendingFollowUpAcks.delete(key); return false; }
@@ -1032,10 +1032,13 @@ function watchJob(pi: ExtensionAPI, cwd: string, jobId: string, session: Session
 	const key = `${cwd}:${jobId}`;
 	if (watchedJobs.has(key)) return;
 	let polling = false;
+	// A trigger that arrives mid-poll may follow a state change the in-flight poll already missed.
+	let pollAgain = false;
 
 	const poll = () => {
-		if (polling) return;
+		if (polling) { pollAgain = true; return; }
 		polling = true;
+		pollAgain = false;
 		void finalizeIfDone(pi, cwd, jobId, true, session)
 			.then((status) => {
 				if (status.state !== "running" && (!needsCompletionFollowUp(status) || !isOriginSession(status, session))) stopWatchingJob(cwd, jobId);
@@ -1045,6 +1048,7 @@ function watchJob(pi: ExtensionAPI, cwd: string, jobId: string, session: Session
 			})
 			.finally(() => {
 				polling = false;
+				if (pollAgain && watchedJobs.get(key)?.poll === poll) poll();
 			});
 	};
 	const interval = setInterval(poll, WATCH_INTERVAL_MS);
@@ -1152,7 +1156,7 @@ export async function requestAgentCancellation(
 	params: { jobId: string; cwd?: string; killWindow?: boolean }, signal?: AbortSignal,
 ): Promise<{ text: string; status: AgentJobStatus }> {
 	const cwd = await trustedAgentRoot(ctx, params.cwd);
-	return withJobLifecycle(cwd, params.jobId, "agent", async () => {
+	return withJobLifecycle(cwd, params.jobId, async () => {
 		const status = await finalizeAgentUnlocked(pi, cwd, params.jobId, false);
 		if (status.state !== "running") return { text: `Job ${status.jobId} is already ${status.state}.`, status };
 		if (status.cancelRequestedAt && !params.killWindow) return { text: `Cancellation is already pending for job ${status.jobId}.`, status };
@@ -1223,7 +1227,8 @@ async function launchAgentJob(
 	const agentScope = params.agentScope ?? "user";
 	const discovery = discoverAgents(cwd, agentScope);
 	const definition = discovery.agents.find((candidate) => candidate.name === params.agent);
-	const agent = definition && { ...definition, model: definition.model ?? (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined) };
+	const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+	const agent = definition && { ...definition, model: definition.model ?? parentModel, models: definition.models ?? (parentModel ? [parentModel] : undefined) };
 	if (!agent) {
 		const available = discovery.agents.map((candidate) => `${candidate.name} (${candidate.source})`).join(", ") || "none";
 		throw new Error(`Unknown agent "${params.agent}". Available agents: ${available}`);
@@ -1307,6 +1312,7 @@ async function launchAgentJob(
 		systemPromptPath,
 		reviewContextPath,
 		model: agent.model,
+		models: agent.models,
 		tools: agent.tools,
 		followUp: params.followUp ?? true,
 		followUpSent: false,
@@ -1315,7 +1321,7 @@ async function launchAgentJob(
 	// Synchronous internal registry handoff: no UI or I/O in this callback.
 	onDurableIdentity?.(status);
 
-	await startJobProcess(pi, status, writeStatus);
+	await startJobProcess(pi, status);
 	if (monitor) watchJob(pi, cwd, jobId, originSession);
 	return status;
 }
@@ -1340,6 +1346,7 @@ function formatStatus(status: AgentJobStatus, resultPreview?: string): string {
 	const lines = [
 		`${status.jobId} — ${status.agent} — ${status.state}`,
 		`Mode: ${status.mode}`,
+		...formatModelAttempts(status),
 		`Created: ${status.createdAt}`,
 		status.completedAt ? `Completed: ${status.completedAt}` : undefined,
 		status.summary ? `Summary: ${status.summary}` : undefined,
@@ -1350,117 +1357,6 @@ function formatStatus(status: AgentJobStatus, resultPreview?: string): string {
 		resultPreview ? `\n## Result Preview\n\n${resultPreview}` : undefined,
 	];
 	return lines.filter((line): line is string => line !== undefined).join("\n");
-}
-
-function loopJobsRoot(cwd: string): string {
-	return path.join(cwd, LOOP_JOBS_DIR);
-}
-
-function loopJobDirFor(cwd: string, jobId: string): string {
-	assertSafeJobId(jobId);
-	return path.join(loopJobsRoot(cwd), jobId);
-}
-
-function positiveInt(name: string, value: number | undefined, fallback: number): number {
-	const resolved = value ?? fallback;
-	if (!Number.isInteger(resolved) || resolved <= 0) throw new Error(`${name} must be a positive integer.`);
-	return resolved;
-}
-
-function nonNegativeInt(name: string, value: number | undefined, fallback: number): number {
-	const resolved = value ?? fallback;
-	if (!Number.isInteger(resolved) || resolved < 0) throw new Error(`${name} must be a non-negative integer.`);
-	return resolved;
-}
-
-async function resolveLoopScriptPath(cwd: string, explicitPath?: string): Promise<string> {
-	const candidates = explicitPath
-		? [explicitPath]
-		: [
-			path.join(cwd, ".agents", "skills", "loop", "loop.sh"),
-			path.join(os.homedir(), ".agents", "skills", "loop", "loop.sh"),
-			path.join(os.homedir(), "agents", "skills", "loop", "loop.sh"),
-		];
-
-	for (const candidate of candidates) {
-		const resolved = path.isAbsolute(candidate) ? candidate : path.resolve(cwd, candidate);
-		const stat = await fs.promises.stat(resolved).catch(() => undefined);
-		if (stat?.isFile()) return resolved;
-	}
-
-	throw new Error(`loop.sh not found. Checked: ${candidates.join(", ")}`);
-}
-
-export function buildLoopCommandArgs(params: {
-	loopScriptPath: string;
-	feature: string;
-	task?: string;
-	cwd: string;
-	maxIterations: number;
-	tool?: LoopTool;
-	toolOrder?: string;
-	agent?: string;
-	sleepSeconds: number;
-	pollSeconds: number;
-	rateLimitStreak?: number;
-}): string[] {
-	const args = ["bash", params.loopScriptPath, "--feature", params.feature, "--project-root", params.cwd];
-	if (params.task) args.push("--task", params.task);
-	if (params.tool) args.push("--tool", params.tool);
-	if (params.toolOrder) args.push("--tool-order", params.toolOrder);
-	if (params.agent) args.push("--agent", params.agent);
-	args.push("--sleep", String(params.sleepSeconds), "--poll", String(params.pollSeconds));
-	if (params.rateLimitStreak) args.push("--rate-limit-streak", String(params.rateLimitStreak));
-	args.push(String(params.maxIterations));
-	return args;
-}
-
-export function buildLoopRunScript(params: {
-	cwd: string;
-	jobId: string;
-	command: string[];
-	stdoutPath: string;
-	stderrPath: string;
-	exitPath: string;
-	pidPath: string;
-	resultPath: string;
-}): string {
-	const command = params.command.map(shellQuote).join(" ");
-	return `#!/usr/bin/env bash
-set -u
-cd ${shellQuote(params.cwd)}
-printf '%s\\n' ${shellQuote(`pi background loop job: ${params.jobId}`)}
-printf '%s\\n' ${shellQuote(`stdout: ${params.stdoutPath}`)}
-printf '%s\\n' ${shellQuote(`stderr: ${params.stderrPath}`)}
-printf '%s\\n' ${shellQuote(`result: ${params.resultPath}`)}
-echo ""
-echo "Running loop..."
-child_pid=""
-forward_signal() {
-  if [ -n "$child_pid" ]; then kill -"$1" "$child_pid" 2>/dev/null || true; fi
-}
-trap 'forward_signal INT' INT
-trap 'forward_signal TERM' TERM
-${command} > ${shellQuote(params.stdoutPath)} 2> ${shellQuote(params.stderrPath)} &
-child_pid=$!
-echo "$$" > ${shellQuote(params.pidPath)}
-wait "$child_pid"
-code=$?
-if kill -0 "$child_pid" 2>/dev/null; then
-  wait "$child_pid"
-  child_code=$?
-  if [ "$child_code" -ne 0 ]; then code=$child_code; fi
-fi
-trap - INT TERM
-finished_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-exit_tmp=${shellQuote(`${params.exitPath}.tmp`)}
-printf '{"exitCode":%s,"finishedAt":"%s"}\n' "$code" "$finished_at" > "$exit_tmp"
-mv "$exit_tmp" ${shellQuote(params.exitPath)}
-echo ""
-echo "Loop process exited with code $code"
-printf '%s\\n' ${shellQuote(`Result will be written by the parent pi extension: ${params.resultPath}`)}
-exit "$code"
-`;
 }
 
 function tokenizeCommandArgs(input: string): string[] {
@@ -1475,126 +1371,21 @@ function tokenizeCommandArgs(input: string): string[] {
 	return tokens;
 }
 
-export type ParsedLoopBgArgs = {
-	help?: boolean;
-	feature?: string;
-	task?: string;
-	cwd?: string;
-	maxIterations?: number;
-	tool?: LoopTool;
-	toolOrder?: string;
-	agent?: string;
-	sleepSeconds?: number;
-	pollSeconds?: number;
-	rateLimitStreak?: number;
-	loopScriptPath?: string;
-	followUp?: boolean;
-};
-
 function readValue(tokens: string[], index: number, flag: string): string {
 	const value = tokens[index + 1];
 	if (!value || value.startsWith("--")) throw new Error(`Missing value for ${flag}`);
 	return value;
 }
 
-function parseNumberFlag(tokens: string[], index: number, flag: string): number {
-	const raw = readValue(tokens, index, flag);
-	const parsed = Number(raw);
-	if (!Number.isInteger(parsed)) throw new Error(`${flag} must be an integer.`);
-	return parsed;
-}
-
-function parseLoopTool(value: string): LoopTool {
-	if (["amp", "claude", "opencode", "pi"].includes(value)) return value as LoopTool;
-	throw new Error(`Unsupported loop tool: ${value}`);
-}
-
-export function parseLoopBgCommandArgs(input: string): ParsedLoopBgArgs {
-	const tokens = tokenizeCommandArgs(input);
-	const parsed: ParsedLoopBgArgs = {};
-	const positional: string[] = [];
-
-	for (let i = 0; i < tokens.length; i++) {
-		const token = tokens[i]!;
-		switch (token) {
-			case "-h":
-			case "--help":
-				parsed.help = true;
-				break;
-			case "--feature":
-				parsed.feature = readValue(tokens, i, token);
-				i++;
-				break;
-			case "--task":
-				parsed.task = readValue(tokens, i, token);
-				i++;
-				break;
-			case "--project-root":
-			case "--cwd":
-				parsed.cwd = readValue(tokens, i, token);
-				i++;
-				break;
-			case "--max":
-			case "--max-iterations":
-				parsed.maxIterations = parseNumberFlag(tokens, i, token);
-				i++;
-				break;
-			case "--tool":
-				parsed.tool = parseLoopTool(readValue(tokens, i, token));
-				i++;
-				break;
-			case "--tool-order":
-				parsed.toolOrder = readValue(tokens, i, token);
-				i++;
-				break;
-			case "--agent":
-				parsed.agent = readValue(tokens, i, token);
-				i++;
-				break;
-			case "--sleep":
-				parsed.sleepSeconds = parseNumberFlag(tokens, i, token);
-				i++;
-				break;
-			case "--poll":
-				parsed.pollSeconds = parseNumberFlag(tokens, i, token);
-				i++;
-				break;
-			case "--rate-limit-streak":
-				parsed.rateLimitStreak = parseNumberFlag(tokens, i, token);
-				i++;
-				break;
-			case "--loop-script":
-				parsed.loopScriptPath = readValue(tokens, i, token);
-				i++;
-				break;
-			case "--no-follow-up":
-				parsed.followUp = false;
-				break;
-			default:
-				positional.push(token);
-		}
-	}
-
-	if (!parsed.feature && positional[0]) parsed.feature = positional[0];
-	if (!parsed.task && positional[1] && /^TASK-[A-Za-z0-9_.-]+$/i.test(positional[1])) parsed.task = positional[1];
-	const numeric = positional.find((token) => /^\d+$/.test(token));
-	if (parsed.maxIterations === undefined && numeric) parsed.maxIterations = Number(numeric);
-	return parsed;
-}
-
-function loopCommandUsage(): string {
-	return "Usage: /loop-bg [--feature <name>] [--task TASK-002] [--max 5] [--tool pi] [--project-root <path>]";
-}
-
-export type ParsedLoopJobStatusArgs = {
+export type ParsedJobStatusArgs = {
 	help?: boolean;
 	jobId?: string;
 	cwd?: string;
 };
 
-export function parseLoopJobStatusCommandArgs(input: string): ParsedLoopJobStatusArgs {
+export function parseJobStatusCommandArgs(input: string): ParsedJobStatusArgs {
 	const tokens = tokenizeCommandArgs(input);
-	const parsed: ParsedLoopJobStatusArgs = {};
+	const parsed: ParsedJobStatusArgs = {};
 	const positional: string[] = [];
 
 	for (let i = 0; i < tokens.length; i++) {
@@ -1618,74 +1409,15 @@ export function parseLoopJobStatusCommandArgs(input: string): ParsedLoopJobStatu
 	return parsed;
 }
 
-function loopJobStatusCommandUsage(): string {
-	return "Usage: /loop-job-status [--project-root <path>] [jobId]";
-}
-
-async function assertLoopArtifactDirectories(root: string, feature: string): Promise<string> {
-	if (!feature || feature === "." || feature === ".." || /[/\\\\\0]/.test(feature)) throw new Error("Invalid loop feature.");
-	const featureRoot = path.join(root, ".features", feature);
-	for (const dir of [path.join(root, ".features"), featureRoot, path.join(featureRoot, "tasks"), path.join(featureRoot, "artifacts"), path.join(featureRoot, "artifacts", "loop")]) {
-		await assertArtifactPath(dir, true);
-	}
-	return path.join(featureRoot, "artifacts", "loop");
-}
-
-async function readLoopStatus(cwd: string, jobId: string): Promise<LoopJobStatus> {
-	const root = await fs.promises.realpath(cwd);
-	const jobDir = loopJobDirFor(root, jobId);
-	for (const dir of [path.join(root, ".pi"), loopJobsRoot(root), jobDir]) await assertArtifactPath(dir, true);
-	await assertArtifactPath(path.join(jobDir, "status.json"));
-	const status = await readJson<LoopJobStatus>(path.join(jobDir, "status.json"));
-	if (!status || status.jobId !== jobId || typeof status.cwd !== "string" || typeof status.jobDir !== "string"
-		|| typeof status.feature !== "string" || typeof status.createdAt !== "string" || !AGENT_JOB_STATES.includes(status.state)
-		|| typeof status.followUp !== "boolean" || typeof status.followUpSent !== "boolean") throw new Error("Invalid loop job metadata.");
-	if (await fs.promises.realpath(status.cwd) !== root || await fs.promises.realpath(status.jobDir) !== jobDir) throw new Error("Invalid loop job cwd or jobDir.");
-	const artifacts = await assertLoopArtifactDirectories(root, status.feature);
-	const files = { runScriptPath: "run.sh", stdoutPath: "stdout.log", stderrPath: "stderr.log", resultPath: "result.md", exitPath: "exit.json", pidPath: "pid" } as const;
-	const featureFiles = { loopLogPath: "loop.log", loopSummaryPath: "latest-iteration.md", loopProgressPath: "progress.txt" } as const;
-	for (const [key, name] of Object.entries({ ...files, ...featureFiles }) as Array<[keyof typeof files | keyof typeof featureFiles, string]>) {
-		const featureArtifact = key in featureFiles;
-		const expected = path.join(featureArtifact ? artifacts : jobDir, name);
-		const supplied = status[key];
-		let selected = expected;
-		if (supplied !== undefined) {
-			if (typeof supplied !== "string") throw new Error(`Invalid loop job ${key}.`);
-			const parent = await fs.promises.realpath(path.dirname(supplied)).catch((error: NodeJS.ErrnoException) => {
-				if (error.code !== "ENOENT") throw error;
-				return path.dirname(path.resolve(root, path.relative(status.cwd, supplied)));
-			});
-			selected = path.join(parent, path.basename(supplied));
-			if (selected !== expected && !(featureArtifact && selected === path.join(jobDir, name))) throw new Error(`Invalid loop job ${key}: outside permitted artifacts.`);
-		}
-		await assertArtifactPath(selected);
-		status[key] = selected;
-	}
-	await assertArtifactPath(path.join(jobDir, ".cleanup-pending.json"));
-	return { ...status, cwd: root, jobDir };
-}
-
-async function writeLoopStatus(status: LoopJobStatus): Promise<void> {
-	await writeJson(path.join(status.jobDir, "status.json"), status);
-}
-
 async function acknowledgeCompletionFollowUp(key: string, pending: PendingFollowUpAck): Promise<void> {
-	const { kind, jobId } = pending;
+	const { jobId } = pending;
 	try {
-		await withJobLifecycle(pending.cwd, jobId, kind, async () => {
-			if (kind === "agent") {
-				const status = await readStatus(pending.cwd, jobId);
-				if (needsCompletionFollowUp(status) && isOriginSession(status, pending.session)) {
-					await writeStatus({ ...status, followUpSent: true, updatedAt: nowIso() });
-				}
-				stopWatchingJob(pending.cwd, jobId);
-			} else {
-				const status = await readLoopStatus(pending.cwd, jobId);
-				if (needsCompletionFollowUp(status) && isOriginSession(status, pending.session)) {
-					await writeLoopStatus({ ...status, followUpSent: true, updatedAt: nowIso() });
-				}
-				stopWatchingLoopJob(pending.cwd, jobId);
+		await withJobLifecycle(pending.cwd, jobId, async () => {
+			const status = await readStatus(pending.cwd, jobId);
+			if (needsCompletionFollowUp(status) && isOriginSession(status, pending.session)) {
+				await writeStatus({ ...status, followUpSent: true, updatedAt: nowIso() });
 			}
+			stopWatchingJob(pending.cwd, jobId);
 		});
 		pendingFollowUpAcks.delete(key);
 		setTimeout(pollWaitingFollowUps, 0);
@@ -1697,347 +1429,6 @@ async function acknowledgeCompletionFollowUp(key: string, pending: PendingFollow
 
 async function readTextIfExists(filePath: string): Promise<string> {
 	return fileExists(filePath) ? fs.promises.readFile(filePath, "utf8") : "";
-}
-
-function formatLoopResult(status: LoopJobStatus, exitCode: number, summary: string, log: string, stdout: string, stderr: string): string {
-	const sections = [
-		`# Loop Job ${status.jobId}`,
-		"",
-		`State: ${status.cancelRequestedAt ? "cancelled" : exitCode === 0 ? "completed" : "failed"}`,
-		`Feature: ${status.feature}`,
-		status.task ? `Task: ${status.task}` : "Task: next ready task",
-		`Project: ${status.cwd}`,
-		`Exit code: ${exitCode}`,
-		`Loop log: ${status.loopLogPath}`,
-		`Latest iteration: ${status.loopSummaryPath}`,
-		"",
-		summary.trim() ? `## Latest Iteration\n\n${summary.trim()}` : undefined,
-		log.trim() ? `## Loop Log Tail\n\n\`\`\`text\n${truncateTail(log.trim(), 10_000)}\n\`\`\`` : undefined,
-		stderr.trim() ? `## stderr Tail\n\n\`\`\`text\n${truncateTail(stderr.trim(), 4000)}\n\`\`\`` : undefined,
-		stdout.trim() ? `## stdout Tail\n\n\`\`\`text\n${truncateTail(stdout.trim(), 4000)}\n\`\`\`` : undefined,
-	];
-	return sections.filter((section): section is string => section !== undefined).join("\n").trim();
-}
-
-async function finalizeLoopIfDone(pi: ExtensionAPI, cwd: string, jobId: string, sendFollowUp: boolean, session: SessionIdentity = {}): Promise<LoopJobStatus> {
-	return withJobLifecycle(cwd, jobId, "loop", () => finalizeLoopUnlocked(pi, cwd, jobId, sendFollowUp, session));
-}
-
-async function finalizeLoopUnlocked(pi: ExtensionAPI, cwd: string, jobId: string, sendFollowUp: boolean, session: SessionIdentity = {}): Promise<LoopJobStatus> {
-	const cleanup = await reconcileCleanup(pi, await readLoopStatus(cwd, jobId), writeLoopStatus);
-	let status = cleanup.status;
-	if (cleanup.pending) return status;
-	if (status.state === "running" && !fileExists(status.exitPath) && await processIsMissing(pi, status)) {
-		if (!fileExists(status.exitPath)) {
-			const reason = "Process exited without an exit marker.";
-			status = { ...status, state: status.cancelRequestedAt ? "cancelled" : "failed", completedAt: nowIso(), updatedAt: nowIso(), summary: reason, errorMessage: reason };
-			await fs.promises.writeFile(status.resultPath, `${reason}\n`, "utf8");
-			await writeLoopStatus(status);
-		}
-	}
-	if (status.state === "running" && fileExists(status.exitPath)) {
-		const exit = await readJson<{ exitCode: number; finishedAt: string }>(status.exitPath);
-		const [summary, log, stdout, stderr] = await Promise.all([
-			readTextIfExists(status.loopSummaryPath),
-			readTextIfExists(status.loopLogPath),
-			readTextIfExists(status.stdoutPath),
-			readTextIfExists(status.stderrPath),
-		]);
-		const state: AgentJobState = status.cancelRequestedAt ? "cancelled" : exit.exitCode === 0 ? "completed" : "failed";
-		const resultText = truncateMiddle(formatLoopResult(status, exit.exitCode, summary, log, stdout, stderr), MAX_RESULT_CHARS);
-		await fs.promises.writeFile(status.resultPath, `${resultText.trim()}\n`, "utf8");
-
-		status = {
-			...status,
-			state,
-			exitCode: exit.exitCode,
-			completedAt: exit.finishedAt,
-			updatedAt: nowIso(),
-			summary: state === "cancelled" ? "Cancelled by user." : firstNonEmptyLine(summary) || firstNonEmptyLine(log) || (state === "completed" ? "Loop completed." : `Loop exited ${exit.exitCode}.`),
-			errorMessage: state === "failed" ? firstNonEmptyLine(stderr) || `exit code ${exit.exitCode}` : undefined,
-		};
-		await writeLoopStatus(status);
-	}
-
-	if (sendFollowUp && needsCompletionFollowUp(status) && isOriginSession(status, session)) {
-		await sendLoopCompletionFollowUp(pi, status, await readTextIfExists(status.resultPath));
-	}
-	return status;
-}
-
-async function sendLoopCompletionFollowUp(pi: ExtensionAPI, status: LoopJobStatus, resultText: string): Promise<boolean> {
-	const clipped = resultText.length > FOLLOW_UP_RESULT_CHARS
-		? `${resultText.slice(0, FOLLOW_UP_RESULT_CHARS).trimEnd()}\n\n…[result truncated; full result: ${status.resultPath}]…`
-		: resultText;
-	const verdict = status.state === "completed" ? "finished" : status.state === "cancelled" ? "was cancelled" : "failed";
-	const message = [
-		`Background loop job ${status.jobId} ${verdict}.`,
-		`Feature: ${status.feature}`,
-		status.task ? `Task: ${status.task}` : "Task: next ready task",
-		`Result file: ${status.resultPath}`,
-		`Loop log: ${status.loopLogPath}`,
-		`Latest iteration: ${status.loopSummaryPath}`,
-		"",
-		"## Loop Output",
-		"",
-		clipped.trim() || "(no output)",
-		"",
-		"Use this result to continue the user's workflow.",
-		completionFollowUpMarker("loop", status.jobId),
-	]
-		.filter((line): line is string => line !== undefined)
-		.join("\n");
-	return queueCompletionFollowUp(pi, "loop", status, message);
-}
-
-function stopWatchingLoopJob(cwd: string, jobId: string): void {
-	const key = `${cwd}:${jobId}`;
-	const watch = watchedLoopJobs.get(key);
-	if (!watch) return;
-	clearInterval(watch.interval);
-	watchedLoopJobs.delete(key);
-}
-
-function watchLoopJob(pi: ExtensionAPI, cwd: string, jobId: string, session: SessionIdentity = {}): void {
-	const key = `${cwd}:${jobId}`;
-	if (watchedLoopJobs.has(key)) return;
-	let polling = false;
-
-	const poll = () => {
-		if (polling) return;
-		polling = true;
-		void finalizeLoopIfDone(pi, cwd, jobId, true, session)
-			.then((status) => {
-				if (status.state !== "running" && (!needsCompletionFollowUp(status) || !isOriginSession(status, session))) stopWatchingLoopJob(cwd, jobId);
-			})
-			.catch(() => {
-				// Keep watching: status/result files can be transiently unavailable during atomic updates or reloads.
-			})
-			.finally(() => {
-				polling = false;
-			});
-	};
-	const interval = setInterval(poll, WATCH_INTERVAL_MS);
-	watchedLoopJobs.set(key, { interval, poll });
-	poll();
-}
-
-async function resumeRunningLoopJobs(pi: ExtensionAPI, cwd: string, session: SessionIdentity): Promise<void> {
-	const root = loopJobsRoot(cwd);
-	if (!fileExists(root)) return;
-	const entries = await fs.promises.readdir(root, { withFileTypes: true });
-	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
-		try {
-			const status = await readLoopStatus(cwd, entry.name);
-			if (status.state === "running" || (needsCompletionFollowUp(status) && isOriginSession(status, session))) watchLoopJob(pi, cwd, entry.name, session);
-		} catch {
-			// Ignore malformed old job dirs.
-		}
-	}
-}
-
-async function listLoopStatuses(cwd: string): Promise<LoopJobStatus[]> {
-	const root = loopJobsRoot(cwd);
-	if (!fileExists(root)) return [];
-	const entries = await fs.promises.readdir(root, { withFileTypes: true });
-	const statuses: LoopJobStatus[] = [];
-	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
-		try {
-			statuses.push(await readLoopStatus(cwd, entry.name));
-		} catch {
-			// Ignore malformed old job dirs.
-		}
-	}
-	return statuses.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-}
-
-type LoopLaunchParams = ParsedLoopBgArgs;
-
-type LoopFeatureCandidate = {
-	feature: string;
-	tasksDir: string;
-};
-
-async function listLoopFeatureCandidates(cwd: string): Promise<LoopFeatureCandidate[]> {
-	const featuresRoot = path.join(cwd, ".features");
-	const entries = await fs.promises.readdir(featuresRoot, { withFileTypes: true }).catch(() => []);
-	const candidates: LoopFeatureCandidate[] = [];
-
-	for (const entry of entries) {
-		if (!entry.isDirectory() || entry.name === "archive") continue;
-		const tasksDir = path.join(featuresRoot, entry.name, "tasks");
-		const tasksStat = await fs.promises.stat(tasksDir).catch(() => undefined);
-		if (tasksStat?.isDirectory()) candidates.push({ feature: entry.name, tasksDir });
-	}
-
-	return candidates;
-}
-
-function escapeRegExp(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-async function taskFileTexts(tasksDir: string): Promise<string[]> {
-	const entries = await fs.promises.readdir(tasksDir, { withFileTypes: true }).catch(() => []);
-	const files = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".md") && entry.name !== "_active.md");
-	return Promise.all(files.map((entry) => fs.promises.readFile(path.join(tasksDir, entry.name), "utf8").catch(() => "")));
-}
-
-async function featureHasTask(candidate: LoopFeatureCandidate, task: string): Promise<boolean> {
-	const idPattern = new RegExp(`^id:\\s*${escapeRegExp(task)}\\s*$`, "im");
-	return (await taskFileTexts(candidate.tasksDir)).some((text) => idPattern.test(text) || new RegExp(`^#\\s*${escapeRegExp(task)}\\b`, "im").test(text));
-}
-
-async function featureHasReadyTask(candidate: LoopFeatureCandidate): Promise<boolean> {
-	return (await taskFileTexts(candidate.tasksDir)).some((text) => /^status:\s*(ready|open)\b/im.test(text));
-}
-
-export async function resolveLoopFeature(cwd: string, feature?: string, task?: string): Promise<string> {
-	const candidates = await listLoopFeatureCandidates(cwd);
-	if (feature) {
-		const match = candidates.find((candidate) => candidate.feature === feature);
-		if (!match) throw new Error(`Feature '${feature}' not found at ${path.join(cwd, ".features", feature, "tasks")}`);
-		return match.feature;
-	}
-
-	if (task) {
-		const matches: LoopFeatureCandidate[] = [];
-		for (const candidate of candidates) {
-			if (await featureHasTask(candidate, task)) matches.push(candidate);
-		}
-		if (matches.length === 1) return matches[0]!.feature;
-		if (matches.length > 1) throw new Error(`Task '${task}' exists in multiple features: ${matches.map((candidate) => candidate.feature).join(", ")}. Pass feature explicitly.`);
-	}
-
-	const ready: LoopFeatureCandidate[] = [];
-	for (const candidate of candidates) {
-		if (await featureHasReadyTask(candidate)) ready.push(candidate);
-	}
-	if (ready.length === 1) return ready[0]!.feature;
-	if (candidates.length === 1) return candidates[0]!.feature;
-
-	const available = candidates.map((candidate) => candidate.feature).join(", ") || "none";
-	throw new Error(`Feature not specified and could not infer a single loop feature. Available features: ${available}. Pass feature explicitly.`);
-}
-
-async function launchLoopJob(pi: ExtensionAPI, ctx: LaunchContext, params: LoopLaunchParams): Promise<LoopJobStatus> {
-	const cwd = await trustedAgentRoot(ctx, params.cwd, "loop");
-	const feature = await resolveLoopFeature(cwd, params.feature, params.task);
-	await assertLoopArtifactDirectories(cwd, feature);
-
-	const loopScriptPath = await resolveLoopScriptPath(cwd, params.loopScriptPath);
-	const maxIterations = positiveInt("maxIterations", params.maxIterations, LOOP_DEFAULT_MAX_ITERATIONS);
-	const sleepSeconds = nonNegativeInt("sleepSeconds", params.sleepSeconds, LOOP_DEFAULT_SLEEP_SECONDS);
-	const pollSeconds = nonNegativeInt("pollSeconds", params.pollSeconds, LOOP_DEFAULT_POLL_SECONDS);
-	const rateLimitStreak = positiveInt("rateLimitStreak", params.rateLimitStreak, LOOP_DEFAULT_RATE_LIMIT_STREAK);
-	const jobId = createJobId(`loop-${feature}`);
-	const jobDir = loopJobDirFor(cwd, jobId);
-	await fs.promises.mkdir(jobDir, { recursive: true, mode: 0o700 });
-
-	const loopArtifactsDir = path.join(cwd, ".features", feature, "artifacts", "loop");
-	const loopLogPath = path.join(loopArtifactsDir, "loop.log");
-	const loopSummaryPath = path.join(loopArtifactsDir, "latest-iteration.md");
-	const loopProgressPath = path.join(loopArtifactsDir, "progress.txt");
-	for (const file of [loopLogPath, loopSummaryPath, loopProgressPath]) await assertArtifactPath(file);
-	const stdoutPath = path.join(jobDir, "stdout.log");
-	const stderrPath = path.join(jobDir, "stderr.log");
-	const resultPath = path.join(jobDir, "result.md");
-	const exitPath = path.join(jobDir, "exit.json");
-	const pidPath = path.join(jobDir, "pid");
-	const runScriptPath = path.join(jobDir, "run.sh");
-	const command = buildLoopCommandArgs({
-		loopScriptPath,
-		feature,
-		task: params.task,
-		cwd,
-		maxIterations,
-		tool: params.tool,
-		toolOrder: params.toolOrder,
-		agent: params.agent,
-		sleepSeconds,
-		pollSeconds,
-		rateLimitStreak,
-	});
-
-	const runScript = buildLoopRunScript({ cwd, jobId, command, stdoutPath, stderrPath, exitPath, pidPath, resultPath });
-	await fs.promises.writeFile(runScriptPath, runScript, { encoding: "utf8", mode: 0o700 });
-
-	const originSession = sessionIdentityFromContext(ctx);
-	const createdAt = nowIso();
-	const status: LoopJobStatus = {
-		jobId,
-		feature,
-		task: params.task,
-		cwd,
-		createdAt,
-		updatedAt: createdAt,
-		state: "running",
-		launcher: "process",
-		originSessionId: originSession.id,
-		originSessionFile: originSession.file,
-		jobDir,
-		runScriptPath,
-		stdoutPath,
-		stderrPath,
-		resultPath,
-		exitPath,
-		pidPath,
-		loopLogPath,
-		loopSummaryPath,
-		loopProgressPath,
-		loopScriptPath,
-		command,
-		maxIterations,
-		tool: params.tool,
-		toolOrder: params.toolOrder,
-		agent: params.agent,
-		sleepSeconds,
-		pollSeconds,
-		rateLimitStreak,
-		followUp: params.followUp ?? true,
-		followUpSent: false,
-	};
-	await writeLoopStatus(status);
-
-	await startJobProcess(pi, status, writeLoopStatus, "loop");
-	watchLoopJob(pi, cwd, jobId, originSession);
-	return status;
-}
-
-function formatLoopStarted(status: LoopJobStatus): string {
-	return [
-		`Started background loop job ${status.jobId} as detached process ${status.processId}.`,
-		`Feature: ${status.feature}`,
-		status.task ? `Task: ${status.task}` : "Task: next ready task",
-		`Status: ${path.join(status.jobDir, "status.json")}`,
-		`Result: ${status.resultPath}`,
-		`Loop log: ${status.loopLogPath}`,
-		`Latest iteration: ${status.loopSummaryPath}`,
-		status.followUp
-			? "The main workflow is not blocked; a follow-up message will arrive when the loop finishes."
-			: "The main workflow is not blocked; use loop_job_status to read the result when it finishes.",
-	]
-		.filter((line): line is string => line !== undefined)
-		.join("\n");
-}
-
-function formatLoopStatus(status: LoopJobStatus, resultPreview?: string): string {
-	const lines = [
-		`${status.jobId} — loop:${status.feature} — ${status.state}`,
-		status.task ? `Task: ${status.task}` : "Task: next ready task",
-		`Created: ${status.createdAt}`,
-		status.completedAt ? `Completed: ${status.completedAt}` : undefined,
-		status.summary ? `Summary: ${status.summary}` : undefined,
-		status.errorMessage ? `Error: ${status.errorMessage}` : undefined,
-		status.processId ? `Process: ${status.processId}` : status.tmuxWindow ? `Legacy tmux window: ${status.tmuxWindow}` : undefined,
-		`Result: ${status.resultPath}`,
-		`Loop log: ${status.loopLogPath}`,
-		`Latest iteration: ${status.loopSummaryPath}`,
-		resultPreview ? `\n## Result Preview\n\n${resultPreview}` : undefined,
-	];
-	return lines.filter((line): line is string => line !== undefined).join("\n");
 }
 
 const ForegroundTaskSchema = Type.Object({
@@ -2053,11 +1444,13 @@ interface ForegroundResult {
 	jobId?: string;
 	resultPath?: string;
 	output?: string;
+	model?: string;
+	attempts?: ModelAttempt[];
 }
 
 // Foreground jobs have one owner: this waiter, not the background watcher.
 async function cancelForegroundJob(pi: ExtensionAPI, job: AgentJobStatus): Promise<void> {
-	await withJobLifecycle(job.cwd, job.jobId, "agent", async () => {
+	await withJobLifecycle(job.cwd, job.jobId, async () => {
 		let status = await finalizeAgentUnlocked(pi, job.cwd, job.jobId, false);
 		if (status.state !== "running") return;
 		let signalled: boolean;
@@ -2115,7 +1508,7 @@ async function runForegroundAgents(
 			for (const [index, job] of active) {
 				const status = await finalizeIfDone(pi, job.cwd, job.jobId, false);
 				if (status.state !== "running") {
-					results[index] = { ...results[index]!, state: status.state,
+					results[index] = { ...results[index]!, state: status.state, model: status.model, attempts: status.attempts,
 						output: clipForegroundOutput([status.errorMessage, await readTextIfExists(status.resultPath)].filter(Boolean).join("\n\n")) };
 					active.delete(index);
 				} else {
@@ -2156,7 +1549,10 @@ function clipForegroundOutput(text: string): string {
 
 function foregroundText(results: ForegroundResult[]): string {
 	return results.map((result) =>
-		`### ${result.agent} — ${result.state}\n${result.jobId ? `Job: ${result.jobId}\nResult: ${result.resultPath}\n` : ""}\n${result.output ?? ""}`,
+		`### ${result.agent} — ${result.state}\n${[
+			...(result.jobId ? [`Job: ${result.jobId}`, `Result: ${result.resultPath}`] : []),
+			...formatModelAttempts(result),
+		].map((line) => `${line}\n`).join("")}\n${result.output ?? ""}`,
 	).join("\n\n");
 }
 
@@ -2245,10 +1641,6 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			const root = await trustedAgentRoot(ctx);
 			await resumeRunningJobs(pi, root, session);
 		} catch { /* Untrusted or invalid agent job directories must not auto-resume. */ }
-		try {
-			const root = await trustedAgentRoot(ctx, undefined, "loop");
-			await resumeRunningLoopJobs(pi, root, session);
-		} catch { /* Untrusted or malformed loop metadata must not auto-resume. */ }
 	});
 	pi.on("agent_end", (_event, ctx) => {
 		followUpContext = ctx;
@@ -2260,7 +1652,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 		const markers = parseCompletionFollowUpMarkers(textFromMessageContent(event.message.content));
 		for (const marker of markers) {
 			for (const [key, pending] of pendingFollowUpAcks) {
-				if (pending.kind === marker.kind && pending.jobId === marker.jobId && pending.token === marker.token && matchesDeliveryContext(pending, ctx)) {
+				if (pending.jobId === marker.jobId && pending.token === marker.token && matchesDeliveryContext(pending, ctx)) {
 					pending.received = true;
 					pending.blocking = false;
 					await acknowledgeCompletionFollowUp(key, pending);
@@ -2280,25 +1672,23 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			}
 		}
 		for (const watch of watchedJobs.values()) clearInterval(watch.interval);
-		for (const watch of watchedLoopJobs.values()) clearInterval(watch.interval);
 		watchedJobs.clear();
-		watchedLoopJobs.clear();
 		followUpContext = undefined;
 		knownGroups.clear();
 	});
 
 	pi.registerCommand("agent-notification-retry", {
-		description: "Explicitly retry an unreceived completion notification (not the job): agent|loop job-id",
+		description: "Explicitly retry an unreceived completion notification (not the job): <job-id>",
 		handler: async (args, ctx) => {
-			const [kind, jobId, extra] = args.trim().split(/\s+/);
-			if ((kind !== "agent" && kind !== "loop") || !jobId || extra) throw new Error("Usage: /agent-notification-retry agent|loop <job-id>");
-			const cwd = await trustedAgentRoot(ctx, undefined, kind);
+			const [jobId, extra] = args.trim().split(/\s+/);
+			if (!jobId || extra) throw new Error("Usage: /agent-notification-retry <job-id>");
+			const cwd = await trustedAgentRoot(ctx);
 			const session = sessionIdentityFromContext(ctx);
-			const status = kind === "agent" ? await readStatus(cwd, jobId) : await readLoopStatus(cwd, jobId);
+			const status = await readStatus(cwd, jobId);
 			if (!isOriginSession(status, session)) throw new Error("Notification retry is restricted to the originating conversation.");
 			if (!needsCompletionFollowUp(status)) throw new Error("This job has no pending completion notification.");
 			if (!ctx.isIdle() || ctx.hasPendingMessages()) throw new Error("Wait until Pi is idle and its message queue is empty before retrying.");
-			const key = followUpKey(kind, jobId, cwd);
+			const key = followUpKey(jobId, cwd);
 			const pending = pendingFollowUpAcks.get(key);
 			if (pending?.received) { await acknowledgeCompletionFollowUp(key, pending); return; }
 			if (!ctx.hasUI) throw new Error("Notification retry requires interactive confirmation.");
@@ -2307,8 +1697,8 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 			if (!ctx.isIdle() || ctx.hasPendingMessages() || (pending && ctx.ui.getEditorText().includes(pending.token))) throw new Error("Delivery ownership changed during confirmation; retry was not reset.");
 			if (pending) { pending.retryRequested = true; pending.blocking = false; }
 			followUpContext = ctx;
-			if (kind === "agent") { await finalizeIfDone(pi, cwd, jobId, true, session); watchJob(pi, cwd, jobId, session); }
-			else { await finalizeLoopIfDone(pi, cwd, jobId, true, session); watchLoopJob(pi, cwd, jobId, session); }
+			await finalizeIfDone(pi, cwd, jobId, true, session);
+			watchJob(pi, cwd, jobId, session);
 		},
 	});
 
@@ -2363,7 +1753,7 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 		description: "Show background agent job status (usage: /agent-job-status [--project-root <path>] [jobId])",
 		handler: async (args, ctx) => {
 			try {
-				const { jobId, cwd: requestedCwd, help } = parseLoopJobStatusCommandArgs(args.trim());
+				const { jobId, cwd: requestedCwd, help } = parseJobStatusCommandArgs(args.trim());
 				if (help) {
 					ctx.ui.notify("Usage: /agent-job-status [--project-root <path>] [jobId]", "info");
 					return;
@@ -2376,47 +1766,6 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 				}
 				const statuses = await listStatuses(cwd);
 				if (statuses.length === 0) ctx.ui.notify("No background agent jobs found", "info");
-				else ctx.ui.notify(statuses.slice(0, 5).map((status) => `${status.jobId}: ${status.state}`).join("\n"), "info");
-			} catch (error) {
-				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
-			}
-		},
-	});
-
-	pi.registerCommand("loop-bg", {
-		description: "Run loop.sh for a feature as a detached background process",
-		handler: async (args, ctx) => {
-			try {
-				const parsed = parseLoopBgCommandArgs(args.trim());
-				if (parsed.help) {
-					ctx.ui.notify(loopCommandUsage(), "info");
-					return;
-				}
-				const status = await launchLoopJob(pi, ctx, parsed);
-				ctx.ui.notify(`Started loop job ${status.jobId}`, "info");
-			} catch (error) {
-				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
-			}
-		},
-	});
-
-	pi.registerCommand("loop-job-status", {
-		description: "Show background loop job status (usage: /loop-job-status [--project-root <path>] [jobId])",
-		handler: async (args, ctx) => {
-			try {
-				const parsed = parseLoopJobStatusCommandArgs(args.trim());
-				if (parsed.help) {
-					ctx.ui.notify(loopJobStatusCommandUsage(), "info");
-					return;
-				}
-				const cwd = await trustedAgentRoot(ctx, parsed.cwd, "loop");
-				if (parsed.jobId) {
-					const status = await finalizeLoopIfDone(pi, cwd, parsed.jobId, false);
-					ctx.ui.notify(`${status.jobId}: ${status.state}${status.summary ? ` — ${status.summary}` : ""}`, "info");
-					return;
-				}
-				const statuses = await listLoopStatuses(cwd);
-				if (statuses.length === 0) ctx.ui.notify("No background loop jobs found", "info");
 				else ctx.ui.notify(statuses.slice(0, 5).map((status) => `${status.jobId}: ${status.state}`).join("\n"), "info");
 			} catch (error) {
 				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
@@ -2495,141 +1844,6 @@ export default function agentJobsExtension(pi: ExtensionAPI) {
 				? "No background agent jobs found."
 				: statuses.map((status) => `${status.jobId}\t${status.agent}\t${status.state}\t${status.summary || ""}`).join("\n");
 			return { content: [{ type: "text" as const, text }], details: { jobs: statuses }, structuredContent: { jobs: statuses.map(agentJobSummary) } };
-		},
-	});
-
-	pi.registerTool({
-		name: "loop_job_start",
-		label: "Loop Job Start",
-		description:
-			"Start loop.sh for a project feature/task as a detached OS process and return immediately. " +
-			"Use when the user says things like 'run a loop for this task in background'. " +
-			"The job writes status and result files under .pi/loop-jobs, reuses .features/{feature}/artifacts/loop/, and sends a follow-up message when finished.",
-		promptSnippet: "Run loop.sh for a feature/task as a detached background process and notify when it finishes",
-		promptGuidelines: [
-			"Use loop_job_start when the user asks to run/start/continue a task loop in the background or says 'run a loop for this task in background'.",
-			"For loop_job_start, infer feature/task from the current task context when possible; if missing, inspect .features/*/tasks/_active.md or pass task only and let the tool infer the feature.",
-			"For loop_job_start, use maxIterations around 5 for a named task and around 20 for a whole feature unless the user specifies otherwise.",
-		],
-		parameters: Type.Object({
-			feature: Type.Optional(Type.String({ description: "Feature folder name under .features/. Optional when task uniquely identifies a feature or only one feature has ready work." })),
-			task: Type.Optional(Type.String({ description: "Optional target task id, e.g. TASK-002. When omitted, loop.sh picks the next ready task." })),
-			cwd: Type.Optional(Type.String({ description: "Project root to run in. Defaults to current cwd." })),
-			maxIterations: Type.Optional(Type.Number({ description: `Maximum loop iterations (default ${LOOP_DEFAULT_MAX_ITERATIONS}).`, minimum: 1, maximum: 100 })),
-			tool: Type.Optional(LoopToolSchema),
-			toolOrder: Type.Optional(Type.String({ description: 'Tool priority for loop.sh auto-detection, e.g. "pi,amp,claude,opencode".' })),
-			agent: Type.Optional(Type.String({ description: "Optional Pi agent name passed through to loop.sh --agent." })),
-			sleepSeconds: Type.Optional(Type.Number({ description: `Delay between iterations (default ${LOOP_DEFAULT_SLEEP_SECONDS}).`, minimum: 0, maximum: 3600 })),
-			pollSeconds: Type.Optional(Type.Number({ description: `Heartbeat log interval while each iteration runs (default ${LOOP_DEFAULT_POLL_SECONDS}).`, minimum: 0, maximum: 3600 })),
-			rateLimitStreak: Type.Optional(Type.Number({ description: `Consecutive rate-limit failures before stopping (default ${LOOP_DEFAULT_RATE_LIMIT_STREAK}).`, minimum: 1, maximum: 100 })),
-			loopScriptPath: Type.Optional(Type.String({ description: "Optional explicit path to loop.sh. Defaults to project/user loop skill locations." })),
-			followUp: Type.Optional(Type.Boolean({ description: "Send a follow-up user message when the loop finishes. Default: true.", default: true })),
-		}),
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const status = await launchLoopJob(pi, { ...ctx, signal }, {
-				feature: params.feature,
-				task: params.task,
-				cwd: params.cwd,
-				maxIterations: params.maxIterations,
-				tool: params.tool as LoopTool | undefined,
-				toolOrder: params.toolOrder,
-				agent: params.agent,
-				sleepSeconds: params.sleepSeconds,
-				pollSeconds: params.pollSeconds,
-				rateLimitStreak: params.rateLimitStreak,
-				loopScriptPath: params.loopScriptPath,
-				followUp: params.followUp,
-			});
-			return {
-				content: [{ type: "text" as const, text: formatLoopStarted(status) }],
-				details: status,
-				terminate: true,
-			};
-		},
-		renderCall(args, theme) {
-			const task = args.task ? ` ${args.task}` : "";
-			return new Text(`${theme.fg("toolTitle", theme.bold("loop_job_start "))}${theme.fg("accent", args.feature || "feature")}${theme.fg("dim", task)}`, 0, 0);
-		},
-		renderResult(result, _options, theme, context) {
-			const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-			return new Text(context.isError ? theme.fg("error", text) : theme.fg("success", text), 0, 0);
-		},
-	});
-
-	pi.registerTool({
-		name: "loop_job_status",
-		label: "Loop Job Status",
-		description: "Check a background loop job, or list recent loop jobs when jobId is omitted.",
-		parameters: Type.Object({
-			jobId: Type.Optional(Type.String({ description: "Job id returned by loop_job_start." })),
-			cwd: Type.Optional(Type.String({ description: "Project root where the loop job was started. Defaults to current cwd." })),
-		}),
-		outputSchema: jobStatusOutputSchema(LoopJobSummarySchema),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const cwd = await trustedAgentRoot(ctx, params.cwd, "loop");
-			if (params.jobId) {
-				const status = await finalizeLoopIfDone(pi, cwd, params.jobId, false);
-				const preview = fileExists(status.resultPath) ? truncateTail(await fs.promises.readFile(status.resultPath, "utf8"), 6000) : undefined;
-				return {
-					content: [{ type: "text" as const, text: formatLoopStatus(status, preview) }],
-					details: status,
-					structuredContent: { job: loopJobSummary(status), resultPreview: preview },
-				};
-			}
-			const statuses = (await listLoopStatuses(cwd)).slice(0, 10);
-			const text = statuses.length === 0
-				? "No background loop jobs found."
-				: statuses.map((status) => `${status.jobId}\t${status.feature}\t${status.state}\t${status.summary || ""}`).join("\n");
-			return { content: [{ type: "text" as const, text }], details: { jobs: statuses }, structuredContent: { jobs: statuses.map(loopJobSummary) } };
-		},
-	});
-
-	pi.registerTool({
-		name: "loop_job_cancel",
-		label: "Loop Job Cancel",
-		description: "Cancel a running background loop process.",
-		parameters: Type.Object({
-			jobId: Type.String({ description: "Job id returned by loop_job_start." }),
-			cwd: Type.Optional(Type.String({ description: "Project root where the loop job was started. Defaults to current cwd." })),
-			killWindow: Type.Optional(Type.Boolean({ description: "Force-kill the process after requesting cancellation. Retained for compatibility; default false.", default: false })),
-		}),
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const cwd = await trustedAgentRoot(ctx, params.cwd, "loop");
-			return withJobLifecycle(cwd, params.jobId, "loop", async () => {
-				const status = await finalizeLoopUnlocked(pi, cwd, params.jobId, false);
-				if (status.state !== "running") {
-					return { content: [{ type: "text" as const, text: `Loop job ${status.jobId} is already ${status.state}.` }], details: status };
-				}
-				if (status.cancelRequestedAt && !params.killWindow) {
-					return { content: [{ type: "text" as const, text: `Cancellation is already pending for loop job ${status.jobId}.` }], details: status };
-				}
-				let signalled: boolean;
-				try { signalled = params.killWindow ? await terminateOwnedGroup(pi, status, true, 0) : await signalOwnedAgent(pi, status, "SIGTERM", signal); }
-				catch (error) {
-					if (params.killWindow) await writeLoopStatus({ ...status, cancelRequestedAt: status.cancelRequestedAt ?? nowIso(), updatedAt: nowIso(), summary: UNVERIFIED_CLEANUP.cancel, errorMessage: String(error) });
-					throw error;
-				}
-				if (!signalled) {
-					const finished = await finalizeLoopUnlocked(pi, cwd, params.jobId, false);
-					if (finished.state !== "running") return { content: [{ type: "text" as const, text: `Loop job ${finished.jobId} is already ${finished.state}.` }], details: finished };
-					throw new Error("Supervisor missing but process-group exit is unverified; no cancellation recorded.");
-				}
-				const requestedAt = nowIso();
-				const pending = { ...status, cancelRequestedAt: requestedAt, updatedAt: requestedAt, summary: "Cancellation requested; waiting for the process to exit." };
-				const stopped = params.killWindow;
-				await writeLoopStatus(pending);
-				let updated: LoopJobStatus = pending;
-				if (stopped) {
-					updated = await finalizeLoopUnlocked(pi, cwd, params.jobId, false);
-					if (updated.state === "running") {
-						updated = { ...updated, state: "cancelled", completedAt: requestedAt, summary: "Cancelled by user." };
-						await fs.promises.writeFile(updated.resultPath, "Cancelled by user.\n", "utf8");
-						await writeLoopStatus(updated);
-					}
-				}
-				if (stopped && !needsCompletionFollowUp(updated)) stopWatchingLoopJob(status.cwd, status.jobId);
-				return { content: [{ type: "text" as const, text: stopped ? `Cancelled loop job ${status.jobId}.` : `Cancellation requested for loop job ${status.jobId}.` }], details: updated };
-			});
 		},
 	});
 

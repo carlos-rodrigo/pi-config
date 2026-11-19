@@ -15,12 +15,27 @@ async function fixture(t: test.TestContext) {
 	await mkdir(bin);
 	await mkdir(join(root, ".pi/agents"), { recursive: true });
 	await writeFile(join(root, ".pi/agents/fixture.md"), "---\nname: fixture\ndescription: fixture\ntools: [read, grep]\n---\nInspect only.");
+	const invocationLog = join(root, "pi-invocations.jsonl");
+	// Models named fixture/quota* or fixture/missing* fail like real unavailable providers; fixture/cancel-quota* reports
+	// quota exhaustion only when cancelled. Other models run the prompt.
 	await writeFile(join(bin, "pi"), `#!/usr/bin/env node
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 const prompt = fs.readFileSync(args.find(a => a.startsWith('@')).slice(1), 'utf8');
+const model = args.includes('--model') ? args[args.indexOf('--model') + 1] : '';
+fs.appendFileSync(${JSON.stringify(invocationLog)}, JSON.stringify({ model, message: args.at(-1) }) + '\\n');
+if (model.startsWith('fixture/missing')) { console.error('Error: Model "' + model + '" not found. Use --list-models to see available models.'); process.exit(1); }
 if (prompt.includes('stubborn')) process.on('SIGTERM', () => {});
+const quotaError = "Claude quota exceeded — rate limit (five_hour) — resets 12:10:00 AM: You've hit your 5-hour limit";
+if (model.startsWith('fixture/cancel-quota')) process.on('SIGTERM', () => {
+ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content:[],stopReason:'error',errorMessage:quotaError}}));
+ process.exit(0);
+});
 console.log(JSON.stringify({type:'tool_execution_start'}));
+if (model.startsWith('fixture/quota')) {
+ console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content:[],stopReason:'error',errorMessage:quotaError}}));
+ process.exit(0);
+}
 setTimeout(() => {
  console.log(JSON.stringify({type:'message_end',message:{role:'assistant',content:[{type:'text',text:prompt.includes('large') ? '界'.repeat(30000) : prompt}],stopReason:prompt.includes('fail') ? 'error' : 'end',errorMessage:prompt.includes('fail') ? 'fixture failure' : undefined}}));
 }, prompt.includes('slow') ? 30000 : 100);
@@ -65,7 +80,10 @@ setTimeout(() => {
 		} } as unknown as Parameters<typeof command.handler>[1]);
 		return rendered;
 	}
-	return { root, bin, tools, commands, ctx, followUps, shutdown, inspectManager };
+	async function invocations(): Promise<Array<{ model: string; message: string }>> {
+		return (await readFile(invocationLog, "utf8").catch(() => "")).split("\n").filter(Boolean).map(line => JSON.parse(line));
+	}
+	return { root, bin, tools, commands, ctx, followUps, shutdown, inspectManager, invocations };
 }
 const project = { agentScope: "project", confirmProjectAgents: false };
 
@@ -296,4 +314,110 @@ test("manager observes at least five detached jobs and closing leaves them runni
 			assert.equal((result.details as { state: string }).state, "running");
 		}
 	} finally { for (const jobId of ids) await cancelJob(tools, ctx, jobId); }
+});
+
+type JobStatusFile = { state: string; model?: string; models?: string[]; attempts?: Array<{ model: string; error?: string }>; errorMessage?: string; jobDir: string };
+async function onlyJobStatus(root: string): Promise<JobStatusFile> {
+	const [job, ...others] = await readdir(join(root, ".pi/agent-jobs"));
+	assert.deepEqual(others, []);
+	return JSON.parse(await readFile(join(root, ".pi/agent-jobs", job!, "status.json"), "utf8"));
+}
+const QUOTA_REASON = /fixture\/quota:high — Claude quota exceeded — rate limit \(five_hour\)/;
+
+test("subagent retries on the next model after a provider quota error and reports every attempt", async t => {
+	const { tools, ctx, root, invocations } = await fixture(t);
+	await writeFile(join(root, ".pi/agents/fallback.md"), "---\nname: fallback\ndescription: fallback\nmodel: fixture/quota:high, fixture/good\n---\nInspect only.");
+	const result = await tools.get("subagent")!.execute("fallback", { ...project, agent: "fallback", task: "inspect" }, undefined, undefined, ctx);
+	const text = result.content.map(part => part.type === "text" ? part.text : "").join("");
+	assert.match(text, /fallback — completed/);
+	assert.match(text, /Model: fixture\/good/);
+	assert.match(text, QUOTA_REASON);
+	const details = (result.details as { results: Array<{ model?: string; attempts?: unknown[] }> }).results[0]!;
+	assert.equal(details.model, "fixture/good");
+	assert.equal(details.attempts?.length, 2);
+	const calls = await invocations();
+	assert.deepEqual(calls.map(call => call.model), ["fixture/quota:high", "fixture/good"]);
+	assert.doesNotMatch(calls[0]!.message, /previous attempt/);
+	assert.match(calls[1]!.message, /previous attempt with model fixture\/quota:high[\s\S]*may have left edits in the working tree/);
+	const status = await onlyJobStatus(root);
+	assert.equal(status.state, "completed");
+	assert.equal(status.model, "fixture/good");
+	assert.deepEqual(status.models, ["fixture/quota:high", "fixture/good"]);
+	assert.equal(status.attempts?.[0]?.model, "fixture/quota:high");
+	assert.match(status.attempts?.[0]?.error ?? "", /5-hour limit/);
+	assert.deepEqual(status.attempts?.[1], { model: "fixture/good" });
+	assert.match(await readFile(join(status.jobDir, "attempt-1.events.jsonl"), "utf8"), /5-hour limit/);
+	assert.match(await readFile(join(status.jobDir, "result.md"), "utf8"), /Task: inspect/);
+});
+
+test("agent_job_start falls back from a missing model listed in YAML and records the model that ran", async t => {
+	const { tools, ctx, root, invocations } = await fixture(t);
+	await writeFile(join(root, ".pi/agents/listed.md"), "---\nname: listed\ndescription: listed\nmodel:\n  - fixture/missing\n  - fixture/good\n---\nInspect only.");
+	const started = await tools.get("agent_job_start")!.execute("bg", { ...project, agent: "listed", task: "inspect", followUp: false }, undefined, undefined, ctx);
+	const { jobId } = started.details as { jobId: string };
+	const deadline = performance.now() + 30_000;
+	let status = await tools.get("agent_job_status")!.execute("status", { jobId }, undefined, undefined, ctx);
+	while ((status.details as { state: string }).state === "running") {
+		assert.ok(performance.now() < deadline, `Timed out after 30000ms waiting for job ${jobId} to finish`);
+		await new Promise(resolve => setTimeout(resolve, 20));
+		status = await tools.get("agent_job_status")!.execute("status", { jobId }, undefined, undefined, ctx);
+	}
+	const job = (status.structuredContent as { job: { state: string; model: string; attempts: Array<{ model: string; error?: string }> } }).job;
+	assert.equal(job.state, "completed");
+	assert.equal(job.model, "fixture/good");
+	assert.equal(job.attempts[0]!.model, "fixture/missing");
+	assert.match(job.attempts[0]!.error!, /Model "fixture\/missing" not found/);
+	const text = status.content.map(part => part.type === "text" ? part.text : "").join("");
+	assert.match(text, /Model: fixture\/good/);
+	assert.match(text, /fixture\/missing — Error: Model "fixture\/missing" not found/);
+	assert.deepEqual((await invocations()).map(call => call.model), ["fixture/missing", "fixture/good"]);
+});
+
+test("an ordinary model failure does not try the next model", async t => {
+	const { tools, ctx, root, invocations } = await fixture(t);
+	await writeFile(join(root, ".pi/agents/fallback.md"), "---\nname: fallback\ndescription: fallback\nmodel: fixture/good, fixture/other\n---\nInspect only.");
+	await assert.rejects(tools.get("subagent")!.execute("fail", { ...project, agent: "fallback", task: "fail" }, undefined, undefined, ctx), /fixture failure/);
+	assert.deepEqual((await invocations()).map(call => call.model), ["fixture/good"]);
+	const status = await onlyJobStatus(root);
+	assert.equal(status.state, "failed");
+	assert.equal(status.model, "fixture/good");
+	assert.deepEqual(status.attempts, [{ model: "fixture/good", error: "fixture failure" }]);
+	await assert.rejects(readFile(join(status.jobDir, "attempt-1.events.jsonl")), /ENOENT/);
+});
+
+test("an ordinary failure after a fallback stops the list and does not claim every model failed", async t => {
+	const { tools, ctx, root, invocations } = await fixture(t);
+	await writeFile(join(root, ".pi/agents/fallback.md"), "---\nname: fallback\ndescription: fallback\nmodel: fixture/quota:high, fixture/good, fixture/other\n---\nInspect only.");
+	await assert.rejects(tools.get("subagent")!.execute("fail", { ...project, agent: "fallback", task: "fail" }, undefined, undefined, ctx), /fixture failure/);
+	assert.deepEqual((await invocations()).map(call => call.model), ["fixture/quota:high", "fixture/good"]);
+	const status = await onlyJobStatus(root);
+	assert.equal(status.state, "failed");
+	assert.equal(status.model, "fixture/good");
+	assert.match(await readFile(join(status.jobDir, "attempt-1.events.jsonl"), "utf8"), /5-hour limit/);
+	await assert.rejects(readFile(join(status.jobDir, "attempt-2.events.jsonl")), /ENOENT/);
+	assert.match(status.errorMessage ?? "", /^Failed after model fallback — fixture\/quota:high: Claude quota exceeded[\s\S]*; fixture\/good: fixture failure$/);
+	assert.doesNotMatch(status.errorMessage ?? "", /every model/i);
+});
+
+test("exhausting the model list fails with every model's reason", async t => {
+	const { tools, ctx, root, invocations } = await fixture(t);
+	await writeFile(join(root, ".pi/agents/fallback.md"), "---\nname: fallback\ndescription: fallback\nmodel: fixture/quota:high, fixture/missing\n---\nInspect only.");
+	await assert.rejects(tools.get("subagent")!.execute("exhausted", { ...project, agent: "fallback", task: "inspect" }, undefined, undefined, ctx),
+		(error: Error) => QUOTA_REASON.test(error.message) && /fixture\/missing: Error: Model "fixture\/missing" not found/.test(error.message));
+	assert.deepEqual((await invocations()).map(call => call.model), ["fixture/quota:high", "fixture/missing"]);
+	const status = await onlyJobStatus(root);
+	assert.equal(status.state, "failed");
+	assert.equal(status.model, "fixture/missing");
+	assert.match(status.errorMessage ?? "", /^Every model attempt failed — fixture\/quota:high: Claude quota exceeded[\s\S]*fixture\/missing: Error: Model "fixture\/missing" not found/);
+});
+
+test("cancelling an attempt never starts the next model, even when the provider reports a quota error while stopping", async t => {
+	const { tools, ctx, root, invocations } = await fixture(t);
+	await writeFile(join(root, ".pi/agents/fallback.md"), "---\nname: fallback\ndescription: fallback\nmodel: fixture/cancel-quota, fixture/good\n---\nInspect only.");
+	const controller = new AbortController();
+	const operation = tools.get("subagent")!.execute("cancel", { ...project, agent: "fallback", task: "slow" }, controller.signal,
+		update => { if (JSON.stringify(update.content).includes("1 tool calls")) controller.abort(); }, ctx);
+	await assert.rejects(operation, /abort/i);
+	assert.deepEqual((await invocations()).map(call => call.model), ["fixture/cancel-quota"]);
+	assert.equal((await onlyJobStatus(root)).state, "cancelled");
 });

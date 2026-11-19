@@ -12,7 +12,10 @@ export interface AgentConfig {
 	name: string;
 	description: string;
 	tools?: string[];
+	/** Primary model: the first entry of `models`. */
 	model?: string;
+	/** Ordered fallback list; the launcher moves to the next model only when a provider is unavailable. */
+	models?: string[];
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
@@ -21,6 +24,12 @@ export interface AgentConfig {
 export interface AgentDiscoveryResult {
 	agents: AgentConfig[];
 	projectAgentsDir: string | null;
+}
+
+/** Frontmatter lists accept a comma-separated string or a YAML array of strings. */
+export function parseFrontmatterList(value: unknown): string[] {
+	const entries = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+	return entries.filter((entry): entry is string => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean);
 }
 
 function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig[] {
@@ -52,16 +61,15 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 		if (typeof frontmatter.name !== "string" || !frontmatter.name.trim()
 			|| typeof frontmatter.description !== "string" || !frontmatter.description.trim()) continue;
 
-		const rawTools = Array.isArray(frontmatter.tools) ? frontmatter.tools
-			: typeof frontmatter.tools === "string" ? frontmatter.tools.split(",") : [];
-		const tools = rawTools.filter((tool): tool is string => typeof tool === "string")
-			.map((tool) => tool.trim()).filter(Boolean);
+		const tools = parseFrontmatterList(frontmatter.tools);
+		const models = parseFrontmatterList(frontmatter.model);
 
 		agents.push({
 			name: frontmatter.name,
 			description: frontmatter.description,
-			tools: tools && tools.length > 0 ? tools : undefined,
-			model: typeof frontmatter.model === "string" && frontmatter.model.trim() ? frontmatter.model.trim() : undefined,
+			tools: tools.length > 0 ? tools : undefined,
+			model: models[0],
+			models: models.length > 0 ? models : undefined,
 			systemPrompt: body,
 			source,
 			filePath,
