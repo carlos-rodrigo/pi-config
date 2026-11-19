@@ -75,13 +75,13 @@ To update, just `git pull` — symlinks pick up changes automatically.
 
 ### [Agents](agents/)
 
-Agent definitions used by the agent-jobs extension. Each lists a primary model and a fallback that runs only when the primary's provider is unavailable (quota, rate limit, overload, auth or missing model):
+Agent definitions used by the agent-jobs extension. All run Claude models via claude-bridge. A `model` may also list fallbacks (see the agent-jobs README):
 
-- **manager** — Owns sequential builder dispatch, Oracle review/repair, evidence checks, completion, and updates to pending tasks. Claude Sonnet 5.5 (high) via claude-bridge; fallback GPT-6.1 Sol (high).
-- **builder** — Implements or repairs one task and returns proof; does not dispatch reviewers, mark completion, or edit pending tasks. Claude Opus 5.5 (high) via claude-bridge; fallback GPT-6.1 Sol (xhigh).
-- **oracle** — Deep reasoning second opinion (Claude Opus 5.5 via claude-bridge, xhigh; fallback GPT-6 Astra, xhigh). For complex debugging, architecture decisions, and read-only code reviews that always run the Are You Proud validation.
-- **researcher** — Concise research specialist (Claude Sonnet 5.5 via claude-bridge, medium; fallback GPT-6.1 Sol, medium). Investigates technologies, reads docs/source, compares approaches, and returns evidence-first briefs with bounded tool/output budgets. Uses `websearch`/`webfetch` instead of shelling out.
-- **librarian** — Remote GitHub code research specialist (Claude Sonnet 5.5 via claude-bridge, medium; fallback GPT-6.1 Sol, medium). Uses only `bash` with the authenticated `gh` CLI for public/private GitHub source search and upstream library inspection. Read-only.
+- **manager** — Owns sequential builder dispatch, Oracle review/repair, evidence checks, completion, and updates to pending tasks. Claude Sonnet 5.5 (high) via claude-bridge.
+- **builder** — Implements or repairs one task and returns proof; does not dispatch reviewers, mark completion, or edit pending tasks. Claude Opus 5.5 (high) via claude-bridge.
+- **oracle** — Deep reasoning second opinion (Claude Opus 5.5 via claude-bridge, xhigh). For complex debugging, architecture decisions, and read-only code reviews that always run the Are You Proud validation.
+- **researcher** — Concise research specialist (Claude Sonnet 5.5 via claude-bridge, medium). Investigates technologies, reads docs/source, compares approaches, and returns evidence-first briefs with bounded tool/output budgets. Uses `websearch`/`webfetch` instead of shelling out.
+- **librarian** — Remote GitHub code research specialist (Claude Sonnet 5.5 via claude-bridge, medium). Uses only `bash` with the authenticated `gh` CLI for public/private GitHub source search and upstream library inspection. Read-only.
 
 Say “Use manager to implement TASK-003” or “Use manager to implement the remaining tasks for this feature.” The manager automatically routes builder → Oracle → repairs until clean. The current launcher starts a fresh context on every call, including repairs; task Results and review findings carry the handoff. These are prompt-defined roles, not an enforced scheduler. `/agents` remains the job-monitor UI, not the delivery manager.
 

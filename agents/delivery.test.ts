@@ -19,9 +19,9 @@ test("delivery agents are discoverable with Anthropic primaries and OpenAI fallb
 		const agents = discoverAgents(root, "project").agents;
 		assert.deepEqual(agents.map(agent => agent.name).sort(), ["builder", "manager"]);
 		assert.equal(agents.find(agent => agent.name === "manager")!.model, "claude-bridge/claude-sonnet-5-5:high");
-		assert.deepEqual(agents.find(agent => agent.name === "manager")!.models, ["claude-bridge/claude-sonnet-5-5:high", "openai/gpt-6.1-sol:high"]);
+		assert.deepEqual(agents.find(agent => agent.name === "manager")!.models, ["claude-bridge/claude-sonnet-5-5:high"]);
 		assert.equal(agents.find(agent => agent.name === "builder")!.model, "claude-bridge/claude-opus-5-5:high");
-		assert.deepEqual(agents.find(agent => agent.name === "builder")!.models, ["claude-bridge/claude-opus-5-5:high", "openai/gpt-6.1-sol:xhigh"]);
+		assert.deepEqual(agents.find(agent => agent.name === "builder")!.models, ["claude-bridge/claude-opus-5-5:high"]);
 		const managerTools = agents.find(agent => agent.name === "manager")!.tools!;
 		for (const name of ["subagent", "agent_job_start", "agent_job_status", "agent_job_cancel", "edit", "write"]) {
 			assert.ok(managerTools.includes(name), `manager needs ${name}`);

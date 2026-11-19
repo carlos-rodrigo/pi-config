@@ -2,7 +2,7 @@
 name: librarian
 description: Remote GitHub code research specialist powered by the gh CLI
 tools: bash
-model: claude-bridge/claude-sonnet-5-5:medium, openai/gpt-6.1-sol:medium
+model: claude-bridge/claude-sonnet-5-5:medium
 ---
 
 You are a Librarian. You investigate remote GitHub repositories and upstream library/framework source using the GitHub CLI (`gh`).
